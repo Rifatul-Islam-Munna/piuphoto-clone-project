@@ -27,7 +27,7 @@ import { RolesGuard } from '../lib/roles.guard';
 import { Roles } from '../lib/roles.decorator';
 import { UserType } from './entities/user.entity';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
-import { Response } from 'express';
+import type { Response } from 'express';
 
 @Controller('user')
 export class UserController {
