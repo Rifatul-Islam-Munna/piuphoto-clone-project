@@ -51,11 +51,23 @@ export class User {
   @Prop({ min: 10, max: 100 })
   age?: number;
 
-  @Prop({ trim: true })
+@Prop({ trim: true })
   bloodGroup?: string;
 
-@Prop({ min: 20, max: 200 })
+  @Prop({ min: 20, max: 200 })
   weight?: number;
+
+  @Prop({ type: Types.ObjectId, ref: 'SubscriptionPlan', default: null })
+  subscriptionPlanId?: Types.ObjectId;
+
+  @Prop({ default: false })
+  isSubscriber: boolean;
+
+  @Prop()
+  subscriptionStartDate?: Date;
+
+  @Prop()
+  subscriptionEndDate?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

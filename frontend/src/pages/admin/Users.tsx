@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Loader2, Search, MoreHorizontal, UserCog } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Search, MoreHorizontal, UserCog, CreditCard } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +41,12 @@ import { PatchRequestAxios, DeleteRequestAxios, GetRequestNormal } from "../../.
 
 type UserType = "admin" | "editor" | "user" | "photographer";
 
+type SubscriptionPlan = {
+  _id: string;
+  title: string;
+  price: number;
+};
+
 type User = {
   _id: string;
   name: string;
@@ -51,6 +57,9 @@ type User = {
   age?: number;
   isActive: boolean;
   createdAt: string;
+  isSubscriber?: boolean;
+  subscriptionPlanId?: SubscriptionPlan | null;
+  subscriptionEndDate?: string;
 };
 
 type UsersResponse = {
@@ -107,6 +116,9 @@ export default function Users() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [formData, setFormData] = useState<UserFormData>(defaultFormData);
+  const [planDialogOpen, setPlanDialogOpen] = useState(false);
+  const [selectedUserForPlan, setSelectedUserForPlan] = useState<User | null>(null);
+  const [selectedPlanId, setSelectedPlanId] = useState<string>("");
 
   const { data: usersData, isLoading } = useQuery({
     queryKey: ["users", page, search, genderFilter],
@@ -117,6 +129,32 @@ export default function Users() {
       if (search) params.append("query", search);
       if (genderFilter !== "all") params.append("gender", genderFilter);
       return GetRequestNormal<UsersResponse>(`/user/get-all-admin?${params.toString()}`, { withToken: true });
+    },
+  });
+
+  const { data: plansData, isLoading: plansLoading } = useQuery({
+    queryKey: ["plans"],
+    queryFn: async () => GetRequestNormal<{ data: SubscriptionPlan[] }>("/subscription-plan/get-all?limit=100&isActive=all", { withToken: true }),
+  });
+
+  const plans = plansData?.data || [];
+
+  const assignPlan = async ({ userId, planId }: { userId: string; planId: string }) => {
+    const [response] = await PatchRequestAxios<User>(`/user/assign-plan`, { userId, planId }, { withToken: true });
+    return response;
+  };
+
+  const assignPlanMutation = useMutation({
+    mutationFn: assignPlan,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      toast.success("Plan assigned successfully");
+      setPlanDialogOpen(false);
+      setSelectedUserForPlan(null);
+      setSelectedPlanId("");
+    },
+    onError: (error: any) => {
+      toast.error(error?.message || "Failed to assign plan");
     },
   });
 
@@ -237,6 +275,17 @@ export default function Users() {
     deleteMutation.mutate(id);
   };
 
+  const handleOpenPlanDialog = (user: User) => {
+    setSelectedUserForPlan(user);
+    setSelectedPlanId(user.subscriptionPlanId?._id || "");
+    setPlanDialogOpen(true);
+  };
+
+  const handleAssignPlan = () => {
+    if (!selectedUserForPlan || !selectedPlanId) return;
+    assignPlanMutation.mutate({ userId: selectedUserForPlan._id, planId: selectedPlanId });
+  };
+
   return (
     <AdminLayout>
       <div className="space-y-6">
@@ -290,6 +339,7 @@ export default function Users() {
                     <TableHead>Role</TableHead>
                     <TableHead>Gender</TableHead>
                     <TableHead>Age</TableHead>
+                    <TableHead>Plan</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -328,6 +378,23 @@ export default function Users() {
                         </TableCell>
                         <TableCell>{user.gender || "-"}</TableCell>
                         <TableCell>{user.age || "-"}</TableCell>
+                        <TableCell>
+                          {user.isSubscriber && user.subscriptionPlanId ? (
+                            <Badge variant="outline" className="bg-green-50">
+                              {user.subscriptionPlanId.title}
+                            </Badge>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs text-muted-foreground hover:text-primary"
+                              onClick={() => handleOpenPlanDialog(user)}
+                            >
+                              <CreditCard className="mr-1.5 h-3.5 w-3.5" />
+                              Assign Plan
+                            </Button>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <Badge variant={user.isActive ? "default" : "secondary"}>
                             {user.isActive ? "Active" : "Inactive"}
@@ -511,6 +578,52 @@ export default function Users() {
               <Button onClick={handleSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
                 {(createMutation.isPending || updateMutation.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {editingUser ? "Update" : "Create"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={planDialogOpen} onOpenChange={setPlanDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Assign Plan to User</DialogTitle>
+              <DialogDescription>
+                Select a subscription plan for {selectedUserForPlan?.name}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              {plansLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="ml-2 text-sm text-muted-foreground">Loading plans...</span>
+                </div>
+              ) : plans.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">No plans available. Please create a plan first.</p>
+              ) : (
+                <Select value={selectedPlanId} onValueChange={setSelectedPlanId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a plan" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {plans.map((plan) => (
+                      <SelectItem key={plan._id} value={plan._id}>
+                        {plan.title} - ${plan.price}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPlanDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleAssignPlan} 
+                disabled={!selectedPlanId || assignPlanMutation.isPending || plansLoading || plans.length === 0}
+              >
+                {assignPlanMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Assign Plan
               </Button>
             </DialogFooter>
           </DialogContent>

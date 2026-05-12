@@ -16,6 +16,7 @@ import {
 } from './dto/update-user.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { User, UserDocument } from './entities/user.entity';
+import { SubscriptionPlan, SubscriptionPlanDocument } from '../subscription/entities/subscription-plan.entity';
 import { Model, Types } from 'mongoose';
 import bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
@@ -29,6 +30,8 @@ export class UserService implements OnModuleInit {
   constructor(
     @InjectModel(User.name)
     private userModel: Model<UserDocument>,
+    @InjectModel(SubscriptionPlan.name)
+    private subscriptionPlanModel: Model<SubscriptionPlanDocument>,
     private jwtService: JwtService,
     private configService: ConfigService,
   ) {}
@@ -426,7 +429,8 @@ export class UserService implements OnModuleInit {
     const [data, totalItems] = await Promise.all([
       this.userModel
         .find(filter)
-        .select('name email phone whatsapp gender age role isActive isPublished userId createdAt')
+        .select('name email phone whatsapp gender age role isActive isPublished userId createdAt subscriptionPlanId isSubscriber subscriptionEndDate')
+        .populate('subscriptionPlanId', 'title price')
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
@@ -464,6 +468,42 @@ export class UserService implements OnModuleInit {
     }
 
     return { message: 'Role updated successfully', data: updateRole };
+  }
+
+  async assignPlan(userId: string, planId: string) {
+    const planExists = await this.subscriptionPlanModel.findById(planId).lean();
+
+    if (!planExists) {
+      throw new HttpException('Plan not found', 400);
+    }
+
+    const endDate = new Date();
+    if (planExists.billingUnit === 'PER_MONTH') {
+      endDate.setMonth(endDate.getMonth() + 1);
+    } else {
+      endDate.setFullYear(endDate.getFullYear() + 1);
+    }
+
+    const updateUser = await this.userModel
+      .findByIdAndUpdate(
+        userId,
+        {
+          $set: {
+            subscriptionPlanId: new Types.ObjectId(planId),
+            isSubscriber: true,
+            subscriptionStartDate: new Date(),
+            subscriptionEndDate: endDate,
+          },
+        },
+        { new: true },
+      )
+      .lean();
+
+    if (!updateUser) {
+      throw new HttpException('User not found', 400);
+    }
+
+    return { message: 'Plan assigned successfully', data: updateUser };
   }
 
   async toggleUserActive(userId: string) {

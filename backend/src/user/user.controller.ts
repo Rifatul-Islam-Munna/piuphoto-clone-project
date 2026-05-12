@@ -123,6 +123,14 @@ export class UserController {
     return this.userService.changeRole(changeRoleDto);
   }
 
+  @Patch('assign-plan')
+  @UseGuards(AuthGuard, RolesGuard, ThrottlerGuard)
+  @Throttle({ default: { limit: 100, ttl: 3600000 } })
+  @Roles(UserType.ADMIN)
+  assignPlan(@Body() body: { userId: string; planId: string }) {
+    return this.userService.assignPlan(body.userId, body.planId);
+  }
+
   @Patch('toggle-subscription')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserType.ADMIN)
