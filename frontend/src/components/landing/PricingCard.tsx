@@ -7,6 +7,7 @@ interface PricingCardProps {
   badge: string;
   price: string;
   currency?: string;
+  period?: string;
   features: string[];
   highlighted?: boolean;
   className?: string;
@@ -35,6 +36,7 @@ const PricingCard = ({
   badge,
   price,
   currency = "$",
+  period = "/month",
   features,
   highlighted = false,
   className,
@@ -58,7 +60,7 @@ const PricingCard = ({
         <p className="text-sm text-muted-foreground mb-1">starts from:</p>
         <div className="flex items-baseline gap-1">
           <span className="text-3xl font-bold text-foreground">{currency}{price}</span>
-          <span className="text-muted-foreground">/Credit</span>
+          <span className="text-muted-foreground">{period}</span>
         </div>
       </div>
 

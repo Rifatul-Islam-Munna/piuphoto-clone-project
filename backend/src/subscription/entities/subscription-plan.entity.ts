@@ -34,17 +34,11 @@ export class SubscriptionPlan {
   @Prop({ default: false })
   isPopular: boolean;
 
-  @Prop({ default: 0, min: 0 })
-  credit: number;
-
   @Prop({ default: 'USD', uppercase: true, trim: true })
   currency: string;
 
   @Prop({ type: String, enum: BillingUnit, default: BillingUnit.PER_MONTH })
   billingUnit: BillingUnit;
-
-  @Prop({ type: Number, default: null, min: 0 })
-  monthlyCreateLimit?: number | null;
 
   @Prop({ default: true })
   isActive: boolean;

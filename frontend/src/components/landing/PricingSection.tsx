@@ -3,42 +3,44 @@ import PricingCard from "./PricingCard";
 const pricingPlans = [
   {
     tier: "silver" as const,
-    badge: "BASIC",
-    price: "0.30",
+    badge: "SILVER",
+    price: "19.90",
+    period: "/month",
     features: [
-      "Up to 500 photos per event",
-      "Basic AI selection",
-      "Email support",
-      "Standard transfer speed",
-      "7-day cloud storage",
+      "50GB PiuCloud storage",
+      "Unlimited photographers per album",
+      "Brand card and photo watermark",
+      "Access URL customization",
+      "Unlimited AI Reviewer activations",
     ],
   },
   {
     tier: "gold" as const,
-    badge: "PRO",
-    price: "0.26",
+    badge: "GOLD",
+    price: "79.90",
+    period: "/month",
     features: [
-      "Up to 2,000 photos per event",
-      "Advanced AI selection & beautify",
-      "Priority support",
-      "Fast transfer speed",
-      "30-day cloud storage",
-      "Custom branding",
+      "300GB PiuCloud storage",
+      "Real-time AI retouch and AI search",
+      "Unlimited photographers per album",
+      "Video Live support",
+      "Album premium features unlocked",
+      "Brand card, watermark, and URL customization",
     ],
     highlighted: true,
   },
   {
     tier: "platinum" as const,
-    badge: "PREMIUM",
-    price: "0.23",
+    badge: "PLATINUM",
+    price: "299.90",
+    period: "/month",
     features: [
-      "Unlimited photos per event",
-      "Full AI suite",
-      "24/7 dedicated support",
-      "Ultra-fast transfer speed",
-      "Unlimited cloud storage",
-      "White-label solution",
-      "API access",
+      "1TB PiuCloud storage",
+      "Premium branding placements",
+      "Video Live and API access",
+      "Unlimited AI Reviewer activations",
+      "Brand card, watermark, and URL customization",
+      "Best fit for events, exhibitions, and sports coverage",
     ],
   },
 ];
@@ -52,7 +54,7 @@ const PricingSection = () => {
             Plans & Billing
           </h2>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Choose the perfect plan for your photography needs
+            Membership-style plans inspired by Piufoto event workflows
           </p>
         </div>
 
@@ -63,6 +65,7 @@ const PricingSection = () => {
               tier={plan.tier}
               badge={plan.badge}
               price={plan.price}
+              period={plan.period}
               features={plan.features}
               highlighted={plan.highlighted}
             />

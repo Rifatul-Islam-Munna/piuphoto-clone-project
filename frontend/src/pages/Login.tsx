@@ -12,9 +12,11 @@ type LoginResponse = {
   message: string;
   access_token?: string;
   user: {
+    _id: string;
     email: string;
     name?: string;
     role?: string;
+    isActive?: boolean;
   };
 };
 
@@ -32,8 +34,15 @@ const Login = () => {
       if (data?.access_token) {
         window.localStorage.setItem("access_token", data.access_token);
       }
+      if (data?.user) {
+        window.localStorage.setItem("user", JSON.stringify(data.user));
+      }
 
-      navigate("/");
+      if (data?.user?.role === "admin") {
+        navigate("/admin/dashboard");
+      } else {
+        navigate("/");
+      }
     },
   });
 

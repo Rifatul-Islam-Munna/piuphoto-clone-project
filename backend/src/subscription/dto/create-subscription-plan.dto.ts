@@ -7,7 +7,6 @@ import {
   IsArray,
   IsEnum,
   Min,
-  Max,
 } from 'class-validator';
 import { BillingUnit } from '../entities/subscription-plan.entity';
 
@@ -53,12 +52,6 @@ export class CreateSubscriptionPlanDto {
   @IsOptional()
   isPopular?: boolean;
 
-  @ApiPropertyOptional({ example: 100 })
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  credit?: number;
-
   @ApiPropertyOptional({ example: 'USD' })
   @IsString()
   @IsOptional()
@@ -68,12 +61,6 @@ export class CreateSubscriptionPlanDto {
   @IsEnum(BillingUnit)
   @IsOptional()
   billingUnit?: BillingUnit;
-
-  @ApiPropertyOptional({ example: 10 })
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  monthlyCreateLimit?: number | null;
 
   @ApiPropertyOptional({ example: true })
   @IsBoolean()
@@ -124,12 +111,6 @@ export class UpdateSubscriptionPlanDto {
   @IsOptional()
   isPopular?: boolean;
 
-  @ApiPropertyOptional({ example: 100 })
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  credit?: number;
-
   @ApiPropertyOptional({ example: 'USD' })
   @IsString()
   @IsOptional()
@@ -139,12 +120,6 @@ export class UpdateSubscriptionPlanDto {
   @IsEnum(BillingUnit)
   @IsOptional()
   billingUnit?: BillingUnit;
-
-  @ApiPropertyOptional({ example: 10 })
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  monthlyCreateLimit?: number | null;
 
   @ApiPropertyOptional({ example: true })
   @IsBoolean()

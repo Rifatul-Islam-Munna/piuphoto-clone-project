@@ -21,6 +21,17 @@ export class SubscriptionPlanService {
     private subscriptionPlanModel: Model<SubscriptionPlanDocument>,
   ) {}
 
+  private stripLegacyPlanFields<T extends Record<string, any> | null>(plan: T): T {
+    if (!plan) {
+      return plan;
+    }
+
+    delete plan.credit;
+    delete plan.monthlyCreateLimit;
+
+    return plan;
+  }
+
   async create(createDto: CreateSubscriptionPlanDto) {
     const create = await this.subscriptionPlanModel.create(createDto);
 
@@ -28,7 +39,10 @@ export class SubscriptionPlanService {
       throw new HttpException('Plan not created', 400);
     }
 
-    return { message: 'Plan created successfully', data: create };
+    return {
+      message: 'Plan created successfully',
+      data: this.stripLegacyPlanFields(create.toObject()),
+    };
   }
 
   async findAll(filter: SubscriptionPlanFilterDto) {
@@ -68,7 +82,7 @@ export class SubscriptionPlanService {
     const totalPages = Math.ceil(totalItems / limit);
 
     return {
-      data,
+      data: data.map((plan) => this.stripLegacyPlanFields(plan)),
       page,
       limit,
       totalItems,
@@ -87,21 +101,31 @@ export class SubscriptionPlanService {
       throw new HttpException('Plan not found', 400);
     }
 
-    return findOne;
+    return this.stripLegacyPlanFields(findOne);
   }
 
   async update(updateDto: UpdateSubscriptionPlanDto, id: string) {
     const { ...rest } = updateDto;
 
     const findOne = await this.subscriptionPlanModel
-      .findByIdAndUpdate(id, { $set: rest }, { new: true })
+      .findByIdAndUpdate(
+        id,
+        {
+          $set: rest,
+          $unset: { credit: '', monthlyCreateLimit: '' },
+        },
+        { new: true },
+      )
       .lean();
 
     if (!findOne) {
       throw new HttpException('Plan not found', 400);
     }
 
-    return { message: 'Plan updated successfully', data: findOne };
+    return {
+      message: 'Plan updated successfully',
+      data: this.stripLegacyPlanFields(findOne),
+    };
   }
 
   async remove(id: string) {
@@ -113,7 +137,10 @@ export class SubscriptionPlanService {
       throw new HttpException('Plan not found', 400);
     }
 
-    return { message: 'Plan deleted successfully', data: findOne };
+    return {
+      message: 'Plan deleted successfully',
+      data: this.stripLegacyPlanFields(findOne),
+    };
   }
 
   async toggleActive(id: string) {
@@ -138,7 +165,7 @@ export class SubscriptionPlanService {
       throw new HttpException('Plan not found', 400);
     }
 
-    return updateActive;
+    return this.stripLegacyPlanFields(updateActive);
   }
 
   async togglePopular(id: string) {
@@ -163,6 +190,6 @@ export class SubscriptionPlanService {
       throw new HttpException('Plan not found', 400);
     }
 
-    return updatePopular;
+    return this.stripLegacyPlanFields(updatePopular);
   }
 }

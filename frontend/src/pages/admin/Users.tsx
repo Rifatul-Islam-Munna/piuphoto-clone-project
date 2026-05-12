@@ -1,0 +1,520 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Plus, Pencil, Trash2, Loader2, Search, MoreHorizontal, UserCog } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import AdminLayout from "./AdminLayout";
+import { GetRequestNormal } from "../../../api-hooks/api-hooks";
+import { useCommonMutationApi } from "../../../api-hooks/use-api-mutation";
+
+type UserType = "admin" | "editor" | "user" | "photographer";
+
+type User = {
+  _id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  role: UserType;
+  gender?: string;
+  age?: number;
+  isActive: boolean;
+  isPublished: boolean;
+  createdAt: string;
+};
+
+type UsersResponse = {
+  data: User[];
+  page: number;
+  limit: number;
+  totalItems: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+};
+
+type UserFormData = {
+  name: string;
+  email: string;
+  phone: string;
+  password: string;
+  role: UserType;
+  gender: string;
+  age: number;
+  isActive: boolean;
+  isPublished: boolean;
+};
+
+const defaultFormData: UserFormData = {
+  name: "",
+  email: "",
+  phone: "",
+  password: "",
+  role: "user",
+  gender: "",
+  age: 0,
+  isActive: true,
+  isPublished: true,
+};
+
+const roleLabels: Record<UserType, string> = {
+  admin: "Admin",
+  editor: "Editor",
+  user: "User",
+  photographer: "Photographer",
+};
+
+const roleColors: Record<UserType, string> = {
+  admin: "bg-red-100 text-red-800",
+  editor: "bg-blue-100 text-blue-800",
+  user: "bg-green-100 text-green-800",
+  photographer: "bg-purple-100 text-purple-800",
+};
+
+export default function Users() {
+  const queryClient = useQueryClient();
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [genderFilter, setGenderFilter] = useState("all");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [formData, setFormData] = useState<UserFormData>(defaultFormData);
+
+  const { data: usersData, isLoading } = useQuery({
+    queryKey: ["users", page, search, genderFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.append("page", page.toString());
+      params.append("limit", "10");
+      if (search) params.append("query", search);
+      if (genderFilter !== "all") params.append("gender", genderFilter);
+      return GetRequestNormal<UsersResponse>(`/user/get-all-admin?${params.toString()}`, { withToken: true });
+    },
+  });
+
+  const createMutation = useCommonMutationApi<User, UserFormData>({
+    url: "/user",
+    method: "POST",
+    successMessage: "User created successfully",
+    withToken: true,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      setDialogOpen(false);
+      setFormData(defaultFormData);
+    },
+  });
+
+  const updateMutation = useCommonMutationApi<User, { id: string; data: Partial<UserFormData> }>({
+    url: "/user/update-user-admin",
+    method: "PATCH",
+    successMessage: "User updated successfully",
+    withToken: true,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      setDialogOpen(false);
+      setEditingUser(null);
+    },
+  });
+
+  const deleteMutation = useCommonMutationApi<User, string>({
+    url: "/user/delete-user-admin",
+    method: "DELETE",
+    successMessage: "User deleted successfully",
+    withToken: true,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+
+  const toggleActiveMutation = useCommonMutationApi<User, string>({
+    url: "/user/toggle-active",
+    method: "PATCH",
+    successMessage: "User status updated",
+    withToken: true,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+
+  const togglePublishedMutation = useCommonMutationApi<User, string>({
+    url: "/user/toggle-published",
+    method: "PATCH",
+    successMessage: "User published status updated",
+    withToken: true,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+
+  const changeRoleMutation = useCommonMutationApi<User, { userId: string; role: UserType }>({
+    url: "/user/change-role",
+    method: "PATCH",
+    successMessage: "Role updated successfully",
+    withToken: true,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+
+  const handleOpenDialog = (user?: User) => {
+    if (user) {
+      setEditingUser(user);
+      setFormData({
+        name: user.name,
+        email: user.email,
+        phone: user.phone || "",
+        password: "",
+        role: user.role,
+        gender: user.gender || "",
+        age: user.age || 0,
+        isActive: user.isActive,
+        isPublished: user.isPublished,
+      });
+    } else {
+      setEditingUser(null);
+      setFormData(defaultFormData);
+    }
+    setDialogOpen(true);
+  };
+
+  const handleSubmit = () => {
+    if (editingUser) {
+      updateMutation.mutate({ id: editingUser._id, data: formData });
+    } else {
+      createMutation.mutate(formData);
+    }
+  };
+
+  const handleDelete = (id: string) => {
+    if (!confirm("Are you sure you want to delete this user?")) return;
+    deleteMutation.mutate(id);
+  };
+
+  return (
+    <AdminLayout>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Users</h1>
+            <p className="text-muted-foreground">Manage users and their roles.</p>
+          </div>
+          <Button onClick={() => handleOpenDialog()}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add User
+          </Button>
+        </div>
+
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-1 items-center gap-2">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search users..."
+                className="pl-9"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <Select value={genderFilter} onValueChange={setGenderFilter}>
+              <SelectTrigger className="w-32">
+                <SelectValue placeholder="Gender" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="male">Male</SelectItem>
+                <SelectItem value="female">Female</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div className="flex h-64 items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Gender</TableHead>
+                    <TableHead>Age</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {usersData?.data?.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="h-24 text-center">
+                        No users found.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    usersData?.data?.map((user) => (
+                      <TableRow key={user._id}>
+                        <TableCell className="font-medium">{user.name}</TableCell>
+                        <TableCell>{user.email}</TableCell>
+                        <TableCell>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Badge className={`cursor-pointer ${roleColors[user.role as UserType]}`}>
+                                {roleLabels[user.role as UserType]}
+                              </Badge>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent>
+                              {Object.entries(roleLabels).map(([value, label]) => (
+                                <DropdownMenuItem
+                                  key={value}
+                                  onClick={() => changeRoleMutation.mutate({ userId: user._id, role: value as UserType })}
+                                  disabled={user.role === value}
+                                >
+                                  {label}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                        <TableCell>{user.gender || "-"}</TableCell>
+                        <TableCell>{user.age || "-"}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={user.isActive ? "default" : "secondary"}>
+                              {user.isActive ? "Active" : "Inactive"}
+                            </Badge>
+                            <Badge variant={user.isPublished ? "outline" : "destructive"}>
+                              {user.isPublished ? "Published" : "Draft"}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleOpenDialog(user)}>
+                                <Pencil className="mr-2 h-4 w-4" />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => toggleActiveMutation.mutate(user._id)}>
+                                <UserCog className="mr-2 h-4 w-4" />
+                                Toggle Active
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => togglePublishedMutation.mutate(user._id)}>
+                                Toggle Published
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleDelete(user._id)}
+                                className="text-red-600 focus:text-red-600"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            {usersData?.totalPages && usersData.totalPages > 1 && (
+              <div className="flex items-center justify-end space-x-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={!usersData?.hasPreviousPage}
+                >
+                  Previous
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  Page {usersData?.page} of {usersData?.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => p + 1)}
+                  disabled={!usersData?.hasNextPage}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{editingUser ? "Edit User" : "Create User"}</DialogTitle>
+              <DialogDescription>
+                {editingUser ? "Update user details and role." : "Add a new user to the system."}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-6 py-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="name">Full Name</Label>
+                  <Input
+                    id="name"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="John Doe"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    placeholder="john@example.com"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="phone">Phone</Label>
+                  <Input
+                    id="phone"
+                    value={formData.phone}
+                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    placeholder="+1234567890"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="role">Role</Label>
+                  <Select
+                    value={formData.role}
+                    onValueChange={(v: UserType) => setFormData({ ...formData, role: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(roleLabels).map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {!editingUser && (
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    placeholder="Enter password"
+                  />
+                </div>
+              )}
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="gender">Gender</Label>
+                  <Select
+                    value={formData.gender}
+                    onValueChange={(v) => setFormData({ ...formData, gender: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select gender" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="male">Male</SelectItem>
+                      <SelectItem value="female">Female</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="age">Age</Label>
+                  <Input
+                    id="age"
+                    type="number"
+                    value={formData.age || ""}
+                    onChange={(e) => setFormData({ ...formData, age: parseInt(e.target.value) || 0 })}
+                    placeholder="25"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={formData.isActive}
+                    onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
+                  />
+                  <Label>Active</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={formData.isPublished}
+                    onCheckedChange={(checked) => setFormData({ ...formData, isPublished: checked })}
+                  />
+                  <Label>Published</Label>
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
+                {(createMutation.isPending || updateMutation.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {editingUser ? "Update" : "Create"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </AdminLayout>
+  );
+}
