@@ -1,0 +1,172 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* nikofly Design System - Event Photography Streaming Platform
+   No shadows anywhere - borders only */
+
+@layer base {
+  :root {
+    --background: 226 100% 97%;
+    --foreground: 240 10% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 10%;
+
+    --primary: 262 83% 66%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 24 95% 53%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 262 83% 66%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 262 83% 66%;
+
+    --radius: 0.75rem;
+
+    /* Custom colors */
+    --dark-section: 240 33% 14%;
+    --cream: 30 100% 97%;
+    --card-yellow: 48 100% 96%;
+    --card-blue: 210 100% 97%;
+    --card-purple: 262 100% 97%;
+    --card-pink: 340 100% 97%;
+
+    /* Gradient backgrounds */
+    --gradient-hero: linear-gradient(180deg, hsl(226 100% 97%) 0%, hsl(0 0% 100%) 100%);
+    --gradient-section: linear-gradient(180deg, hsl(262 100% 98%) 0%, hsl(210 100% 98%) 100%);
+    --gradient-cta: linear-gradient(135deg, hsl(262 83% 66%) 0%, hsl(280 83% 60%) 100%);
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 262 83% 66%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 262 83% 66%;
+  }
+
+  .dark {
+    --background: 240 33% 14%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 20% 18%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 20% 18%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 262 83% 66%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 24 95% 53%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 240 20% 22%;
+    --muted-foreground: 220 14% 70%;
+
+    --accent: 262 83% 66%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 20% 25%;
+    --input: 240 20% 25%;
+    --ring: 262 83% 66%;
+
+    --sidebar-background: 240 33% 10%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 262 83% 66%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 20% 18%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 240 20% 20%;
+    --sidebar-ring: 262 83% 66%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-shadow: none !important;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', system-ui, sans-serif;
+    @apply font-bold tracking-tight;
+  }
+}
+
+@layer utilities {
+  .gradient-hero {
+    background: linear-gradient(180deg, hsl(226 100% 97%) 0%, hsl(0 0% 100%) 100%);
+  }
+
+  .gradient-section {
+    background: linear-gradient(180deg, hsl(262 100% 98%) 0%, hsl(210 100% 98%) 100%);
+  }
+
+  .gradient-cta {
+    background: linear-gradient(135deg, hsl(262 83% 66%) 0%, hsl(280 83% 60%) 100%);
+  }
+
+  .gradient-cream {
+    background: hsl(30 100% 97%);
+  }
+
+  .bg-dark-section {
+    background: hsl(240 33% 14%);
+  }
+
+  .container-custom {
+    @apply max-w-[1200px] mx-auto px-6;
+  }
+
+  .section-padding {
+    @apply py-20 px-6;
+  }
+
+  .card-hover {
+    @apply transition-all duration-300 ease-out;
+  }
+
+  .card-hover:hover {
+    @apply border-primary/50;
+    transform: translateY(-2px);
+  }
+
+  .btn-hover {
+    @apply transition-all duration-300 ease-out;
+  }
+
+  .btn-hover:hover {
+    transform: scale(1.02);
+    filter: brightness(1.05);
+  }
+}
