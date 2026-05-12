@@ -111,8 +111,8 @@ export class UserController {
   @UseGuards(AuthGuard, RolesGuard, ThrottlerGuard)
   @Throttle({ default: { limit: 200, ttl: 3600000 } })
   @Roles(UserType.ADMIN)
-  UpdateUserAdmin(@Body() updateUserDto: UpdateUserDto) {
-    return this.userService.update(updateUserDto);
+  UpdateUserAdmin(@Body() updateUserDto: UpdateUserDto, @Query('id') id: string) {
+    return this.userService.update({ ...updateUserDto, id } as any);
   }
 
   @Patch('change-role')
@@ -133,14 +133,14 @@ export class UserController {
   @Patch('toggle-active')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserType.ADMIN)
-  toggleActive(@Body() query: FindOneQueryDto) {
+  toggleActive(@Query() query: FindOneQueryDto) {
     return this.userService.toggleUserActive(query.id);
   }
 
   @Patch('toggle-published')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserType.ADMIN)
-  togglePublished(@Body() query: FindOneQueryDto) {
+  togglePublished(@Query() query: FindOneQueryDto) {
     return this.userService.toggleUserPublished(query.id);
   }
 

@@ -426,7 +426,7 @@ export class UserService implements OnModuleInit {
     const [data, totalItems] = await Promise.all([
       this.userModel
         .find(filter)
-        .select('name email phone whatsapp maritalStatus isActive isPublished userId')
+        .select('name email phone whatsapp gender age role isActive isPublished userId createdAt')
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })

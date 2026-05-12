@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, Loader2, Search, MoreHorizontal, UserCog } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,8 +37,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import AdminLayout from "./AdminLayout";
-import { GetRequestNormal } from "../../../api-hooks/api-hooks";
-import { useCommonMutationApi } from "../../../api-hooks/use-api-mutation";
+import { PatchRequestAxios, DeleteRequestAxios, GetRequestNormal } from "../../../api-hooks/api-hooks";
 
 type UserType = "admin" | "editor" | "user" | "photographer";
 
@@ -50,7 +50,6 @@ type User = {
   gender?: string;
   age?: number;
   isActive: boolean;
-  isPublished: boolean;
   createdAt: string;
 };
 
@@ -73,7 +72,6 @@ type UserFormData = {
   gender: string;
   age: number;
   isActive: boolean;
-  isPublished: boolean;
 };
 
 const defaultFormData: UserFormData = {
@@ -85,7 +83,6 @@ const defaultFormData: UserFormData = {
   gender: "",
   age: 0,
   isActive: true,
-  isPublished: true,
 };
 
 const roleLabels: Record<UserType, string> = {
@@ -123,67 +120,87 @@ export default function Users() {
     },
   });
 
-  const createMutation = useCommonMutationApi<User, UserFormData>({
-    url: "/user",
-    method: "POST",
-    successMessage: "User created successfully",
-    withToken: true,
+  const createUser = async (data: UserFormData) => {
+    const [response] = await PatchRequestAxios<User>("/user", data, { withToken: true });
+    return response;
+  };
+
+  const updateUser = async ({ id, data }: { id: string; data: Partial<UserFormData> }) => {
+    const [response] = await PatchRequestAxios<User>(`/user/update-user-admin?id=${id}`, data, { withToken: true });
+    return response;
+  };
+
+  const deleteUser = async (id: string) => {
+    const [response] = await DeleteRequestAxios<User>(`/user/delete-user-admin?id=${id}`, { withToken: true });
+    return response;
+  };
+
+  const toggleUserActive = async (id: string) => {
+    const [response] = await PatchRequestAxios<User>(`/user/toggle-active?id=${id}`, {}, { withToken: true });
+    return response;
+  };
+
+  const changeUserRole = async ({ id, role }: { id: string; role: UserType }) => {
+    const [response] = await PatchRequestAxios<User>(`/user/change-role`, { userId: id, role }, { withToken: true });
+    return response;
+  };
+
+  const createMutation = useMutation({
+    mutationFn: createUser,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
+      toast.success("User created successfully");
       setDialogOpen(false);
       setFormData(defaultFormData);
     },
+    onError: (error: any) => {
+      toast.error(error?.message || "Failed to create user");
+    },
   });
 
-  const updateMutation = useCommonMutationApi<User, { id: string; data: Partial<UserFormData> }>({
-    url: "/user/update-user-admin",
-    method: "PATCH",
-    successMessage: "User updated successfully",
-    withToken: true,
+  const updateMutation = useMutation({
+    mutationFn: updateUser,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
+      toast.success("User updated successfully");
       setDialogOpen(false);
       setEditingUser(null);
     },
-  });
-
-  const deleteMutation = useCommonMutationApi<User, string>({
-    url: "/user/delete-user-admin",
-    method: "DELETE",
-    successMessage: "User deleted successfully",
-    withToken: true,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["users"] });
+    onError: (error: any) => {
+      toast.error(error?.message || "Failed to update user");
     },
   });
 
-  const toggleActiveMutation = useCommonMutationApi<User, string>({
-    url: "/user/toggle-active",
-    method: "PATCH",
-    successMessage: "User status updated",
-    withToken: true,
+  const deleteMutation = useMutation({
+    mutationFn: deleteUser,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
+      toast.success("User deleted successfully");
+    },
+    onError: (error: any) => {
+      toast.error(error?.message || "Failed to delete user");
     },
   });
 
-  const togglePublishedMutation = useCommonMutationApi<User, string>({
-    url: "/user/toggle-published",
-    method: "PATCH",
-    successMessage: "User published status updated",
-    withToken: true,
+  const toggleActiveMutation = useMutation({
+    mutationFn: toggleUserActive,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
+      toast.success("User status updated");
+    },
+    onError: (error: any) => {
+      toast.error(error?.message || "Failed to update status");
     },
   });
 
-  const changeRoleMutation = useCommonMutationApi<User, { userId: string; role: UserType }>({
-    url: "/user/change-role",
-    method: "PATCH",
-    successMessage: "Role updated successfully",
-    withToken: true,
+  const changeRoleMutation = useMutation({
+    mutationFn: changeUserRole,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
+      toast.success("Role updated successfully");
+    },
+    onError: (error: any) => {
+      toast.error(error?.message || "Failed to update role");
     },
   });
 
@@ -199,7 +216,6 @@ export default function Users() {
         gender: user.gender || "",
         age: user.age || 0,
         isActive: user.isActive,
-        isPublished: user.isPublished,
       });
     } else {
       setEditingUser(null);
@@ -313,14 +329,9 @@ export default function Users() {
                         <TableCell>{user.gender || "-"}</TableCell>
                         <TableCell>{user.age || "-"}</TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Badge variant={user.isActive ? "default" : "secondary"}>
-                              {user.isActive ? "Active" : "Inactive"}
-                            </Badge>
-                            <Badge variant={user.isPublished ? "outline" : "destructive"}>
-                              {user.isPublished ? "Published" : "Draft"}
-                            </Badge>
-                          </div>
+                          <Badge variant={user.isActive ? "default" : "secondary"}>
+                            {user.isActive ? "Active" : "Inactive"}
+                          </Badge>
                         </TableCell>
                         <TableCell className="text-right">
                           <DropdownMenu>
@@ -337,9 +348,6 @@ export default function Users() {
                               <DropdownMenuItem onClick={() => toggleActiveMutation.mutate(user._id)}>
                                 <UserCog className="mr-2 h-4 w-4" />
                                 Toggle Active
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => togglePublishedMutation.mutate(user._id)}>
-                                Toggle Published
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => handleDelete(user._id)}
@@ -493,13 +501,6 @@ export default function Users() {
                     onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
                   />
                   <Label>Active</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Switch
-                    checked={formData.isPublished}
-                    onCheckedChange={(checked) => setFormData({ ...formData, isPublished: checked })}
-                  />
-                  <Label>Published</Label>
                 </div>
               </div>
             </div>
