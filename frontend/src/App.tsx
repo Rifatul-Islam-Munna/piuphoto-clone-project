@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import QueryClint from "../lib/QueryClint";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
@@ -9,6 +9,10 @@ import NotFound from "./pages/NotFound";
 import Dashboard from "./pages/admin/Dashboard";
 import Plans from "./pages/admin/Plans";
 import Users from "./pages/admin/Users";
+import Events from "./pages/admin/Events";
+import UserDashboard from "./pages/user/UserDashboard";
+import UserSettings from "./pages/user/UserSettings";
+import Pricing from "./pages/Pricing";
 
 const ProtectedAdminRoute = ({ children }: { children: React.ReactNode }) => {
   const token = localStorage.getItem("access_token");
@@ -26,15 +30,32 @@ const ProtectedAdminRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+const ProtectedUserRoute = ({ children }: { children: React.ReactNode }) => {
+  const token = localStorage.getItem("access_token");
+  const userStr = localStorage.getItem("user");
+  const user = userStr ? JSON.parse(userStr) : null;
+
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user?.role === "admin") {
+    return <Navigate to="/admin/dashboard" replace />;
+  }
+
+  return <>{children}</>;
+};
+
 const App = () => (
   <QueryClint>
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
+      <HashRouter>
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/pricing" element={<Pricing />} />
           <Route
             path="/admin/dashboard"
             element={
@@ -59,10 +80,50 @@ const App = () => (
               </ProtectedAdminRoute>
             }
           />
+          <Route
+            path="/admin/events"
+            element={
+              <ProtectedAdminRoute>
+                <Events />
+              </ProtectedAdminRoute>
+            }
+          />
+          <Route
+            path="/user/dashboard"
+            element={
+              <ProtectedUserRoute>
+                <UserDashboard />
+              </ProtectedUserRoute>
+            }
+          />
+          <Route
+            path="/user/events"
+            element={
+              <ProtectedUserRoute>
+                <UserDashboard />
+              </ProtectedUserRoute>
+            }
+          />
+          <Route
+            path="/user/gallery"
+            element={
+              <ProtectedUserRoute>
+                <UserDashboard />
+              </ProtectedUserRoute>
+            }
+          />
+          <Route
+            path="/user/settings"
+            element={
+              <ProtectedUserRoute>
+                <UserSettings />
+              </ProtectedUserRoute>
+            }
+          />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
-      </BrowserRouter>
+      </HashRouter>
     </TooltipProvider>
   </QueryClint>
 );

@@ -6,6 +6,7 @@ interface PricingCardProps {
   tier: "silver" | "gold" | "platinum";
   badge: string;
   price: string;
+  originalPrice?: string;
   currency?: string;
   period?: string;
   features: string[];
@@ -35,12 +36,15 @@ const PricingCard = ({
   tier,
   badge,
   price,
+  originalPrice,
   currency = "$",
   period = "/month",
   features,
   highlighted = false,
   className,
-}: PricingCardProps) => {
+  buttonText = "Get started",
+  onBuyNow,
+}: PricingCardProps & { buttonText?: string; onBuyNow?: () => void }) => {
   const styles = tierStyles[tier];
 
   return (
@@ -58,6 +62,11 @@ const PricingCard = ({
       
       <div className="mb-6">
         <p className="text-sm text-muted-foreground mb-1">starts from:</p>
+        {originalPrice && originalPrice !== price ? (
+          <div className="mb-1 text-sm text-muted-foreground line-through">
+            {currency}{originalPrice}{period}
+          </div>
+        ) : null}
         <div className="flex items-baseline gap-1">
           <span className="text-3xl font-bold text-foreground">{currency}{price}</span>
           <span className="text-muted-foreground">{period}</span>
@@ -73,9 +82,15 @@ const PricingCard = ({
         ))}
       </ul>
 
-      <Button variant={styles.button} className="w-full" size="lg">
-        Get started
-      </Button>
+      {onBuyNow ? (
+        <Button variant={styles.button} className="w-full" size="lg" onClick={onBuyNow}>
+          {buttonText}
+        </Button>
+      ) : (
+        <Button variant={styles.button} className="w-full" size="lg">
+          {buttonText}
+        </Button>
+      )}
     </div>
   );
 };

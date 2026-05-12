@@ -32,8 +32,41 @@ export class SubscriptionPlanService {
     return plan;
   }
 
+  private normalizePermissions(
+    permissions?: Record<string, unknown>[],
+  ): { key: string; value: number }[] {
+    if (!Array.isArray(permissions)) {
+      return [];
+    }
+
+    return permissions.flatMap((permission) => {
+      if (
+        permission?.key &&
+        permission.value !== undefined &&
+        permission.value !== null
+      ) {
+        const numericValue = Number(permission.value);
+
+        if (!Number.isNaN(numericValue)) {
+          return [{ key: String(permission.key), value: numericValue }];
+        }
+      }
+
+      return Object.entries(permission)
+        .filter(([key]) => key !== '_id' && key !== 'id')
+        .map(([key, value]) => ({
+          key,
+          value: Number(value),
+        }))
+        .filter((entry) => !Number.isNaN(entry.value));
+    });
+  }
+
   async create(createDto: CreateSubscriptionPlanDto) {
-    const create = await this.subscriptionPlanModel.create(createDto);
+    const create = await this.subscriptionPlanModel.create({
+      ...createDto,
+      permissions: this.normalizePermissions(createDto.permissions),
+    });
 
     if (!create) {
       throw new HttpException('Plan not created', 400);
@@ -105,13 +138,16 @@ export class SubscriptionPlanService {
   }
 
   async update(updateDto: UpdateSubscriptionPlanDto, id: string) {
-    const { ...rest } = updateDto;
+    const { permissions, ...rest } = updateDto;
 
     const findOne = await this.subscriptionPlanModel
       .findByIdAndUpdate(
         id,
         {
-          $set: rest,
+          $set: {
+            ...rest,
+            ...(permissions ? { permissions: this.normalizePermissions(permissions) } : {}),
+          },
           $unset: { credit: '', monthlyCreateLimit: '' },
         },
         { new: true },

@@ -28,9 +28,9 @@ export class CreateEventDto {
   @IsOptional()
   image?: ImageDto;
 
-  @ApiProperty({ example: '507f1f77bcf86cd799439011' })
+  @ApiPropertyOptional({ example: '507f1f77bcf86cd799439011' })
   @IsMongoId()
-  @IsNotEmpty()
+  @IsOptional()
   userId: string;
 
   @ApiPropertyOptional({ example: true, default: true })

@@ -7,6 +7,7 @@ import {
   Body,
   Query,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { EventService } from './event.service';
 import { CreateEventDto, UpdateEventDto, EventFilterDto } from './dto/create-event.dto';
@@ -15,6 +16,7 @@ import { RolesGuard } from '../lib/roles.guard';
 import { Roles } from '../lib/roles.decorator';
 import { UserType } from '../user/entities/user.entity';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import type { ExpressRequest } from '../lib/auth.guard';
 
 @Controller('event')
 export class EventController {
@@ -23,8 +25,22 @@ export class EventController {
   @Post()
   @UseGuards(AuthGuard, ThrottlerGuard)
   @Throttle({ default: { limit: 100, ttl: 3600000 } })
-  create(@Body() createEventDto: CreateEventDto) {
-    return this.eventService.create(createEventDto);
+  create(@Body() createEventDto: CreateEventDto, @Req() req: ExpressRequest) {
+    const targetUserId =
+      req.user?.role === UserType.ADMIN && createEventDto.userId
+        ? String(createEventDto.userId)
+        : String(req.user?.id);
+
+    return this.eventService.create({
+      ...createEventDto,
+      userId: targetUserId,
+    });
+  }
+
+  @Get('my-events')
+  @UseGuards(AuthGuard)
+  getMyEvents(@Req() req: ExpressRequest) {
+    return this.eventService.findAllByUser(req.user?.id);
   }
 
   @Get('get-all')
@@ -50,16 +66,14 @@ export class EventController {
   }
 
   @Patch('toggle-active')
-  @UseGuards(AuthGuard, RolesGuard)
-  @Roles(UserType.ADMIN)
-  toggleActive(@Query('id') id: string) {
-    return this.eventService.toggleActive(id);
+  @UseGuards(AuthGuard)
+  toggleActive(@Query('id') id: string, @Req() req: ExpressRequest) {
+    return this.eventService.toggleActive(id, req.user?.id);
   }
 
   @Patch('toggle-published')
-  @UseGuards(AuthGuard, RolesGuard)
-  @Roles(UserType.ADMIN)
-  togglePublished(@Query('id') id: string) {
-    return this.eventService.togglePublished(id);
+  @UseGuards(AuthGuard)
+  togglePublished(@Query('id') id: string, @Req() req: ExpressRequest) {
+    return this.eventService.togglePublished(id, req.user?.id);
   }
 }

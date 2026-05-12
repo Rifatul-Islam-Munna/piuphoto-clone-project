@@ -201,7 +201,7 @@ export class UserService implements OnModuleInit {
     const access_token = await this.jwtService.sign(
       {
         email: findOneUser.email ?? '',
-        id: findOneUser._id,
+        id: String(findOneUser._id),
         role: findOneUser.role,
         phone: findOneUser.phone ?? '',
       },

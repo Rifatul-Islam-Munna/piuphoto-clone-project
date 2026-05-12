@@ -14,11 +14,76 @@ export class EventService {
   ) {}
 
   async create(createEventDto: CreateEventDto) {
-    const event = await this.eventModel.create(createEventDto);
+    const normalizedUserId = String(createEventDto.userId);
+
+    if (!Types.ObjectId.isValid(normalizedUserId)) {
+      throw new HttpException('Invalid user id', 400);
+    }
+
+    const event = await this.eventModel.create({
+      ...createEventDto,
+      userId: new Types.ObjectId(normalizedUserId),
+    });
+
     if (!event) {
       throw new HttpException('Event not created', 400);
     }
     return { message: 'Event created successfully', data: event };
+  }
+
+  async findAllByUser(userId?: string) {
+    if (!userId) {
+      return {
+        data: [],
+        page: 1,
+        limit: 10,
+        totalItems: 0,
+        totalPages: 0,
+        hasNextPage: false,
+        hasPreviousPage: false,
+      };
+    }
+
+    const normalizedUserId = String(userId);
+
+    if (!Types.ObjectId.isValid(normalizedUserId)) {
+      return {
+        data: [],
+        page: 1,
+        limit: 10,
+        totalItems: 0,
+        totalPages: 0,
+        hasNextPage: false,
+        hasPreviousPage: false,
+      };
+    }
+
+    const filter = {
+      $or: [
+        { userId: new Types.ObjectId(normalizedUserId) },
+        { userId: normalizedUserId as any },
+      ],
+    };
+
+    const [data, totalItems] = await Promise.all([
+      this.eventModel
+        .find(filter)
+        .populate('userId', 'name email')
+        .sort({ createdAt: -1 })
+        .lean()
+        .exec(),
+      this.eventModel.countDocuments(filter).exec(),
+    ]);
+
+    return {
+      data,
+      page: 1,
+      limit: 10,
+      totalItems,
+      totalPages: Math.ceil(totalItems / 10),
+      hasNextPage: false,
+      hasPreviousPage: false,
+    };
   }
 
   async findAll(query: EventFilterDto) {
@@ -81,8 +146,25 @@ export class EventService {
   }
 
   async update(id: string, updateEventDto: UpdateEventDto) {
+    const shouldUnsetImage =
+      updateEventDto.image &&
+      !updateEventDto.image.url &&
+      !updateEventDto.image.publicId;
+
     const event = await this.eventModel
-      .findByIdAndUpdate(id, { $set: updateEventDto }, { new: true })
+      .findByIdAndUpdate(
+        id,
+        shouldUnsetImage
+          ? {
+              $set: {
+                ...updateEventDto,
+                image: undefined,
+              },
+              $unset: { image: '' },
+            }
+          : { $set: updateEventDto },
+        { new: true },
+      )
       .lean();
 
     if (!event) {
@@ -102,11 +184,15 @@ export class EventService {
     return { message: 'Event deleted successfully', data: event };
   }
 
-  async toggleActive(id: string) {
-    const event = await this.eventModel.findById(id).select('isActive').lean();
+  async toggleActive(id: string, userId?: string) {
+    const event = await this.eventModel.findById(id).select('isActive userId').lean();
 
     if (!event) {
       throw new HttpException('Event not found', 400);
+    }
+
+    if (userId && String(event.userId) !== userId) {
+      throw new HttpException('You can only modify your own events', 403);
     }
 
     const updated = await this.eventModel
@@ -116,11 +202,15 @@ export class EventService {
     return updated;
   }
 
-  async togglePublished(id: string) {
-    const event = await this.eventModel.findById(id).select('isPublished').lean();
+  async togglePublished(id: string, userId?: string) {
+    const event = await this.eventModel.findById(id).select('isPublished userId').lean();
 
     if (!event) {
       throw new HttpException('Event not found', 400);
+    }
+
+    if (userId && String(event.userId) !== userId) {
+      throw new HttpException('You can only modify your own events', 403);
     }
 
     const updated = await this.eventModel

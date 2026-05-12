@@ -68,6 +68,9 @@ export class User {
 
   @Prop()
   subscriptionEndDate?: Date;
+
+  @Prop({ type: Object })
+  profileImage?: { url: string; key: string };
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

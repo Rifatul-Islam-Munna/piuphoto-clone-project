@@ -12,12 +12,32 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
     proxy: {
+      "/api": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+        secure: false,
+      },
       "/user": {
         target: "http://localhost:4000",
         changeOrigin: true,
         secure: false,
       },
       "/subscription-plan": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+        secure: false,
+      },
+      "/event": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+        secure: false,
+      },
+      "/auth": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+        secure: false,
+      },
+      "/image": {
         target: "http://localhost:4000",
         changeOrigin: true,
         secure: false,

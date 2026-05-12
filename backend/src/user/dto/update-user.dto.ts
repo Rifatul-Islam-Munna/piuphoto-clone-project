@@ -57,6 +57,10 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
   @IsOptional()
   @Transform(({ value }) => (value ? new Date(value) : undefined))
   subscription_end_date?: Date;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  profileImage?: { url: string; key: string };
 }
 
 export class LoginDto {

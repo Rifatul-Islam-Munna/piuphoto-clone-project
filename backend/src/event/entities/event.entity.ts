@@ -23,7 +23,7 @@ export class Event {
   @Prop({ default: true })
   isPublished: boolean;
 
-  @Prop({ default: false })
+  @Prop({ default: true })
   isActive: boolean;
 }
 
