@@ -12,18 +12,26 @@ class MainShellPage extends StatelessWidget {
     return ValueListenableBuilder(
       valueListenable: UserStorage.currentUser,
       builder: (context, user, _) {
-        final routes = user?.isPhotographer ?? false
-            ? const [
-                HomeRoute(),
-                UploadRoute(),
-                InvitationsRoute(),
-                ProfileRoute(),
+        final isPhotographer = user?.isPhotographer ?? false;
+        
+        final routes = isPhotographer
+            ? [
+                const HomeRoute(),
+                const EventsRoute(),
+                const UploadRoute(),
+                const InvitationsRoute(),
+                const ProfileRoute(),
               ]
-            : const [
-                HomeRoute(),
-                PlansRoute(),
-                ProfileRoute(),
+            : [
+                const HomeRoute(),
+                const EventsRoute(),
+                const PlansRoute(),
+                const ProfileRoute(),
               ];
+
+        final labels = isPhotographer
+            ? ['Home', 'Events', 'Upload', 'Invites', 'Profile']
+            : ['Home', 'Events', 'Plans', 'Profile'];
 
         return AutoTabsScaffold(
           key: ValueKey(user?.role ?? 'guest'),

@@ -9,6 +9,7 @@ import 'package:mobileapp/pages/auth/login_page.dart';
 import 'package:mobileapp/pages/auth/register_page.dart';
 import 'package:mobileapp/pages/camera/camera_page.dart';
 import 'package:mobileapp/pages/event_images/event_images_page.dart';
+import 'package:mobileapp/pages/events/events_page.dart';
 import 'package:mobileapp/pages/history/history_page.dart';
 import 'package:mobileapp/pages/home/home_page.dart';
 import 'package:mobileapp/pages/invitations/invitations_page.dart';
@@ -57,6 +58,7 @@ class AppRouter extends RootStackRouter {
           guards: [authGuard],
         ),
         AutoRoute(page: UploadRoute.page, path: '/upload', guards: [authGuard]),
+        AutoRoute(page: EventsRoute.page, path: '/events', guards: [authGuard]),
         AutoRoute(
           page: MainShellRoute.page,
           path: '/main',
@@ -64,6 +66,7 @@ class AppRouter extends RootStackRouter {
             RedirectRoute(path: '', redirectTo: 'home'),
             AutoRoute(page: HomeRoute.page, path: 'home'),
             AutoRoute(page: PlansRoute.page, path: 'plans'),
+            AutoRoute(page: EventsRoute.page, path: 'events', guards: [authGuard]),
             AutoRoute(
               page: ProfileRoute.page,
               path: 'profile',
@@ -118,6 +121,7 @@ List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
   if (user?.isPhotographer ?? false) {
     return const [
       BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: 'Home'),
+      BottomNavigationBarItem(icon: Icon(Icons.event_outlined), label: 'Events'),
       BottomNavigationBarItem(
         icon: Icon(Icons.cloud_upload_outlined),
         label: 'Upload',
@@ -129,6 +133,7 @@ List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
 
   return const [
     BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: 'Home'),
+    BottomNavigationBarItem(icon: Icon(Icons.event_outlined), label: 'Events'),
     BottomNavigationBarItem(
       icon: Icon(Icons.workspace_premium_outlined),
       label: 'Plans',

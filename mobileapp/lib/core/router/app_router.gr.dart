@@ -43,6 +43,22 @@ class EventImagesRoute extends PageRouteInfo<void> {
 }
 
 /// generated route for
+/// [EventsPage]
+class EventsRoute extends PageRouteInfo<void> {
+  const EventsRoute({List<PageRouteInfo>? children})
+    : super(EventsRoute.name, initialChildren: children);
+
+  static const String name = 'EventsRoute';
+
+  static PageInfo page = PageInfo(
+    name,
+    builder: (data) {
+      return const EventsPage();
+    },
+  );
+}
+
+/// generated route for
 /// [HistoryPage]
 class HistoryRoute extends PageRouteInfo<void> {
   const HistoryRoute({List<PageRouteInfo>? children})
