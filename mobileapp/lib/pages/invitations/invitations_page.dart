@@ -17,6 +17,7 @@ class InvitationsPage extends StatefulWidget {
 class _InvitationsPageState extends State<InvitationsPage> {
   late Future<List<EventInvitationModel>> _future;
   final Set<String> _acceptingIds = {};
+  final Set<String> _deletingIds = {};
 
   @override
   void initState() {
@@ -80,6 +81,33 @@ class _InvitationsPageState extends State<InvitationsPage> {
     }
   }
 
+  Future<void> _delete(EventInvitationModel invitation) async {
+    setState(() => _deletingIds.add(invitation.id));
+    try {
+      final mutation = useCommonMutationApi<Map<String, dynamic>, String>(
+        config: MutationConfig<Map<String, dynamic>, String>(
+          url: '/event/delete-invitation',
+          method: HttpMethod.delete,
+          mutationKey: 'delete-invitation-${invitation.id}',
+          successMessage: 'Invitation deleted',
+          queryParameters: (id) => {'id': id},
+          fromJson: (json) => Map<String, dynamic>.from(json as Map),
+        ),
+      );
+
+      final state = await mutation.mutate(invitation.id);
+      if (state.data?.isSuccess ?? false) {
+        await _refresh();
+      }
+    } catch (_) {
+      AppToast.error('Failed to delete invitation');
+    } finally {
+      if (mounted) {
+        setState(() => _deletingIds.remove(invitation.id));
+      }
+    }
+  }
+
   Future<void> _activate(EventInvitationModel invitation) async {
     final event = invitation.event;
     if (event == null) {
@@ -136,6 +164,7 @@ class _InvitationsPageState extends State<InvitationsPage> {
                     final isActive =
                         activeEvent != null && activeEvent.id == event?.id;
                     final isAccepting = _acceptingIds.contains(invitation.id);
+                    final isDeleting = _deletingIds.contains(invitation.id);
 
                     return Card(
                       child: Padding(
@@ -190,6 +219,19 @@ class _InvitationsPageState extends State<InvitationsPage> {
                                   ),
                                 ),
                               ),
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              width: double.infinity,
+                              child: TextButton.icon(
+                                onPressed: isDeleting
+                                    ? null
+                                    : () => _delete(invitation),
+                                icon: const Icon(Icons.delete_outline),
+                                label: isDeleting
+                                    ? const Text('Deleting...')
+                                    : const Text('Delete invitation'),
+                              ),
+                            ),
                           ],
                         ),
                       ),

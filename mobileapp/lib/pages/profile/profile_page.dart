@@ -1,5 +1,6 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
+import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
 
 @RoutePage()
@@ -50,6 +51,22 @@ class ProfilePage extends StatelessWidget {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Credits'),
                         subtitle: Text('${user.credits}'),
+                      ),
+                      const SizedBox(height: 24),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            await UserStorage.clear();
+                            if (context.mounted) {
+                              await context.router.root.replaceAll([
+                                const LoginRoute(),
+                              ]);
+                            }
+                          },
+                          icon: const Icon(Icons.logout),
+                          label: const Text('Logout'),
+                        ),
                       ),
                     ],
                   ),

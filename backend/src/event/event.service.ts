@@ -575,6 +575,38 @@ export class EventService {
     };
   }
 
+  async deletePhotographerInvitation(invitationId: string, photographerId?: string) {
+    if (!photographerId || !Types.ObjectId.isValid(photographerId)) {
+      throw new HttpException('Invalid photographer id', 400);
+    }
+
+    if (!Types.ObjectId.isValid(invitationId)) {
+      throw new HttpException('Invalid invitation id', 400);
+    }
+
+    const invitation = await this.eventInvitationModel
+      .findById(invitationId)
+      .select('photographerId')
+      .lean();
+
+    if (!invitation) {
+      throw new HttpException('Invitation not found', 400);
+    }
+
+    if (this.normalizeId(invitation.photographerId) !== photographerId) {
+      throw new HttpException('You can only delete your own invitations', 403);
+    }
+
+    const deletedInvitation = await this.eventInvitationModel
+      .findByIdAndDelete(invitationId)
+      .lean();
+
+    return {
+      message: 'Invitation deleted successfully',
+      data: deletedInvitation,
+    };
+  }
+
   async toggleActive(id: string, userId?: string) {
     const event = await this.eventModel.findById(id).select('isActive userId').lean();
 

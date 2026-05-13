@@ -82,6 +82,20 @@ export class EventController {
     );
   }
 
+  @Delete('delete-invitation')
+  @UseGuards(AuthGuard, RolesGuard, ThrottlerGuard)
+  @Throttle({ default: { limit: 200, ttl: 3600000 } })
+  @Roles(UserType.PHOTOGRAPHER)
+  deleteInvitation(
+    @Query() query: EventInvitationQueryDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.eventService.deletePhotographerInvitation(
+      query.id,
+      req.user?.id,
+    );
+  }
+
   @Get('get-all')
   findAll(@Query() query: EventFilterDto) {
     return this.eventService.findAll(query);

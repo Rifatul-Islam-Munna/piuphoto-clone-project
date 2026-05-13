@@ -8,6 +8,7 @@ import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/pages/auth/login_page.dart';
 import 'package:mobileapp/pages/auth/register_page.dart';
 import 'package:mobileapp/pages/camera/camera_page.dart';
+import 'package:mobileapp/pages/event_images/event_images_page.dart';
 import 'package:mobileapp/pages/history/history_page.dart';
 import 'package:mobileapp/pages/home/home_page.dart';
 import 'package:mobileapp/pages/invitations/invitations_page.dart';
@@ -48,6 +49,11 @@ class AppRouter extends RootStackRouter {
         AutoRoute(
           page: InvitationsRoute.page,
           path: '/invitations',
+          guards: [authGuard],
+        ),
+        AutoRoute(
+          page: EventImagesRoute.page,
+          path: '/event-images',
           guards: [authGuard],
         ),
         AutoRoute(page: UploadRoute.page, path: '/upload', guards: [authGuard]),
@@ -117,6 +123,7 @@ List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
         label: 'Upload',
       ),
       BottomNavigationBarItem(icon: Icon(Icons.mail_outline), label: 'Invites'),
+      BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'Profile'),
     ];
   }
 

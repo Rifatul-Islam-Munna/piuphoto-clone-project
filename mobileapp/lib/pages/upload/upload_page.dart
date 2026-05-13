@@ -7,8 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
+import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
-import 'package:mobileapp/models/event_image_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
@@ -27,8 +27,6 @@ class _UploadPageState extends State<UploadPage> {
   bool _uploading = false;
   String? _selectedFilePath;
   String? _selectedFileName;
-  Future<List<EventImageModel>>? _eventImagesFuture;
-  String? _loadedEventId;
 
   @override
   void dispose() {
@@ -91,30 +89,6 @@ class _UploadPageState extends State<UploadPage> {
     );
   }
 
-  Future<List<EventImageModel>> _loadEventImages(String eventId) async {
-    final response = await DioHelper.get(
-      '/eventImage/get-all',
-      queryParameters: {'eventId': eventId},
-    );
-    final data = response.data['data'] as List? ?? [];
-    return data
-        .map(
-          (item) => EventImageModel.fromJson(
-            Map<String, dynamic>.from(item as Map),
-          ),
-        )
-        .toList();
-  }
-
-  Future<void> _refreshEventImages(EventSummary? event) async {
-    if (event == null) return;
-    setState(() {
-      _eventImagesFuture = _loadEventImages(event.id);
-      _loadedEventId = event.id;
-    });
-    await _eventImagesFuture;
-  }
-
   Future<void> _submit(EventSummary event) async {
     final filePath = _selectedFilePath;
     final fileName = _selectedFileName;
@@ -137,8 +111,6 @@ class _UploadPageState extends State<UploadPage> {
         _selectedFileName = null;
         _referenceController.clear();
         _isEnhanced = false;
-        _eventImagesFuture = _loadEventImages(event.id);
-        _loadedEventId = event.id;
       });
     } catch (_) {
       AppToast.error('Failed to upload image');
@@ -154,14 +126,6 @@ class _UploadPageState extends State<UploadPage> {
     return ValueListenableBuilder(
       valueListenable: ActiveEventStorage.activeEvent,
       builder: (context, activeEvent, _) {
-        if (activeEvent != null && _loadedEventId != activeEvent.id) {
-          _eventImagesFuture = _loadEventImages(activeEvent.id);
-          _loadedEventId = activeEvent.id;
-        } else if (activeEvent == null && _loadedEventId != null) {
-          _eventImagesFuture = null;
-          _loadedEventId = null;
-        }
-
         return Scaffold(
           appBar: AppBar(title: const Text('Upload')),
           body: ListView(
@@ -188,6 +152,18 @@ class _UploadPageState extends State<UploadPage> {
                     ),
                   ),
                 ),
+              if (activeEvent != null) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () =>
+                        context.router.root.push(const EventImagesRoute()),
+                    icon: const Icon(Icons.image_outlined),
+                    label: const Text('View uploaded images'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               Row(
                 children: [
@@ -262,102 +238,6 @@ class _UploadPageState extends State<UploadPage> {
                       : const Text('Upload to active event'),
                 ),
               ),
-              if (activeEvent != null) ...[
-                const SizedBox(height: 28),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Uploaded images',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Refresh',
-                      onPressed: _uploading
-                          ? null
-                          : () => _refreshEventImages(activeEvent),
-                      icon: const Icon(Icons.refresh),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                FutureBuilder<List<EventImageModel>>(
-                  future: _eventImagesFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-
-                    if (snapshot.hasError) {
-                      return Text('Failed to load images: ${snapshot.error}');
-                    }
-
-                    final images = snapshot.data ?? [];
-                    if (images.isEmpty) {
-                      return const Text('No images uploaded for this event.');
-                    }
-
-                    return GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: images.length,
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                      ),
-                      itemBuilder: (context, index) {
-                        final image = images[index];
-                        return ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              Image.network(
-                                image.imageUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => const ColoredBox(
-                                  color: Colors.black12,
-                                  child: Center(
-                                    child: Icon(Icons.broken_image_outlined),
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                left: 8,
-                                right: 8,
-                                bottom: 8,
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black54,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(6),
-                                    child: Text(
-                                      image.referenceId?.isNotEmpty ?? false
-                                          ? image.referenceId!
-                                          : image.takenBy ?? 'Uploaded',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
-              ],
             ],
           ),
         );

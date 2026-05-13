@@ -17,6 +17,7 @@ class MainShellPage extends StatelessWidget {
                 HomeRoute(),
                 UploadRoute(),
                 InvitationsRoute(),
+                ProfileRoute(),
               ]
             : const [
                 HomeRoute(),

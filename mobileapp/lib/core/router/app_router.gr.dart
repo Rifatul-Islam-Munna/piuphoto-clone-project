@@ -27,6 +27,22 @@ class CameraRoute extends PageRouteInfo<void> {
 }
 
 /// generated route for
+/// [EventImagesPage]
+class EventImagesRoute extends PageRouteInfo<void> {
+  const EventImagesRoute({List<PageRouteInfo>? children})
+    : super(EventImagesRoute.name, initialChildren: children);
+
+  static const String name = 'EventImagesRoute';
+
+  static PageInfo page = PageInfo(
+    name,
+    builder: (data) {
+      return const EventImagesPage();
+    },
+  );
+}
+
+/// generated route for
 /// [HistoryPage]
 class HistoryRoute extends PageRouteInfo<void> {
   const HistoryRoute({List<PageRouteInfo>? children})
