@@ -43,8 +43,12 @@ export class EventController {
 
   @Get('my-events')
   @UseGuards(AuthGuard)
-  getMyEvents(@Req() req: ExpressRequest) {
-    return this.eventService.findAllByUser(req.user?.id);
+  getMyEvents(@Req() req: ExpressRequest, @Query() query: EventFilterDto) {
+    return this.eventService.findAllByUser(
+      req.user?.id,
+      Number(query.page) || 1,
+      Number(query.limit) || 10,
+    );
   }
 
   @Post('invite-photographer')

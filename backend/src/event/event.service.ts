@@ -205,12 +205,16 @@ export class EventService {
     return { message: 'Event created successfully', data: event };
   }
 
-  async findAllByUser(userId?: string) {
+  async findAllByUser(userId?: string, page = 1, limit = 10) {
+    const safePage = Math.max(Number(page) || 1, 1);
+    const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 100);
+    const skip = (safePage - 1) * safeLimit;
+
     if (!userId) {
       return {
         data: [],
-        page: 1,
-        limit: 10,
+        page: safePage,
+        limit: safeLimit,
         totalItems: 0,
         totalPages: 0,
         hasNextPage: false,
@@ -223,8 +227,8 @@ export class EventService {
     if (!Types.ObjectId.isValid(normalizedUserId)) {
       return {
         data: [],
-        page: 1,
-        limit: 10,
+        page: safePage,
+        limit: safeLimit,
         totalItems: 0,
         totalPages: 0,
         hasNextPage: false,
@@ -244,6 +248,8 @@ export class EventService {
         .find(filter)
         .populate('userId', 'name email')
         .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(safeLimit)
         .lean()
         .exec(),
       this.eventModel.countDocuments(filter).exec(),
@@ -309,20 +315,28 @@ export class EventService {
       };
     });
 
+    const totalPages = Math.ceil(totalItems / safeLimit);
+
     return {
       data: enrichedData,
-      page: 1,
-      limit: 10,
+      page: safePage,
+      limit: safeLimit,
       totalItems,
-      totalPages: Math.ceil(totalItems / 10),
-      hasNextPage: false,
-      hasPreviousPage: false,
+      totalPages,
+      hasNextPage: safePage < totalPages,
+      hasPreviousPage: safePage > 1,
       subscription,
     };
   }
 
   async findAll(query: EventFilterDto) {
-    const { query: searchQuery, page = 1, limit = 10, isPublished, isActive } = query;
+    const {
+      query: searchQuery,
+      isPublished,
+      isActive,
+    } = query;
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 10, 1), 100);
 
     const skip = (page - 1) * limit;
     const filter: any = {};

@@ -26,6 +26,7 @@ class FeatureMapping {
     'branding.pageTitleAd': 'Page Title Ad',
     'api.access': 'API Access',
     'analytics.view': 'Analytics Dashboard',
+    'custom.enhancer': 'Custom AI Enhancer Prompt',
   };
 
   static const Map<String, String> limits = {

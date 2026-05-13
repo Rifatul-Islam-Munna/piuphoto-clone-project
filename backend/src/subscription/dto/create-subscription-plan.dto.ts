@@ -196,6 +196,14 @@ export class PurchaseHistoryFilterDto {
   @IsString()
   @IsOptional()
   type?: string = 'all';
+
+  @ApiPropertyOptional({ example: 1, default: 1 })
+  @IsOptional()
+  page?: number = 1;
+
+  @ApiPropertyOptional({ example: 10, default: 10 })
+  @IsOptional()
+  limit?: number = 10;
 }
 
 export class InvoiceQueryDto {

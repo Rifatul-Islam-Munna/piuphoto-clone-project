@@ -102,7 +102,11 @@ export class SubscriptionPlanController {
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserType.ADMIN)
   getPurchaseHistory(@Query() query: PurchaseHistoryFilterDto) {
-    return this.subscriptionPlanService.getPurchaseHistory(query.type);
+    return this.subscriptionPlanService.getPurchaseHistory(
+      query.type,
+      Number(query.page) || 1,
+      Number(query.limit) || 10,
+    );
   }
 
   @Get('invoice')

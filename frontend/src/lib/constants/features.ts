@@ -5,29 +5,10 @@ export const featureMapping = {
   "photo.share": "Photo Sharing",
   "photo.qr": "QR Code Generation",
   "photo.aiRetouch": "AI Retouch",
-  "photo.aiReview": "AI Reviewer",
-  "photo.aiSearch": "AI Search",
-  "photo.privacy": "Privacy Protection",
-  "photo.watermark": "Photo Watermark",
-  "photo.brandCard": "Brand Card",
-
+  "custom.enhancer": "Custom AI Enhancer Prompt",
   "event.create": "Create Events",
   "event.live": "Live Album",
   "event.realtime": "Real-time Photo Sync",
-  "event.premium": "Unlock Album Premium Features",
-  "event.videoLive": "Video Live",
-  "event.urlCustom": "Access URL Customization",
-
-  "camera.otg": "OTG Cable Transfer",
-  "camera.ftp": "FTP Wireless Transfer",
-
-  "branding.premium": "Premium Branding",
-  "branding.footerAd": "Footer Ad",
-  "branding.sidebarAd": "Sidebar Ad",
-  "branding.loadingPage": "Loading Page",
-  "branding.pageTitleAd": "Page Title Ad",
-  "api.access": "API Access",
-  "analytics.view": "Analytics Dashboard",
 };
 
 export const limitMapping = {

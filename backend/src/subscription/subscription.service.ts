@@ -777,7 +777,7 @@ export class SubscriptionPlanService {
     };
   }
 
-  async getPurchaseHistory(type = 'all') {
+  async getPurchaseHistory(type = 'all', page = 1, limit = 10) {
     const [planPurchases, addonPurchases] = await Promise.all([
       this.subscriptionPlanPurchaseModel
         .find(type === 'addon' ? { _id: null as any } : {})
@@ -858,9 +858,20 @@ export class SubscriptionPlanService {
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
 
+    const safePage = Math.max(Number(page) || 1, 1);
+    const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 100);
+    const totalItems = data.length;
+    const totalPages = Math.ceil(totalItems / safeLimit);
+    const start = (safePage - 1) * safeLimit;
+
     return {
-      data,
-      totalItems: data.length,
+      data: data.slice(start, start + safeLimit),
+      page: safePage,
+      limit: safeLimit,
+      totalItems,
+      totalPages,
+      hasNextPage: safePage < totalPages,
+      hasPreviousPage: safePage > 1,
     };
   }
 

@@ -16,7 +16,11 @@ import {
   EventInvitationDocument,
   EventInvitationStatus,
 } from '../event/entities/event-invitation.entity';
-import { UserType } from '../user/entities/user.entity';
+import { User, UserDocument, UserType } from '../user/entities/user.entity';
+import {
+  SubscriptionPlan,
+  SubscriptionPlanDocument,
+} from '../subscription/entities/subscription-plan.entity';
 
 @Injectable()
 export class EventImageService {
@@ -31,6 +35,10 @@ export class EventImageService {
     private albumModel: Model<AlbumDocument>,
     @InjectModel(EventInvitation.name)
     private eventInvitationModel: Model<EventInvitationDocument>,
+    @InjectModel(User.name)
+    private userModel: Model<UserDocument>,
+    @InjectModel(SubscriptionPlan.name)
+    private subscriptionPlanModel: Model<SubscriptionPlanDocument>,
     private readonly configService: ConfigService,
   ) {}
 
@@ -83,7 +91,7 @@ export class EventImageService {
     return event;
   }
 
-  private enhancePrompt() {
+  private defaultEnhancePrompt() {
     return [
       'Professional Adobe Photoshop-style photo enhancement.',
       'Preserve the original subject identity, pose, clothing, scene, and composition.',
@@ -93,7 +101,7 @@ export class EventImageService {
     ].join(' ');
   }
 
-  private async enhanceImage(imageUrl: string) {
+  private async enhanceImage(imageUrl: string, prompt?: string) {
     const falKey =
       this.configService.get<string>('FAL_KEY') ||
       this.configService.get<string>('FAL_API_KEY');
@@ -107,7 +115,7 @@ export class EventImageService {
     }>(
       'https://fal.run/fal-ai/bytedance/seedream/v4/edit',
       {
-        prompt: this.enhancePrompt(),
+        prompt: prompt?.trim() || this.defaultEnhancePrompt(),
         image_urls: [imageUrl],
         image_size: 'auto',
         num_images: 1,
@@ -130,6 +138,116 @@ export class EventImageService {
     }
 
     return enhancedUrl;
+  }
+
+  private extractPermissionLimit(
+    permissions: Record<string, unknown>[] = [],
+    key: string,
+  ) {
+    for (const permission of permissions) {
+      if (
+        permission?.key === key &&
+        permission.value !== undefined &&
+        permission.value !== null
+      ) {
+        const numericValue = Number(permission.value);
+        if (!Number.isNaN(numericValue)) return numericValue;
+      }
+
+      if (
+        Object.prototype.hasOwnProperty.call(permission, key) &&
+        permission[key] !== undefined &&
+        permission[key] !== null
+      ) {
+        const numericValue = Number(permission[key]);
+        if (!Number.isNaN(numericValue)) return numericValue;
+      }
+    }
+
+    return 0;
+  }
+
+  private async getOwnerPlanMeta(ownerId: string) {
+    const user = await this.userModel
+      .findById(ownerId)
+      .select('credits subscriptionPlanId')
+      .lean();
+
+    const plan = user?.subscriptionPlanId
+      ? await this.subscriptionPlanModel
+          .findById(user.subscriptionPlanId)
+          .select('permissions features')
+          .lean()
+      : null;
+
+    const permissions = Array.isArray(plan?.permissions)
+      ? (plan.permissions as unknown as Record<string, unknown>[])
+      : [];
+
+    return {
+      credits: user?.credits || 0,
+      monthlyPhotoLimit: this.extractPermissionLimit(
+        permissions,
+        'photos.monthly',
+      ),
+      hasCustomEnhancer: Array.isArray(plan?.features)
+        ? plan.features.includes('custom.enhancer')
+        : false,
+    };
+  }
+
+  private async assertEventUploadLimit(eventId: string, ownerId: string) {
+    const meta = await this.getOwnerPlanMeta(ownerId);
+    if (meta.monthlyPhotoLimit <= 0) return;
+
+    const currentCount = await this.eventImageModel.countDocuments({
+      eventId: this.toObjectId(eventId),
+      isEnhanced: { $ne: true },
+    });
+
+    if (currentCount >= meta.monthlyPhotoLimit) {
+      throw new HttpException('Max image upload limit reached for this event', 400);
+    }
+  }
+
+  private async tryEnhanceForOwner(
+    imageUrl: string,
+    eventId: string,
+    uploaderId: string,
+    ownerId: string,
+    albumId?: string,
+    prompt?: string,
+  ) {
+    const meta = await this.getOwnerPlanMeta(ownerId);
+    const customPrompt = prompt?.trim();
+    const finalPrompt = meta.hasCustomEnhancer ? customPrompt : undefined;
+
+    if (meta.credits < 3) return null;
+
+    const chargedUser = await this.userModel
+      .findOneAndUpdate(
+        { _id: this.toObjectId(ownerId), credits: { $gte: 3 } },
+        { $inc: { credits: -3 } },
+        { new: true },
+      )
+      .select('_id')
+      .lean();
+
+    if (!chargedUser) return null;
+
+    try {
+      const enhancedUrl = await this.enhanceImage(imageUrl, finalPrompt);
+      return await this.eventImageModel.create({
+        eventId: this.toObjectId(eventId),
+        imageUrl: enhancedUrl,
+        userTakenBy: this.toObjectId(uploaderId),
+        albumId: albumId ? this.toObjectId(albumId) : undefined,
+        isEnhanced: true,
+      });
+    } catch (error) {
+      await this.userModel.findByIdAndUpdate(ownerId, { $inc: { credits: 3 } });
+      throw error;
+    }
   }
 
   private async assertAlbumBelongsToEvent(albumId: string, eventId: string) {
@@ -169,6 +287,11 @@ export class EventImageService {
       );
     }
 
+    await this.assertEventUploadLimit(
+      createEventImageDto.eventId,
+      String(event.userId),
+    );
+
     const eventImage = await this.eventImageModel.create({
       eventId: this.toObjectId(createEventImageDto.eventId),
       imageUrl: createEventImageDto.imageUrl,
@@ -182,16 +305,14 @@ export class EventImageService {
     let enhancedImage: EventImageDocument | null = null;
     if (event.autoEnhanceImages && !createEventImageDto.isEnhanced) {
       try {
-        const enhancedUrl = await this.enhanceImage(createEventImageDto.imageUrl);
-        enhancedImage = await this.eventImageModel.create({
-          eventId: this.toObjectId(createEventImageDto.eventId),
-          imageUrl: enhancedUrl,
-          userTakenBy: this.toObjectId(String(userId)),
-          albumId: createEventImageDto.albumId
-            ? this.toObjectId(createEventImageDto.albumId)
-            : undefined,
-          isEnhanced: true,
-        });
+        enhancedImage = await this.tryEnhanceForOwner(
+          createEventImageDto.imageUrl,
+          createEventImageDto.eventId,
+          String(userId),
+          String(event.userId),
+          createEventImageDto.albumId,
+          createEventImageDto.enhancePrompt,
+        );
       } catch (error) {
         this.logger.error('image-enhance-failed', error);
       }
@@ -205,6 +326,9 @@ export class EventImageService {
   }
 
   async findAll(query: EventImageFilterDto) {
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+    const skip = (page - 1) * limit;
     const filter: Record<string, unknown> = {};
 
     if (query.eventId && Types.ObjectId.isValid(query.eventId)) {
@@ -223,16 +347,31 @@ export class EventImageService {
       filter.isEnhanced = query.isEnhanced === 'true';
     }
 
-    const data = await this.eventImageModel
-      .find(filter)
-      .populate('eventId', 'title description image')
-      .populate('albumId', 'title description')
-      .populate('userTakenBy', 'name email phone userId role')
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    const [data, totalItems] = await Promise.all([
+      this.eventImageModel
+        .find(filter)
+        .populate('eventId', 'title description image')
+        .populate('albumId', 'title description')
+        .populate('userTakenBy', 'name email phone userId role')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.eventImageModel.countDocuments(filter).exec(),
+    ]);
 
-    return { data, totalItems: data.length };
+    const totalPages = Math.ceil(totalItems / limit);
+
+    return {
+      data,
+      page,
+      limit,
+      totalItems,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1,
+    };
   }
 
   async findPublicByEvent(eventId: string, albumId?: string) {
@@ -349,5 +488,54 @@ export class EventImageService {
     const eventImage = await this.eventImageModel.findByIdAndDelete(id).lean();
 
     return { message: 'Event image deleted successfully', data: eventImage };
+  }
+
+  async enhanceExisting(
+    id: string,
+    userId?: string,
+    role?: string,
+    prompt?: string,
+  ) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new HttpException('Invalid event image id', 400);
+    }
+
+    const existing = await this.eventImageModel
+      .findById(id)
+      .select('eventId imageUrl albumId isEnhanced')
+      .lean();
+
+    if (!existing) {
+      throw new HttpException('Event image not found', 400);
+    }
+
+    const event = await this.assertCanUseEvent(
+      String(existing.eventId),
+      userId,
+      role,
+    );
+
+    const enhancedImage = await this.tryEnhanceForOwner(
+      existing.imageUrl,
+      String(existing.eventId),
+      String(userId),
+      String(event.userId),
+      existing.albumId ? String(existing.albumId) : undefined,
+      prompt,
+    );
+
+    if (!enhancedImage) {
+      return {
+        message: 'Enhance skipped because owner has not enough credits',
+        data: null,
+        skipped: true,
+      };
+    }
+
+    return {
+      message: 'Image enhanced successfully',
+      data: enhancedImage,
+      skipped: false,
+    };
   }
 }

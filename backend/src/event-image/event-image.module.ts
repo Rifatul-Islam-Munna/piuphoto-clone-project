@@ -9,6 +9,11 @@ import {
   EventInvitation,
   EventInvitationSchema,
 } from '../event/entities/event-invitation.entity';
+import { User, UserSchema } from '../user/entities/user.entity';
+import {
+  SubscriptionPlan,
+  SubscriptionPlanSchema,
+} from '../subscription/entities/subscription-plan.entity';
 
 @Module({
   imports: [
@@ -17,6 +22,8 @@ import {
       { name: Event.name, schema: EventSchema },
       { name: Album.name, schema: AlbumSchema },
       { name: EventInvitation.name, schema: EventInvitationSchema },
+      { name: User.name, schema: UserSchema },
+      { name: SubscriptionPlan.name, schema: SubscriptionPlanSchema },
     ]),
   ],
   controllers: [EventImageController],

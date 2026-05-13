@@ -13,6 +13,7 @@ import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { EventImageService } from './event-image.service';
 import {
   CreateEventImageDto,
+  EnhanceEventImageDto,
   EventImageFilterDto,
   EventImageQueryDto,
 } from './dto/create-event-image.dto';
@@ -70,6 +71,21 @@ export class EventImageController {
       updateEventImageDto,
       req.user?.id,
       req.user?.role,
+    );
+  }
+
+  @Post('enhance')
+  @UseGuards(AuthGuard, ThrottlerGuard)
+  @Throttle({ default: { limit: 200, ttl: 3600000 } })
+  enhance(
+    @Body() body: EnhanceEventImageDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.eventImageService.enhanceExisting(
+      body.id,
+      req.user?.id,
+      req.user?.role,
+      body.prompt,
     );
   }
 

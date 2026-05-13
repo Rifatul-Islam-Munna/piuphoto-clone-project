@@ -108,10 +108,11 @@ export default function Events() {
   const [formData, setFormData] = useState<EventFormData>(defaultFormData);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
 
   const eventsQuery = useQueryWrapper<EventsResponse>(
-    ["admin-events"],
-    "/event/get-all?limit=100&isActive=all&isPublished=all",
+    ["admin-events", page],
+    `/event/get-all?page=${page}&limit=10&isActive=all&isPublished=all`,
     { withToken: true, withCredentials: true },
   );
 
@@ -351,6 +352,29 @@ export default function Events() {
                 </TableBody>
               </Table>
             )}
+            {eventsQuery.data && eventsQuery.data.totalPages > 1 ? (
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((value) => Math.max(1, value - 1))}
+                  disabled={!eventsQuery.data.hasPreviousPage}
+                >
+                  Previous
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  Page {eventsQuery.data.page} of {eventsQuery.data.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((value) => value + 1)}
+                  disabled={!eventsQuery.data.hasNextPage}
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 

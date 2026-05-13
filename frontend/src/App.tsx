@@ -12,9 +12,11 @@ import Addons from "./pages/admin/Addons";
 import Billing from "./pages/admin/Billing";
 import Users from "./pages/admin/Users";
 import Events from "./pages/admin/Events";
+import AdminSettings from "./pages/admin/AdminSettings";
 import UserDashboard from "./pages/user/UserDashboard";
 import UserInvitations from "./pages/user/UserInvitations";
 import UserSettings from "./pages/user/UserSettings";
+import UserGallery from "./pages/user/UserGallery";
 import Pricing from "./pages/Pricing";
 import EventPublicGallery from "./pages/public/EventPublicGallery";
 
@@ -118,6 +120,14 @@ const App = () => (
             }
           />
           <Route
+            path="/admin/settings"
+            element={
+              <ProtectedAdminRoute>
+                <AdminSettings />
+              </ProtectedAdminRoute>
+            }
+          />
+          <Route
             path="/user/dashboard"
             element={
               <ProtectedUserRoute>
@@ -137,7 +147,7 @@ const App = () => (
             path="/user/gallery"
             element={
               <ProtectedUserRoute>
-                <UserDashboard />
+                <UserGallery />
               </ProtectedUserRoute>
             }
           />

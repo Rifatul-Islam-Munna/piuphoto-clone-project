@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsNumberString,
   IsMongoId,
   IsNotEmpty,
   IsOptional,
@@ -29,6 +30,11 @@ export class CreateEventImageDto {
   @IsMongoId()
   @IsOptional()
   albumId?: string;
+
+  @ApiPropertyOptional({ example: 'Make lighting warm and cinematic' })
+  @IsString()
+  @IsOptional()
+  enhancePrompt?: string;
 }
 
 export class EventImageFilterDto {
@@ -50,6 +56,16 @@ export class EventImageFilterDto {
   @IsMongoId()
   @IsOptional()
   albumId?: string;
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsNumberString()
+  @IsOptional()
+  page?: string;
+
+  @ApiPropertyOptional({ example: 20 })
+  @IsNumberString()
+  @IsOptional()
+  limit?: string;
 }
 
 export class EventImageQueryDto {
@@ -57,4 +73,16 @@ export class EventImageQueryDto {
   @IsMongoId()
   @IsNotEmpty()
   id: string;
+}
+
+export class EnhanceEventImageDto {
+  @ApiProperty({ example: '507f1f77bcf86cd799439013' })
+  @IsMongoId()
+  @IsNotEmpty()
+  id: string;
+
+  @ApiPropertyOptional({ example: 'Make it bright and natural' })
+  @IsString()
+  @IsOptional()
+  prompt?: string;
 }

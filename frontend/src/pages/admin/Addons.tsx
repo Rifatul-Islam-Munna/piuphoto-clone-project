@@ -47,6 +47,12 @@ type Addon = {
 
 type AddonsResponse = {
   data: Addon[];
+  page: number;
+  limit: number;
+  totalItems: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
 };
 
 type AddonFormData = {
@@ -76,10 +82,11 @@ export default function Addons() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingAddon, setEditingAddon] = useState<Addon | null>(null);
   const [formData, setFormData] = useState<AddonFormData>(defaultFormData);
+  const [page, setPage] = useState(1);
 
   const addonsQuery = useQueryWrapper<AddonsResponse>(
-    ["addons"],
-    "/addon/get-all?limit=100&isActive=all",
+    ["addons", page],
+    `/addon/get-all?page=${page}&limit=6&isActive=all`,
     { withToken: true, withCredentials: true },
   );
 
@@ -251,6 +258,30 @@ export default function Addons() {
             ))}
           </div>
         )}
+
+        {addonsQuery.data && addonsQuery.data.totalPages > 1 ? (
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              disabled={!addonsQuery.data.hasPreviousPage}
+            >
+              Previous
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Page {addonsQuery.data.page} of {addonsQuery.data.totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((value) => value + 1)}
+              disabled={!addonsQuery.data.hasNextPage}
+            >
+              Next
+            </Button>
+          </div>
+        ) : null}
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="max-w-2xl">

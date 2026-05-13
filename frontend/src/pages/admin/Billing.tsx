@@ -64,7 +64,12 @@ type PurchaseHistoryRow = {
 
 type PurchaseHistoryResponse = {
   data: PurchaseHistoryRow[];
+  page: number;
+  limit: number;
   totalItems: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
 };
 
 type InvoiceResponse = {
@@ -88,14 +93,15 @@ type InvoiceResponse = {
 
 export default function Billing() {
   const [typeFilter, setTypeFilter] = useState("all");
+  const [page, setPage] = useState(1);
   const [selectedInvoice, setSelectedInvoice] = useState<{
     id: string;
     type: "plan" | "addon";
   } | null>(null);
 
   const historyQuery = useQueryWrapper<PurchaseHistoryResponse>(
-    ["purchase-history", typeFilter],
-    `/subscription-plan/purchase-history?type=${typeFilter}`,
+    ["purchase-history", typeFilter, page],
+    `/subscription-plan/purchase-history?type=${typeFilter}&page=${page}&limit=10`,
     { withToken: true, withCredentials: true },
   );
 
@@ -124,7 +130,10 @@ export default function Billing() {
             </p>
           </div>
           <div className="w-40">
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <Select value={typeFilter} onValueChange={(value) => {
+              setTypeFilter(value);
+              setPage(1);
+            }}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -213,6 +222,29 @@ export default function Billing() {
                 </TableBody>
               </Table>
             )}
+            {historyQuery.data && historyQuery.data.totalPages > 1 ? (
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((value) => Math.max(1, value - 1))}
+                  disabled={!historyQuery.data.hasPreviousPage}
+                >
+                  Previous
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  Page {historyQuery.data.page} of {historyQuery.data.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((value) => value + 1)}
+                  disabled={!historyQuery.data.hasNextPage}
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 

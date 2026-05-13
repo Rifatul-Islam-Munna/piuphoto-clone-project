@@ -1,9 +1,11 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/models/event_image_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
+import 'package:mobileapp/utilities/app_toast.dart';
 
 @RoutePage()
 class EventImagesPage extends StatefulWidget {
@@ -16,6 +18,13 @@ class EventImagesPage extends StatefulWidget {
 class _EventImagesPageState extends State<EventImagesPage> {
   Future<List<EventImageModel>>? _future;
   String? _eventId;
+  final _promptController = TextEditingController();
+
+  @override
+  void dispose() {
+    _promptController.dispose();
+    super.dispose();
+  }
 
   Future<List<EventImageModel>> _loadEventImages(String eventId) async {
     final response = await DioHelper.get(
@@ -30,6 +39,122 @@ class _EventImagesPageState extends State<EventImagesPage> {
           ),
         )
         .toList();
+  }
+
+  Future<void> _deleteImage(EventSummary event, EventImageModel image) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete image'),
+        content: const Text('Delete this image?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await DioHelper.delete('/eventImage/delete', queryParameters: {'id': image.id});
+      AppToast.success('Image deleted');
+      await _refresh(event);
+    } catch (_) {
+      AppToast.error('Failed to delete image');
+    }
+  }
+
+  Future<void> _enhanceImage(EventSummary event, EventImageModel image) async {
+    _promptController.clear();
+    final prompt = await showDialog<String?>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enhance image'),
+        content: TextField(
+          controller: _promptController,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            labelText: 'Custom prompt',
+            hintText: 'Optional if your plan allows it',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, _promptController.text),
+            child: const Text('Enhance'),
+          ),
+        ],
+      ),
+    );
+
+    if (prompt == null) return;
+
+    try {
+      final response = await DioHelper.post(
+        '/eventImage/enhance',
+        data: {
+          'id': image.id,
+          if (prompt.trim().isNotEmpty) 'prompt': prompt.trim(),
+        },
+      );
+      if (response.data['skipped'] == true) {
+        AppToast.error('Enhance skipped. Not enough credits.');
+      } else {
+        AppToast.success('Image enhanced');
+      }
+      await _refresh(event);
+    } catch (_) {
+      AppToast.error('Failed to enhance image');
+    }
+  }
+
+  void _openImageActions(EventSummary event, EventImageModel image) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.share_outlined),
+              title: const Text('Share'),
+              onTap: () {
+                Navigator.pop(context);
+                SharePlus.instance.share(ShareParams(uri: Uri.parse(image.imageUrl)));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.auto_fix_high),
+              title: const Text('Enhance'),
+              onTap: () {
+                Navigator.pop(context);
+                _enhanceImage(event, image);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('Delete'),
+              onTap: () {
+                Navigator.pop(context);
+                _deleteImage(event, image);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _refresh(EventSummary event) async {
@@ -96,9 +221,11 @@ class _EventImagesPageState extends State<EventImagesPage> {
                       ),
                       itemBuilder: (context, index) {
                         final image = images[index];
-                        return ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Stack(
+                        return InkWell(
+                          onTap: () => _openImageActions(activeEvent, image),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Stack(
                             fit: StackFit.expand,
                             children: [
                               Image.network(
@@ -137,6 +264,7 @@ class _EventImagesPageState extends State<EventImagesPage> {
                                 ),
                               ),
                             ],
+                          ),
                           ),
                         );
                       },

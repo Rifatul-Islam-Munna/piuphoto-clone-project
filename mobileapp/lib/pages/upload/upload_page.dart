@@ -549,6 +549,11 @@ class _UploadPageState extends State<UploadPage> {
         _selectedFileName = null;
         _isEnhanced = false;
       });
+    } on DioException catch (error) {
+      AppToast.error(
+        error.response?.data?['message']?.toString() ??
+            'Failed to upload image',
+      );
     } catch (_) {
       AppToast.error('Failed to upload image');
     } finally {

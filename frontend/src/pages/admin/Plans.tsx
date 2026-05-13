@@ -98,10 +98,11 @@ export default function Plans() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingPlan, setEditingPlan] = useState<SubscriptionPlan | null>(null);
   const [formData, setFormData] = useState<PlanFormData>(defaultFormData);
+  const [page, setPage] = useState(1);
 
   const plansQuery = useQueryWrapper<SubscriptionPlanResponse>(
-    ["subscription-plans"],
-    "/subscription-plan/get-all?limit=100&isActive=all",
+    ["subscription-plans", page],
+    `/subscription-plan/get-all?page=${page}&limit=6&isActive=all`,
     {
       withToken: true,
       withCredentials: true,
@@ -367,6 +368,30 @@ export default function Plans() {
             ))}
           </div>
         )}
+
+        {plansQuery.data && plansQuery.data.totalPages > 1 ? (
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              disabled={!plansQuery.data.hasPreviousPage}
+            >
+              Previous
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Page {plansQuery.data.page} of {plansQuery.data.totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((value) => value + 1)}
+              disabled={!plansQuery.data.hasNextPage}
+            >
+              Next
+            </Button>
+          </div>
+        ) : null}
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="max-h-[90vh] overflow-y-auto max-w-3xl">

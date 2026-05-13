@@ -175,11 +175,12 @@ export default function UserDashboard() {
   >(undefined);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: eventsData, isLoading } = useQueryWrapper<EventsResponse>(
-    ["events"],
-    "/event/my-events",
+    ["events", page],
+    `/event/my-events?page=${page}&limit=10`,
     { withToken: true, withCredentials: true },
   );
 
@@ -777,142 +778,167 @@ export default function UserDashboard() {
                 </Button>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Title</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Photographers</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {myEvents.map((event) => (
-                    <TableRow key={event._id}>
-                      <TableCell className="font-medium">{event.title}</TableCell>
-                      <TableCell className="max-w-xs truncate">
-                        {event.description || "-"}
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <p className="text-sm font-medium">
-                            {event.inviteSummary.acceptedInvites}/
-                            {event.inviteSummary.maxPhotographers} accepted
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {event.inviteSummary.pendingInvites} pending,{" "}
-                            {event.inviteSummary.remainingInvites} left
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Badge
-                            variant={event.isActive ? "default" : "secondary"}
-                          >
-                            {event.isActive ? "Active" : "Inactive"}
-                          </Badge>
-                          <Badge
-                            variant={
-                              event.isPublished ? "outline" : "destructive"
-                            }
-                          >
-                            {event.isPublished ? "Published" : "Draft"}
-                          </Badge>
-                          {event.autoEnhanceImages && (
-                            <Badge variant="secondary">
-                              <Sparkles className="mr-1 h-3 w-3" />
-                              Enhance
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {new Date(event.createdAt).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                            >
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => setViewEvent(event)}>
-                              <Eye className="mr-2 h-4 w-4" />
-                              View
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleGenerateQrCode(event)}
-                            >
-                              <QrCode className="mr-2 h-4 w-4" />
-                              Generate QR Code
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleOpenInviteDialog(event._id)}
-                            >
-                              <UserPlus className="mr-2 h-4 w-4" />
-                              Invitations
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleOpenAlbumsDialog(event)}
-                            >
-                              <FolderPlus className="mr-2 h-4 w-4" />
-                              Albums
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setEditingEvent(event);
-                                setFormData({
-                                  title: event.title,
-                                  description: event.description || "",
-                                  image: event.image,
-                                  autoEnhanceImages:
-                                    event.autoEnhanceImages || false,
-                                });
-                                if (event.image?.url) {
-                                  setImagePreview(event.image.url);
-                                }
-                                setDialogOpen(true);
-                              }}
-                            >
-                              <Pencil className="mr-2 h-4 w-4" />
-                              Edit
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() =>
-                                toggleActiveMutation.mutate(event._id)
-                              }
-                            >
-                              {event.isActive ? "Deactivate" : "Activate"}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() =>
-                                togglePublishedMutation.mutate(event._id)
-                              }
-                            >
-                              {event.isPublished ? "Unpublish" : "Publish"}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleDelete(event._id)}
-                              className="text-red-600 focus:text-red-600"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
+              <div className="space-y-4">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Title</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Photographers</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {myEvents.map((event) => (
+                      <TableRow key={event._id}>
+                        <TableCell className="font-medium">{event.title}</TableCell>
+                        <TableCell className="max-w-xs truncate">
+                          {event.description || "-"}
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p className="text-sm font-medium">
+                              {event.inviteSummary.acceptedInvites}/
+                              {event.inviteSummary.maxPhotographers} accepted
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {event.inviteSummary.pendingInvites} pending,{" "}
+                              {event.inviteSummary.remainingInvites} left
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Badge
+                              variant={event.isActive ? "default" : "secondary"}
+                            >
+                              {event.isActive ? "Active" : "Inactive"}
+                            </Badge>
+                            <Badge
+                              variant={
+                                event.isPublished ? "outline" : "destructive"
+                              }
+                            >
+                              {event.isPublished ? "Published" : "Draft"}
+                            </Badge>
+                            {event.autoEnhanceImages && (
+                              <Badge variant="secondary">
+                                <Sparkles className="mr-1 h-3 w-3" />
+                                Enhance
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {new Date(event.createdAt).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => setViewEvent(event)}>
+                                <Eye className="mr-2 h-4 w-4" />
+                                View
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleGenerateQrCode(event)}
+                              >
+                                <QrCode className="mr-2 h-4 w-4" />
+                                Generate QR Code
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleOpenInviteDialog(event._id)}
+                              >
+                                <UserPlus className="mr-2 h-4 w-4" />
+                                Invitations
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleOpenAlbumsDialog(event)}
+                              >
+                                <FolderPlus className="mr-2 h-4 w-4" />
+                                Albums
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setEditingEvent(event);
+                                  setFormData({
+                                    title: event.title,
+                                    description: event.description || "",
+                                    image: event.image,
+                                    autoEnhanceImages:
+                                      event.autoEnhanceImages || false,
+                                  });
+                                  if (event.image?.url) {
+                                    setImagePreview(event.image.url);
+                                  }
+                                  setDialogOpen(true);
+                                }}
+                              >
+                                <Pencil className="mr-2 h-4 w-4" />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  toggleActiveMutation.mutate(event._id)
+                                }
+                              >
+                                {event.isActive ? "Deactivate" : "Activate"}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  togglePublishedMutation.mutate(event._id)
+                                }
+                              >
+                                {event.isPublished ? "Unpublish" : "Publish"}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleDelete(event._id)}
+                                className="text-red-600 focus:text-red-600"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <div className="flex items-center justify-between text-sm text-muted-foreground">
+                  <span>
+                    Page {eventsData?.page || page} of {eventsData?.totalPages || 1}
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!eventsData?.hasPreviousPage}
+                      onClick={() => setPage((value) => Math.max(value - 1, 1))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!eventsData?.hasNextPage}
+                      onClick={() => setPage((value) => value + 1)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
