@@ -1,13 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import PricingCard from './PricingCard';
 import { Button } from '@/components/ui/button';
 import { getFeatureDescription, getLimitDescription } from '@/lib/constants/features';
 import { useQueryWrapper } from '../../../api-hooks/react-query-wrapper';
+import { GetRequestAxios, PostRequestAxios } from '../../../api-hooks/api-hooks';
 
 type PlanPermission =
   | { key?: string; value?: number | string }
@@ -28,6 +29,20 @@ type Plan = {
 
 type PlansResponse = {
   data: Plan[];
+};
+
+type Addon = {
+  _id: string;
+  title: string;
+  description?: string;
+  credit: number;
+  price: number;
+  currency: string;
+  isActive: boolean;
+};
+
+type AddonsResponse = {
+  data: Addon[];
 };
 
 const tabOptions = [
@@ -169,13 +184,134 @@ const normalizePermissions = (permissions: PlanPermission[] = []) => {
 
 const PricingSection = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [billingUnit, setBillingUnit] = useState<'PER_MONTH' | 'PER_YEAR'>('PER_MONTH');
+  const [isVerifying, setIsVerifying] = useState(false);
 
   const { data: plansData, isLoading } = useQueryWrapper<PlansResponse>(
     ['home-plans'],
     '/subscription-plan/get-all?limit=100&isActive=true',
     { withCredentials: true },
   );
+
+  const { data: addonsData, isLoading: addonsLoading } = useQueryWrapper<AddonsResponse>(
+    ['pricing-addons'],
+    '/addon/get-all?limit=100&isActive=true',
+    { withCredentials: true },
+  );
+
+  useEffect(() => {
+    const planStatus = searchParams.get('planPurchase');
+    const planSessionId = searchParams.get('planSessionId');
+    const status = searchParams.get('addonPurchase');
+    const sessionId = searchParams.get('addonSessionId');
+
+    if (planStatus === 'cancel') {
+      toast.error('Plan purchase cancelled');
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('planPurchase');
+      nextParams.delete('planSessionId');
+      setSearchParams(nextParams, { replace: true });
+      return;
+    }
+
+    if (planStatus === 'success' && planSessionId && !isVerifying) {
+      setIsVerifying(true);
+
+      GetRequestAxios<{
+        message: string;
+        data: { creditsAdded: number; totalCredits: number };
+      }>(`/subscription-plan/verify-checkout?sessionId=${planSessionId}`, {
+        withToken: true,
+        withCredentials: true,
+      })
+        .then(([response, error]) => {
+          if (error || !response) {
+            throw new Error(error?.message || 'Failed to verify plan purchase');
+          }
+
+          toast.success(
+            `Plan active. Credits added: ${response.data.creditsAdded}. Total credits: ${response.data.totalCredits}`,
+          );
+
+          const userStr = localStorage.getItem('user');
+          if (userStr) {
+            try {
+              const parsedUser = JSON.parse(userStr);
+              parsedUser.credits = response.data.totalCredits;
+              localStorage.setItem('user', JSON.stringify(parsedUser));
+            } catch {}
+          }
+
+          const nextParams = new URLSearchParams(searchParams);
+          nextParams.delete('planPurchase');
+          nextParams.delete('planSessionId');
+          setSearchParams(nextParams, { replace: true });
+        })
+        .catch((error: Error) => {
+          toast.error(error.message || 'Failed to verify plan purchase');
+        })
+        .finally(() => {
+          setIsVerifying(false);
+        });
+
+      return;
+    }
+
+    if (status === 'cancel') {
+      toast.error('Addon purchase cancelled');
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('addonPurchase');
+      nextParams.delete('addonSessionId');
+      setSearchParams(nextParams, { replace: true });
+      return;
+    }
+
+    if (status !== 'success' || !sessionId || isVerifying) {
+      return;
+    }
+
+    setIsVerifying(true);
+
+    GetRequestAxios<{
+      message: string;
+      data: { creditsAdded: number; totalCredits: number };
+    }>(`/addon/verify-checkout?sessionId=${sessionId}`, {
+      withToken: true,
+      withCredentials: true,
+    })
+      .then(([response, error]) => {
+        if (error || !response) {
+          throw new Error(error?.message || 'Failed to verify purchase');
+        }
+
+        toast.success(
+          `Credits added: ${response.data.creditsAdded}. Total credits: ${response.data.totalCredits}`,
+        );
+
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+          try {
+            const parsedUser = JSON.parse(userStr);
+            parsedUser.credits = response.data.totalCredits;
+            localStorage.setItem('user', JSON.stringify(parsedUser));
+          } catch {
+            // ignore malformed local storage payload
+          }
+        }
+
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('addonPurchase');
+        nextParams.delete('addonSessionId');
+        setSearchParams(nextParams, { replace: true });
+      })
+      .catch((error: Error) => {
+        toast.error(error.message || 'Failed to verify purchase');
+      })
+      .finally(() => {
+        setIsVerifying(false);
+      });
+  }, [isVerifying, searchParams, setSearchParams]);
 
   const groupedPlans = useMemo(() => {
     const apiPlans = plansData?.data || [];
@@ -221,7 +357,7 @@ const PricingSection = () => {
 
   const visiblePlans = groupedPlans[billingUnit];
 
-  const handleBuyNow = (planName: string) => {
+  const handleBuyNow = async (planId: string) => {
     const token = localStorage.getItem('access_token');
 
     if (!token) {
@@ -230,7 +366,47 @@ const PricingSection = () => {
       return;
     }
 
-    toast.info(`Plan selected: ${planName}`);
+    const [response, error] = await PostRequestAxios<{
+      message: string;
+      data: { sessionId: string; url: string };
+    }>(
+      '/subscription-plan/create-checkout-session',
+      { id: planId },
+      { withToken: true, withCredentials: true },
+    );
+
+    if (error || !response?.data?.url) {
+      toast.error(error?.message || 'Failed to start plan checkout');
+      return;
+    }
+
+    window.location.href = response.data.url;
+  };
+
+  const handleBuyAddon = async (addonId: string) => {
+    const token = localStorage.getItem('access_token');
+
+    if (!token) {
+      toast.error('Please login to continue');
+      navigate('/login');
+      return;
+    }
+
+    const [response, error] = await PostRequestAxios<{
+      message: string;
+      data: { sessionId: string; url: string };
+    }>(
+      '/addon/create-checkout-session',
+      { addonId },
+      { withToken: true, withCredentials: true },
+    );
+
+    if (error || !response?.data?.url) {
+      toast.error(error?.message || 'Failed to start checkout');
+      return;
+    }
+
+    window.location.href = response.data.url;
   };
 
   return (
@@ -279,11 +455,60 @@ const PricingSection = () => {
                 features={plan.features}
                 highlighted={plan.highlighted}
                 buttonText="Buy Now"
-                onBuyNow={() => handleBuyNow(plan.badge)}
+                onBuyNow={() => handleBuyNow(plan._id)}
               />
             ))}
           </div>
         )}
+
+        <div className="mt-20">
+          <div className="mb-10 text-center">
+            <h3 className="mb-3 text-2xl font-bold text-foreground md:text-3xl">
+              Credit Addons
+            </h3>
+            <p className="mx-auto max-w-2xl text-muted-foreground">
+              Buy extra credits after pricing section.
+            </p>
+          </div>
+
+          {addonsLoading ? (
+            <div className="flex h-24 items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="mx-auto grid max-w-5xl grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {(addonsData?.data || []).map((addon) => (
+                <div
+                  key={addon._id}
+                  className="rounded-2xl border border-border bg-background p-6"
+                >
+                  <div className="mb-4 flex items-start justify-between gap-4">
+                    <div>
+                      <h4 className="text-lg font-semibold">{addon.title}</h4>
+                      <p className="text-sm text-muted-foreground">
+                        {addon.description || 'Extra credits for your account'}
+                      </p>
+                    </div>
+                    <div className="rounded-full bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">
+                      {addon.credit} credits
+                    </div>
+                  </div>
+
+                  <div className="mb-6 flex items-end gap-2">
+                    <span className="text-3xl font-bold">
+                      {addon.currency} {addon.price}
+                    </span>
+                    <span className="text-sm text-muted-foreground">one time</span>
+                  </div>
+
+                  <Button className="w-full" onClick={() => handleBuyAddon(addon._id)}>
+                    Buy Credits
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );

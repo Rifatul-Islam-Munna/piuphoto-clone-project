@@ -63,6 +63,9 @@ export class User {
   @Prop({ default: false })
   isSubscriber: boolean;
 
+  @Prop({ default: 0, min: 0 })
+  credits: number;
+
   @Prop()
   subscriptionStartDate?: Date;
 

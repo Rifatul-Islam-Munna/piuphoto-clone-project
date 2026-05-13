@@ -7,6 +7,8 @@ import {
   Image,
   Settings,
   CreditCard,
+  Package2,
+  Receipt,
   LogOut,
   Menu,
   X,
@@ -24,6 +26,8 @@ interface AdminLayoutProps {
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
   { icon: CreditCard, label: "Subscription Plans", href: "/admin/plans" },
+  { icon: Package2, label: "Addons", href: "/admin/addons" },
+  { icon: Receipt, label: "Billing", href: "/admin/billing" },
   { icon: Users, label: "Users", href: "/admin/users" },
   { icon: Calendar, label: "Events", href: "/admin/events" },
   { icon: Image, label: "Images", href: "/admin/images" },

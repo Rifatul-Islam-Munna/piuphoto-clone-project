@@ -16,6 +16,7 @@ import {
 } from './dto/update-user.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { User, UserDocument } from './entities/user.entity';
+import { UserType } from './entities/user.entity';
 import { SubscriptionPlan, SubscriptionPlanDocument } from '../subscription/entities/subscription-plan.entity';
 import { Model, Types } from 'mongoose';
 import bcrypt from 'bcrypt';
@@ -40,6 +41,75 @@ export class UserService implements OnModuleInit {
     await this.ensurePhoneNumberIndex();
     await this.ensureEmailIndex();
     await this.createDefaultAdmin();
+  }
+
+  private normalizeObjectIdInput(
+    value:
+      | string
+      | Types.ObjectId
+      | { _id?: string | Types.ObjectId; id?: string | Types.ObjectId; toHexString?: () => string }
+      | null
+      | undefined,
+  ) {
+    if (!value) {
+      return '';
+    }
+
+    if (typeof value === 'string') {
+      return value;
+    }
+
+    if (value instanceof Types.ObjectId) {
+      return String(value);
+    }
+
+    if (typeof value === 'object' && typeof value.toHexString === 'function') {
+      return value.toHexString();
+    }
+
+    if (typeof value === 'object' && value._id) {
+      return this.normalizeObjectIdInput(value._id as any);
+    }
+
+    if (typeof value === 'object' && value.id) {
+      return this.normalizeObjectIdInput(value.id as any);
+    }
+
+    const fallback = String(value);
+    return fallback === '[object Object]' ? '' : fallback;
+  }
+
+  private extractPermissionLimit(
+    permissions: Record<string, unknown>[] = [],
+    key: string,
+  ) {
+    for (const permission of permissions) {
+      if (
+        permission?.key === key &&
+        permission.value !== undefined &&
+        permission.value !== null
+      ) {
+        const numericValue = Number(permission.value);
+
+        if (!Number.isNaN(numericValue)) {
+          return numericValue;
+        }
+      }
+
+      if (
+        Object.prototype.hasOwnProperty.call(permission, key) &&
+        permission[key] !== undefined &&
+        permission[key] !== null
+      ) {
+        const numericValue = Number(permission[key]);
+
+        if (!Number.isNaN(numericValue)) {
+          return numericValue;
+        }
+      }
+    }
+
+    return 0;
   }
 
   private async createDefaultAdmin() {
@@ -184,7 +254,7 @@ export class UserService implements OnModuleInit {
 
     const findOneUser = await this.userModel
       .findOne({ email })
-      .select('email id role phone name password userId gender')
+      .select('email id role phone name password userId gender credits')
       .lean();
 
     if (!findOneUser) {
@@ -255,7 +325,7 @@ export class UserService implements OnModuleInit {
     const [data, totalItems] = await Promise.all([
       this.userModel
         .find(filter)
-        .select('name email phone userId role gender age maritalStatus isActive isPublished createdAt')
+        .select('name email phone userId role gender age maritalStatus isActive isPublished createdAt credits')
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
@@ -316,6 +386,7 @@ export class UserService implements OnModuleInit {
     const findOne = await this.userModel
       .findById(id)
       .select('-password')
+      .populate('subscriptionPlanId', 'title permissions')
       .lean();
 
     if (!findOne) {
@@ -323,6 +394,23 @@ export class UserService implements OnModuleInit {
     }
 
     return findOne;
+  }
+
+  async getPhotographersForInvite() {
+    const data = await this.userModel
+      .find({
+        role: UserType.PHOTOGRAPHER,
+        isActive: true,
+      })
+      .select('name email phone userId role isActive')
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    return {
+      data,
+      totalItems: data.length,
+    };
   }
 
   async update(updateUserDto: UpdateUserDto, userId?: string) {
@@ -429,7 +517,7 @@ export class UserService implements OnModuleInit {
     const [data, totalItems] = await Promise.all([
       this.userModel
         .find(filter)
-        .select('name email phone whatsapp gender age role isActive isPublished userId createdAt subscriptionPlanId isSubscriber subscriptionEndDate')
+        .select('name email phone whatsapp gender age role isActive isPublished userId createdAt subscriptionPlanId isSubscriber subscriptionEndDate credits')
         .populate('subscriptionPlanId', 'title price')
         .skip(skip)
         .limit(limit)
@@ -470,8 +558,20 @@ export class UserService implements OnModuleInit {
     return { message: 'Role updated successfully', data: updateRole };
   }
 
-  async assignPlan(userId: string, planId: string) {
-    const planExists = await this.subscriptionPlanModel.findById(planId).lean();
+  async assignPlan(
+    userId: string,
+    planId: string | Types.ObjectId | { _id?: string | Types.ObjectId } | null | undefined,
+    options?: { creditOverride?: number },
+  ) {
+    const normalizedPlanId = this.normalizeObjectIdInput(planId as any);
+
+    if (!Types.ObjectId.isValid(normalizedPlanId)) {
+      throw new HttpException('Invalid plan id', 400);
+    }
+
+    const planExists = await this.subscriptionPlanModel
+      .findById(normalizedPlanId)
+      .lean();
 
     if (!planExists) {
       throw new HttpException('Plan not found', 400);
@@ -484,17 +584,30 @@ export class UserService implements OnModuleInit {
       endDate.setFullYear(endDate.getFullYear() + 1);
     }
 
+    const creditsToAdd =
+      options?.creditOverride ??
+      this.extractPermissionLimit(
+        Array.isArray(planExists.permissions) ? planExists.permissions : [],
+        'credit',
+      );
+
+    const updatePayload: Record<string, any> = {
+      $set: {
+        subscriptionPlanId: new Types.ObjectId(normalizedPlanId),
+        isSubscriber: true,
+        subscriptionStartDate: new Date(),
+        subscriptionEndDate: endDate,
+      },
+    };
+
+    if (creditsToAdd > 0) {
+      updatePayload.$inc = { credits: creditsToAdd };
+    }
+
     const updateUser = await this.userModel
       .findByIdAndUpdate(
         userId,
-        {
-          $set: {
-            subscriptionPlanId: new Types.ObjectId(planId),
-            isSubscriber: true,
-            subscriptionStartDate: new Date(),
-            subscriptionEndDate: endDate,
-          },
-        },
+        updatePayload,
         { new: true },
       )
       .lean();
@@ -503,7 +616,13 @@ export class UserService implements OnModuleInit {
       throw new HttpException('User not found', 400);
     }
 
-    return { message: 'Plan assigned successfully', data: updateUser };
+    return {
+      message: 'Plan assigned successfully',
+      data: updateUser,
+      meta: {
+        creditsAdded: creditsToAdd,
+      },
+    };
   }
 
   async toggleUserActive(userId: string) {

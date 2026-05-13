@@ -8,9 +8,12 @@ import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 import Dashboard from "./pages/admin/Dashboard";
 import Plans from "./pages/admin/Plans";
+import Addons from "./pages/admin/Addons";
+import Billing from "./pages/admin/Billing";
 import Users from "./pages/admin/Users";
 import Events from "./pages/admin/Events";
 import UserDashboard from "./pages/user/UserDashboard";
+import UserInvitations from "./pages/user/UserInvitations";
 import UserSettings from "./pages/user/UserSettings";
 import Pricing from "./pages/Pricing";
 
@@ -73,6 +76,22 @@ const App = () => (
             }
           />
           <Route
+            path="/admin/addons"
+            element={
+              <ProtectedAdminRoute>
+                <Addons />
+              </ProtectedAdminRoute>
+            }
+          />
+          <Route
+            path="/admin/billing"
+            element={
+              <ProtectedAdminRoute>
+                <Billing />
+              </ProtectedAdminRoute>
+            }
+          />
+          <Route
             path="/admin/users"
             element={
               <ProtectedAdminRoute>
@@ -109,6 +128,14 @@ const App = () => (
             element={
               <ProtectedUserRoute>
                 <UserDashboard />
+              </ProtectedUserRoute>
+            }
+          />
+          <Route
+            path="/user/invitations"
+            element={
+              <ProtectedUserRoute>
+                <UserInvitations />
               </ProtectedUserRoute>
             }
           />

@@ -11,6 +11,10 @@ import {
 } from '@nestjs/common';
 import { EventService } from './event.service';
 import { CreateEventDto, UpdateEventDto, EventFilterDto } from './dto/create-event.dto';
+import {
+  EventInvitationQueryDto,
+  InvitePhotographerDto,
+} from './dto/event-invitation.dto';
 import { AuthGuard } from '../lib/auth.guard';
 import { RolesGuard } from '../lib/roles.guard';
 import { Roles } from '../lib/roles.decorator';
@@ -41,6 +45,41 @@ export class EventController {
   @UseGuards(AuthGuard)
   getMyEvents(@Req() req: ExpressRequest) {
     return this.eventService.findAllByUser(req.user?.id);
+  }
+
+  @Post('invite-photographer')
+  @UseGuards(AuthGuard, ThrottlerGuard)
+  @Throttle({ default: { limit: 200, ttl: 3600000 } })
+  invitePhotographer(
+    @Body() invitePhotographerDto: InvitePhotographerDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.eventService.invitePhotographer(
+      invitePhotographerDto,
+      req.user?.id,
+      req.user?.role,
+    );
+  }
+
+  @Get('my-photographer-invitations')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserType.PHOTOGRAPHER)
+  getMyPhotographerInvitations(@Req() req: ExpressRequest) {
+    return this.eventService.getMyPhotographerInvitations(req.user?.id);
+  }
+
+  @Patch('accept-invitation')
+  @UseGuards(AuthGuard, RolesGuard, ThrottlerGuard)
+  @Throttle({ default: { limit: 200, ttl: 3600000 } })
+  @Roles(UserType.PHOTOGRAPHER)
+  acceptInvitation(
+    @Query() query: EventInvitationQueryDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.eventService.acceptPhotographerInvitation(
+      query.id,
+      req.user?.id,
+    );
   }
 
   @Get('get-all')

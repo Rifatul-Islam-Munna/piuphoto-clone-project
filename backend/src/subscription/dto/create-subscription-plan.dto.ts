@@ -178,3 +178,32 @@ export class FindOnePlanDto {
   @IsString()
   id: string;
 }
+
+export class CreateSubscriptionCheckoutDto {
+  @ApiProperty({ example: '507f1f77bcf86cd799439011' })
+  @IsString()
+  id: string;
+}
+
+export class VerifySubscriptionCheckoutDto {
+  @ApiProperty({ example: 'cs_test_123' })
+  @IsString()
+  sessionId: string;
+}
+
+export class PurchaseHistoryFilterDto {
+  @ApiPropertyOptional({ enum: ['all', 'plan', 'addon'], default: 'all' })
+  @IsString()
+  @IsOptional()
+  type?: string = 'all';
+}
+
+export class InvoiceQueryDto {
+  @ApiProperty({ example: '507f1f77bcf86cd799439011' })
+  @IsString()
+  id: string;
+
+  @ApiProperty({ enum: ['plan', 'addon'] })
+  @IsString()
+  type: string;
+}

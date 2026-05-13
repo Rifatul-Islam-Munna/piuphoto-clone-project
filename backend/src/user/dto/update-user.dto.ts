@@ -152,24 +152,22 @@ export class UserFilterDto {
   @ApiPropertyOptional({
     description: 'Minimum age',
     example: 18,
-    default: 18,
   })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(10)
-  ageMin?: number = 16;
+  ageMin?: number;
 
   @ApiPropertyOptional({
     description: 'Maximum age',
     example: 40,
-    default: 40,
   })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Max(100)
-  ageMax?: number = 100;
+  ageMax?: number;
 
   @ApiPropertyOptional({
     description: 'Active filter (true/false)',

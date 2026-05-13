@@ -9,6 +9,7 @@ import { UserModule } from './user/user.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { ImageModule } from './image/image.module';
 import { EventModule } from './event/event.module';
+import { AddonModule } from './addon/addon.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { EventModule } from './event/event.module';
     }),
     UserModule,
     SubscriptionModule,
+    AddonModule,
     ImageModule,
     EventModule,
   ],

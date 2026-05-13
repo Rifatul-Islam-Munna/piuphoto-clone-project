@@ -6,17 +6,23 @@ import {
   Patch,
   Delete,
   Query,
+  Req,
   UseGuards,
   Logger,
 } from '@nestjs/common';
 import { SubscriptionPlanService } from './subscription.service';
 import {
   CreateSubscriptionPlanDto,
+  CreateSubscriptionCheckoutDto,
+  InvoiceQueryDto,
+  PurchaseHistoryFilterDto,
   UpdateSubscriptionPlanDto,
   SubscriptionPlanFilterDto,
   FindOnePlanDto,
+  VerifySubscriptionCheckoutDto,
 } from './dto/create-subscription-plan.dto';
 import { AuthGuard } from '../lib/auth.guard';
+import type { ExpressRequest } from '../lib/auth.guard';
 import { RolesGuard } from '../lib/roles.guard';
 import { Roles } from '../lib/roles.decorator';
 import { UserType } from '../user/entities/user.entity';
@@ -42,6 +48,47 @@ export class SubscriptionPlanController {
   @Get('get-one')
   findOne(@Query() query: FindOnePlanDto) {
     return this.subscriptionPlanService.findOne(query);
+  }
+
+  @Post('create-checkout-session')
+  @UseGuards(AuthGuard)
+  createCheckoutSession(
+    @Body() body: CreateSubscriptionCheckoutDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.subscriptionPlanService.createCheckoutSession(
+      body.id,
+      req.user?.id,
+    );
+  }
+
+  @Get('verify-checkout')
+  @UseGuards(AuthGuard)
+  verifyCheckout(
+    @Query() query: VerifySubscriptionCheckoutDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.subscriptionPlanService.verifyCheckout(
+      query.sessionId,
+      req.user?.id,
+    );
+  }
+
+  @Get('purchase-history')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserType.ADMIN)
+  getPurchaseHistory(@Query() query: PurchaseHistoryFilterDto) {
+    return this.subscriptionPlanService.getPurchaseHistory(query.type);
+  }
+
+  @Get('invoice')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserType.ADMIN)
+  getInvoice(@Query() query: InvoiceQueryDto) {
+    return this.subscriptionPlanService.getInvoiceDetails(
+      query.id,
+      query.type as 'plan' | 'addon',
+    );
   }
 
   @Patch('update')

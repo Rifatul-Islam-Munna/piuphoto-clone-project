@@ -5,10 +5,10 @@ import {
   Calendar,
   Image,
   Settings,
+  Inbox,
   LogOut,
   Menu,
   X,
-  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -18,7 +18,7 @@ interface UserLayoutProps {
   children: ReactNode;
 }
 
-const navItems = [
+const baseNavItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/user/dashboard" },
   { icon: Calendar, label: "My Events", href: "/user/events" },
   { icon: Image, label: "Gallery", href: "/user/gallery" },
@@ -32,6 +32,14 @@ export default function UserLayout({ children }: UserLayoutProps) {
 
   const userStr = localStorage.getItem("user");
   const user = userStr ? JSON.parse(userStr) : null;
+  const navItems =
+    user?.role === "photographer"
+      ? [
+          ...baseNavItems.slice(0, 2),
+          { icon: Inbox, label: "Invitations", href: "/user/invitations" },
+          ...baseNavItems.slice(2),
+        ]
+      : baseNavItems;
 
   const handleLogout = () => {
     localStorage.removeItem("access_token");

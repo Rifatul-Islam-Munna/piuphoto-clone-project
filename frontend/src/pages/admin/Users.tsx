@@ -37,7 +37,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import AdminLayout from "./AdminLayout";
-import { PatchRequestAxios, DeleteRequestAxios, GetRequestNormal } from "../../../api-hooks/api-hooks";
+import {
+  PatchRequestAxios,
+  DeleteRequestAxios,
+  GetRequestNormal,
+  PostRequestAxios,
+} from "../../../api-hooks/api-hooks";
 
 type UserType = "admin" | "editor" | "user" | "photographer";
 
@@ -50,7 +55,7 @@ type SubscriptionPlan = {
 type User = {
   _id: string;
   name: string;
-  email: string;
+  email?: string;
   phone?: string;
   role: UserType;
   gender?: string;
@@ -60,6 +65,7 @@ type User = {
   isSubscriber?: boolean;
   subscriptionPlanId?: SubscriptionPlan | null;
   subscriptionEndDate?: string;
+  credits?: number;
 };
 
 type UsersResponse = {
@@ -128,19 +134,35 @@ export default function Users() {
       params.append("limit", "10");
       if (search) params.append("query", search);
       if (genderFilter !== "all") params.append("gender", genderFilter);
-      return GetRequestNormal<UsersResponse>(`/user/get-all-admin?${params.toString()}`, { withToken: true });
+      return GetRequestNormal<UsersResponse>(
+        `/user/get-all-admin?${params.toString()}`,
+        0,
+        "users",
+        { withToken: true, withCredentials: true },
+      );
     },
   });
 
   const { data: plansData, isLoading: plansLoading } = useQuery({
     queryKey: ["plans"],
-    queryFn: async () => GetRequestNormal<{ data: SubscriptionPlan[] }>("/subscription-plan/get-all?limit=100&isActive=all", { withToken: true }),
+    queryFn: async () =>
+      GetRequestNormal<{ data: SubscriptionPlan[] }>(
+        "/subscription-plan/get-all?limit=100&isActive=all",
+        0,
+        "plans",
+        { withToken: true, withCredentials: true },
+      ),
   });
 
   const plans = plansData?.data || [];
 
   const assignPlan = async ({ userId, planId }: { userId: string; planId: string }) => {
-    const [response] = await PatchRequestAxios<User>(`/user/assign-plan`, { userId, planId }, { withToken: true });
+    const [response, error] = await PatchRequestAxios<User>(
+      `/user/assign-plan`,
+      { userId, planId },
+      { withToken: true, withCredentials: true },
+    );
+    if (error || !response) throw new Error(error?.message || "Failed to assign plan");
     return response;
   };
 
@@ -159,27 +181,50 @@ export default function Users() {
   });
 
   const createUser = async (data: UserFormData) => {
-    const [response] = await PatchRequestAxios<User>("/user", data, { withToken: true });
+    const [response, error] = await PostRequestAxios<User>("/user", data, {
+      withToken: true,
+      withCredentials: true,
+    });
+    if (error || !response) throw new Error(error?.message || "Failed to create user");
     return response;
   };
 
   const updateUser = async ({ id, data }: { id: string; data: Partial<UserFormData> }) => {
-    const [response] = await PatchRequestAxios<User>(`/user/update-user-admin?id=${id}`, data, { withToken: true });
+    const [response, error] = await PatchRequestAxios<User>(
+      `/user/update-user-admin?id=${id}`,
+      data,
+      { withToken: true, withCredentials: true },
+    );
+    if (error || !response) throw new Error(error?.message || "Failed to update user");
     return response;
   };
 
   const deleteUser = async (id: string) => {
-    const [response] = await DeleteRequestAxios<User>(`/user/delete-user-admin?id=${id}`, { withToken: true });
+    const [response, error] = await DeleteRequestAxios<User>(
+      `/user/delete-user-admin?id=${id}`,
+      { withToken: true, withCredentials: true },
+    );
+    if (error || !response) throw new Error(error?.message || "Failed to delete user");
     return response;
   };
 
   const toggleUserActive = async (id: string) => {
-    const [response] = await PatchRequestAxios<User>(`/user/toggle-active?id=${id}`, {}, { withToken: true });
+    const [response, error] = await PatchRequestAxios<User>(
+      `/user/toggle-active?id=${id}`,
+      {},
+      { withToken: true, withCredentials: true },
+    );
+    if (error || !response) throw new Error(error?.message || "Failed to update status");
     return response;
   };
 
   const changeUserRole = async ({ id, role }: { id: string; role: UserType }) => {
-    const [response] = await PatchRequestAxios<User>(`/user/change-role`, { userId: id, role }, { withToken: true });
+    const [response, error] = await PatchRequestAxios<User>(
+      `/user/change-role`,
+      { userId: id, role },
+      { withToken: true, withCredentials: true },
+    );
+    if (error || !response) throw new Error(error?.message || "Failed to update role");
     return response;
   };
 
@@ -247,7 +292,7 @@ export default function Users() {
       setEditingUser(user);
       setFormData({
         name: user.name,
-        email: user.email,
+        email: user.email || "",
         phone: user.phone || "",
         password: "",
         role: user.role,
@@ -340,6 +385,7 @@ export default function Users() {
                     <TableHead>Gender</TableHead>
                     <TableHead>Age</TableHead>
                     <TableHead>Plan</TableHead>
+                    <TableHead>Credits</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -347,7 +393,7 @@ export default function Users() {
                 <TableBody>
                   {usersData?.data?.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="h-24 text-center">
+                      <TableCell colSpan={9} className="h-24 text-center">
                         No users found.
                       </TableCell>
                     </TableRow>
@@ -355,7 +401,7 @@ export default function Users() {
                     usersData?.data?.map((user) => (
                       <TableRow key={user._id}>
                         <TableCell className="font-medium">{user.name}</TableCell>
-                        <TableCell>{user.email}</TableCell>
+                        <TableCell>{user.email || "-"}</TableCell>
                         <TableCell>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -367,7 +413,7 @@ export default function Users() {
                               {Object.entries(roleLabels).map(([value, label]) => (
                                 <DropdownMenuItem
                                   key={value}
-                                  onClick={() => changeRoleMutation.mutate({ userId: user._id, role: value as UserType })}
+                                  onClick={() => changeRoleMutation.mutate({ id: user._id, role: value as UserType })}
                                   disabled={user.role === value}
                                 >
                                   {label}
@@ -395,6 +441,7 @@ export default function Users() {
                             </Button>
                           )}
                         </TableCell>
+                        <TableCell>{user.credits || 0}</TableCell>
                         <TableCell>
                           <Badge variant={user.isActive ? "default" : "secondary"}>
                             {user.isActive ? "Active" : "Inactive"}

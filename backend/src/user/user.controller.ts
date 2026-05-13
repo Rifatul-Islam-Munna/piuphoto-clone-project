@@ -83,6 +83,12 @@ export class UserController {
     return this.userService.finMyProfile(req.user?.id);
   }
 
+  @Get('photographers-for-invite')
+  @UseGuards(AuthGuard)
+  getPhotographersForInvite() {
+    return this.userService.getPhotographersForInvite();
+  }
+
   @Get('get-user-profile-admin')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserType.ADMIN)

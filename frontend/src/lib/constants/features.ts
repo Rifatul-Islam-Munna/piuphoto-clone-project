@@ -31,6 +31,7 @@ export const featureMapping = {
 };
 
 export const limitMapping = {
+  "credit": "Plan Credits",
   "photos.monthly": "Monthly Photo Upload Limit",
   "photographers.max": "Max Photographers",
   "events.active": "Max Active Events",

@@ -41,6 +41,7 @@ type UserProfile = {
   role: string;
   isActive: boolean;
   isPublished: boolean;
+  credits?: number;
 };
 
 type ImageUploadResponse = {
@@ -199,6 +200,16 @@ export default function UserSettings() {
           <h1 className="text-2xl font-bold">Settings</h1>
           <p className="text-muted-foreground">Manage your account settings and profile information.</p>
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Credits</CardTitle>
+            <CardDescription>Current available credits in your account.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">{profile?.credits || 0}</div>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
