@@ -8,11 +8,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/platform/device_settings.dart';
+import 'package:mobileapp/core/platform/gallery_auto_import.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
+import 'package:mobileapp/core/storage/uploaded_gallery_storage.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class _CameraProbe {
   const _CameraProbe({
@@ -35,11 +39,18 @@ class UploadPage extends StatefulWidget {
 class _UploadPageState extends State<UploadPage> {
   final _picker = ImagePicker();
   Timer? _wirelessTimer;
+  Timer? _galleryTimer;
   bool _isEnhanced = false;
   bool _uploading = false;
+  bool _galleryImporting = false;
+  bool _galleryBusy = false;
+  bool _freeingSpace = false;
   bool _autoImporting = false;
   bool _wirelessScanning = false;
   bool _wirelessBusy = false;
+  int? _gallerySinceMs;
+  final Set<String> _processedGalleryIds = {};
+  String? _galleryStatus;
   String? _wirelessStatus;
   String? _wirelessImageUrl;
   String? _lastWirelessSignature;
@@ -49,6 +60,7 @@ class _UploadPageState extends State<UploadPage> {
   @override
   void dispose() {
     _wirelessTimer?.cancel();
+    _galleryTimer?.cancel();
     super.dispose();
   }
 
@@ -77,6 +89,24 @@ class _UploadPageState extends State<UploadPage> {
     } catch (_) {
       AppToast.error('Failed to open OTG file picker');
     }
+  }
+
+  Future<void> _openWifiSettings() async {
+    try {
+      await DeviceSettings.openWifiSettings();
+    } on MissingPluginException {
+      AppToast.error('Restart the app once to enable Wi-Fi settings');
+    } catch (_) {
+      AppToast.error('Open phone Wi-Fi settings and join camera Wi-Fi');
+    }
+  }
+
+  Future<bool> _requestGalleryPermission() async {
+    final photos = await Permission.photos.request();
+    if (photos.isGranted || photos.isLimited) return true;
+
+    final storage = await Permission.storage.request();
+    return storage.isGranted;
   }
 
   Future<String> _uploadFile({
@@ -330,6 +360,133 @@ class _UploadPageState extends State<UploadPage> {
     }
   }
 
+  Future<void> _pollGallery(EventSummary event) async {
+    if (_galleryBusy) return;
+
+    final sinceMs = _gallerySinceMs;
+    if (sinceMs == null) return;
+
+    setState(() {
+      _galleryBusy = true;
+      _galleryStatus = 'Checking phone photos...';
+    });
+
+    try {
+      final images = await GalleryAutoImport.recentImages(
+        sinceMs: sinceMs,
+        excludeIds: _processedGalleryIds.toList(),
+      );
+
+      if (images.isEmpty) {
+        setState(() => _galleryStatus = 'Waiting for new phone photos...');
+        return;
+      }
+
+      for (final image in images.reversed) {
+        if (_processedGalleryIds.contains(image.id)) continue;
+
+        setState(() => _galleryStatus = 'Uploading ${image.name}...');
+        final imageUrl = await _uploadFile(
+          path: image.path,
+          filename: image.name,
+        );
+        if (imageUrl.isEmpty) {
+          throw Exception('Image upload returned no URL');
+        }
+
+        await _createEventImage(event, imageUrl);
+        _processedGalleryIds.add(image.id);
+        await UploadedGalleryStorage.add(id: image.id, name: image.name);
+
+        try {
+          await File(image.path).delete();
+        } catch (_) {}
+
+        if (!mounted) return;
+        setState(() {
+          _galleryStatus = 'Uploaded ${image.name}';
+        });
+      }
+    } on MissingPluginException {
+      setState(() {
+        _galleryStatus = 'Restart the app once to enable phone auto-upload';
+      });
+    } catch (_) {
+      setState(() {
+        _galleryStatus = 'Phone auto-upload failed. Check photo permission.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _galleryBusy = false);
+      }
+    }
+  }
+
+  Future<void> _startGalleryAutoImport(EventSummary event) async {
+    final allowed = await _requestGalleryPermission();
+    if (!allowed) {
+      AppToast.error('Photo permission is required');
+      return;
+    }
+
+    _galleryTimer?.cancel();
+    _processedGalleryIds.clear();
+    setState(() {
+      _galleryImporting = true;
+      _gallerySinceMs = DateTime.now().millisecondsSinceEpoch;
+      _galleryStatus = 'Phone auto-upload is on';
+    });
+
+    _galleryTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _pollGallery(event),
+    );
+  }
+
+  void _stopGalleryAutoImport() {
+    _galleryTimer?.cancel();
+    _galleryTimer = null;
+    setState(() {
+      _galleryImporting = false;
+      _galleryBusy = false;
+      _gallerySinceMs = null;
+      _galleryStatus = 'Phone auto-upload stopped';
+    });
+  }
+
+  Future<void> _freeUploadedGallerySpace() async {
+    final uploaded = UploadedGalleryStorage.getImages();
+    if (uploaded.isEmpty) {
+      AppToast.error('No uploaded phone images to remove');
+      return;
+    }
+
+    setState(() {
+      _freeingSpace = true;
+      _galleryStatus = 'Removing uploaded phone images...';
+    });
+
+    final deletedIds = <String>{};
+    for (final image in uploaded) {
+      try {
+        final deleted = await GalleryAutoImport.deleteImage(image.id);
+        if (deleted) {
+          deletedIds.add(image.id);
+        }
+      } catch (_) {}
+    }
+
+    await UploadedGalleryStorage.removeIds(deletedIds);
+
+    if (!mounted) return;
+    setState(() {
+      _freeingSpace = false;
+      _galleryStatus = deletedIds.isEmpty
+          ? 'No phone images removed'
+          : 'Removed ${deletedIds.length} uploaded images';
+    });
+  }
+
   void _stopWirelessImport() {
     _wirelessTimer?.cancel();
     _wirelessTimer = null;
@@ -404,82 +561,75 @@ class _UploadPageState extends State<UploadPage> {
                     ),
                   ),
                 ),
-              if (activeEvent != null) ...[
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () =>
-                        context.router.root.push(const EventImagesRoute()),
-                    icon: const Icon(Icons.image_outlined),
-                    label: const Text('View uploaded images'),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 16),
-              Row(
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed:
-                          _uploading ? null : () => _pick(ImageSource.gallery),
-                      icon: const Icon(Icons.photo_library_outlined),
-                      label: const Text('Phone'),
-                    ),
+                  OutlinedButton.icon(
+                    onPressed:
+                        _uploading ? null : () => _pick(ImageSource.gallery),
+                    icon: const Icon(Icons.photo_library_outlined),
+                    label: const Text('Phone'),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed:
-                          _uploading ? null : () => _pick(ImageSource.camera),
-                      icon: const Icon(Icons.camera_alt_outlined),
-                      label: const Text('Camera'),
-                    ),
+                  OutlinedButton.icon(
+                    onPressed:
+                        _uploading ? null : () => _pick(ImageSource.camera),
+                    icon: const Icon(Icons.camera_alt_outlined),
+                    label: const Text('Camera'),
                   ),
+                  OutlinedButton.icon(
+                    onPressed: _uploading ? null : _pickOtgFile,
+                    icon: const Icon(Icons.usb_outlined),
+                    label: const Text('OTG'),
+                  ),
+                  if (activeEvent != null)
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          context.router.root.push(const EventImagesRoute()),
+                      icon: const Icon(Icons.image_outlined),
+                      label: const Text('Uploads'),
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _uploading ? null : _pickOtgFile,
-                  icon: const Icon(Icons.usb_outlined),
-                  label: const Text('OTG / external file'),
+                child: FilledButton.icon(
+                  onPressed: activeEvent == null || _uploading || _galleryBusy
+                      ? null
+                      : _galleryImporting
+                          ? _stopGalleryAutoImport
+                          : () => _startGalleryAutoImport(activeEvent),
+                  icon: Icon(
+                    _galleryImporting
+                        ? Icons.pause_circle_outline
+                        : Icons.autorenew,
+                  ),
+                  label: Text(
+                    _galleryImporting
+                        ? 'Stop camera auto-upload'
+                        : 'Auto upload from camera',
+                  ),
                 ),
               ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.tonalIcon(
-                      onPressed: activeEvent == null ||
-                              _uploading ||
-                              _wirelessScanning
-                          ? null
-                          : _autoImporting
-                              ? _stopWirelessImport
-                              : () => _findAndStartWirelessImport(activeEvent),
-                      icon: Icon(
-                        _autoImporting
-                            ? Icons.link_off
-                            : Icons.wifi_find_outlined,
-                      ),
-                      label: Text(
-                        _wirelessScanning
-                            ? 'Searching...'
-                            : _autoImporting
-                                ? 'Disconnect camera'
-                                : 'Find wireless camera',
-                      ),
-                    ),
-                  ),
-                ],
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed:
+                      _freeingSpace ? null : _freeUploadedGallerySpace,
+                  icon: const Icon(Icons.cleaning_services_outlined),
+                  label: Text(_freeingSpace ? 'Cleaning...' : 'Free space'),
+                ),
               ),
-              if (_wirelessStatus != null) ...[
-                const SizedBox(height: 8),
-                Text(_wirelessStatus!),
+              if (_galleryStatus != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  _galleryStatus!,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ],
-              const SizedBox(height: 12),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Enhanced image'),

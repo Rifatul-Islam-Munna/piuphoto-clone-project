@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate {
   private let otgChannelName = "piuphoto/otg_picker"
+  private let settingsChannelName = "piuphoto/device_settings"
   private var otgResult: FlutterResult?
 
   override func application(
@@ -26,6 +27,31 @@ import UniformTypeIdentifiers
         }
 
         self?.pickExternalImage(result: result)
+      }
+
+      let settingsChannel = FlutterMethodChannel(
+        name: settingsChannelName,
+        binaryMessenger: controller.binaryMessenger
+      )
+
+      settingsChannel.setMethodCallHandler { call, result in
+        guard call.method == "openWifiSettings" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+
+        guard let url = URL(string: UIApplication.openSettingsURLString) else {
+          result(FlutterError(code: "OPEN_SETTINGS_FAILED", message: "Unable to create settings URL", details: nil))
+          return
+        }
+
+        UIApplication.shared.open(url) { success in
+          if success {
+            result(nil)
+          } else {
+            result(FlutterError(code: "OPEN_SETTINGS_FAILED", message: "Unable to open settings", details: nil))
+          }
+        }
       }
     }
 
