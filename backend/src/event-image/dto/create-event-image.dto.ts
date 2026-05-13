@@ -24,6 +24,11 @@ export class CreateEventImageDto {
   @IsBoolean()
   @IsOptional()
   isEnhanced?: boolean;
+
+  @ApiPropertyOptional({ example: '507f1f77bcf86cd799439014' })
+  @IsMongoId()
+  @IsOptional()
+  albumId?: string;
 }
 
 export class EventImageFilterDto {
@@ -40,6 +45,11 @@ export class EventImageFilterDto {
   @ApiPropertyOptional({ example: false })
   @IsOptional()
   isEnhanced?: string;
+
+  @ApiPropertyOptional({ example: '507f1f77bcf86cd799439014' })
+  @IsMongoId()
+  @IsOptional()
+  albumId?: string;
 }
 
 export class EventImageQueryDto {

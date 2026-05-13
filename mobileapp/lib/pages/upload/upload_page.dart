@@ -13,6 +13,7 @@ import 'package:mobileapp/core/platform/gallery_auto_import.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
+import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/core/storage/uploaded_gallery_storage.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
@@ -56,6 +57,9 @@ class _UploadPageState extends State<UploadPage> {
   String? _lastWirelessSignature;
   String? _selectedFilePath;
   String? _selectedFileName;
+  String? _loadedAlbumEventId;
+  String? _selectedAlbumId;
+  List<AlbumModel> _albums = [];
 
   @override
   void dispose() {
@@ -144,8 +148,32 @@ class _UploadPageState extends State<UploadPage> {
         'eventId': event.id,
         'imageUrl': imageUrl,
         'isEnhanced': _isEnhanced,
+        if (_selectedAlbumId != null) 'albumId': _selectedAlbumId,
       },
     );
+  }
+
+  Future<void> _loadAlbumsForEvent(EventSummary event) async {
+    if (_loadedAlbumEventId == event.id) return;
+    _loadedAlbumEventId = event.id;
+    _selectedAlbumId = null;
+
+    try {
+      final response = await DioHelper.get(
+        '/album/get-all',
+        queryParameters: {'eventId': event.id},
+      );
+      final data = response.data['data'] as List? ?? [];
+      if (!mounted) return;
+      setState(() {
+        _albums = data
+            .map((item) => AlbumModel.fromJson(Map<String, dynamic>.from(item)))
+            .toList();
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _albums = []);
+    }
   }
 
   String _signatureForBytes(Uint8List bytes) {
@@ -535,6 +563,16 @@ class _UploadPageState extends State<UploadPage> {
     return ValueListenableBuilder(
       valueListenable: ActiveEventStorage.activeEvent,
       builder: (context, activeEvent, _) {
+        if (activeEvent != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _loadAlbumsForEvent(activeEvent);
+          });
+        } else if (_loadedAlbumEventId != null) {
+          _loadedAlbumEventId = null;
+          _selectedAlbumId = null;
+          _albums = [];
+        }
+
         return Scaffold(
           appBar: AppBar(title: const Text('Upload')),
           body: ListView(
@@ -561,6 +599,31 @@ class _UploadPageState extends State<UploadPage> {
                     ),
                   ),
                 ),
+              if (activeEvent != null && _albums.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String?>(
+                  value: _selectedAlbumId,
+                  decoration: const InputDecoration(
+                    labelText: 'Upload album',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('No album'),
+                    ),
+                    ..._albums.map(
+                      (album) => DropdownMenuItem<String?>(
+                        value: album.id,
+                        child: Text(album.title),
+                      ),
+                    ),
+                  ],
+                  onChanged: _uploading
+                      ? null
+                      : (value) => setState(() => _selectedAlbumId = value),
+                ),
+              ],
               const SizedBox(height: 12),
               Wrap(
                 spacing: 8,

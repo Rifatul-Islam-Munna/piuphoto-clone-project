@@ -11,6 +11,7 @@ import { ImageModule } from './image/image.module';
 import { EventModule } from './event/event.module';
 import { AddonModule } from './addon/addon.module';
 import { EventImageModule } from './event-image/event-image.module';
+import { AlbumModule } from './album/album.module';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { EventImageModule } from './event-image/event-image.module';
     AddonModule,
     ImageModule,
     EventModule,
+    AlbumModule,
     EventImageModule,
   ],
   controllers: [],

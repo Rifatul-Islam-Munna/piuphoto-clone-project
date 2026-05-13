@@ -27,6 +27,13 @@ type StripeCheckoutSession = {
   metadata?: Record<string, string | undefined>;
 };
 
+type StripePaymentIntent = {
+  id: string;
+  client_secret?: string;
+  status?: string;
+  metadata?: Record<string, string | undefined>;
+};
+
 @Injectable()
 export class AddonService {
   private logger = new Logger(AddonService.name);
@@ -50,6 +57,21 @@ export class AddonService {
     }
 
     return stripeSecretKey;
+  }
+
+  private getStripePublishableKey() {
+    const key =
+      this.configService.get<string>('STRIPE_PUBLISHABLE_KEY')?.trim() ||
+      this.configService
+        .get<string>('NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY')
+        ?.trim() ||
+      '';
+
+    if (!key) {
+      throw new HttpException('Stripe publishable key missing', 500);
+    }
+
+    return key;
   }
 
   private getFrontendBaseUrl() {
@@ -146,6 +168,67 @@ export class AddonService {
       throw new HttpException(
         error?.response?.data?.error?.message ||
           'Failed to verify Stripe checkout session',
+        400,
+      );
+    }
+  }
+
+  private async createStripePaymentIntent(addon: Record<string, any>, userId: string) {
+    const amount = Math.round(Number(addon.price) * 100);
+    if (!amount || amount < 1) {
+      throw new HttpException('Invalid addon price', 400);
+    }
+
+    const params = new URLSearchParams();
+    params.append('amount', String(amount));
+    params.append('currency', String(addon.currency || 'USD').toLowerCase());
+    params.append('automatic_payment_methods[enabled]', 'true');
+    params.append('automatic_payment_methods[allow_redirects]', 'never');
+    params.append('metadata[userId]', userId);
+    params.append('metadata[addonId]', String(addon._id));
+    params.append('metadata[credit]', String(addon.credit));
+    params.append('description', `Addon purchase: ${addon.title}`);
+
+    try {
+      const { data } = await axios.post<StripePaymentIntent>(
+        'https://api.stripe.com/v1/payment_intents',
+        params.toString(),
+        {
+          headers: {
+            Authorization: `Bearer ${this.getStripeSecretKey()}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        },
+      );
+
+      return data;
+    } catch (error: any) {
+      this.logger.error('Stripe addon mobile payment intent failed', error);
+      throw new HttpException(
+        error?.response?.data?.error?.message ||
+          'Failed to create Stripe mobile payment',
+        400,
+      );
+    }
+  }
+
+  private async getStripePaymentIntent(paymentIntentId: string) {
+    try {
+      const { data } = await axios.get<StripePaymentIntent>(
+        `https://api.stripe.com/v1/payment_intents/${paymentIntentId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${this.getStripeSecretKey()}`,
+          },
+        },
+      );
+
+      return data;
+    } catch (error: any) {
+      this.logger.error('Stripe addon mobile payment verification failed', error);
+      throw new HttpException(
+        error?.response?.data?.error?.message ||
+          'Failed to verify Stripe mobile payment',
         400,
       );
     }
@@ -321,6 +404,65 @@ export class AddonService {
     };
   }
 
+  async createMobilePaymentSheet(
+    createCheckoutDto: CreateAddonCheckoutDto,
+    userId?: string,
+  ) {
+    if (!userId || !Types.ObjectId.isValid(userId)) {
+      throw new HttpException('Invalid user id', 400);
+    }
+
+    const { addonId } = createCheckoutDto;
+
+    if (!Types.ObjectId.isValid(addonId)) {
+      throw new HttpException('Invalid addon id', 400);
+    }
+
+    const addon = await this.addonModel
+      .findById(addonId)
+      .select('title description credit price currency isActive')
+      .lean();
+
+    if (!addon || !addon.isActive) {
+      throw new HttpException('Addon not found or inactive', 400);
+    }
+
+    const paymentIntent = await this.createStripePaymentIntent(addon, userId);
+
+    if (!paymentIntent.id || !paymentIntent.client_secret) {
+      throw new HttpException('Invalid Stripe mobile payment response', 400);
+    }
+
+    await this.addonPurchaseModel.findOneAndUpdate(
+      { stripeSessionId: paymentIntent.id },
+      {
+        $set: {
+          addonId: this.toObjectId(addonId),
+          userId: this.toObjectId(userId),
+          credit: addon.credit,
+          price: addon.price,
+          currency: addon.currency,
+          status: AddonPurchaseStatus.PENDING,
+          stripePaymentIntentId: paymentIntent.id,
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      },
+    );
+
+    return {
+      message: 'Mobile payment sheet created successfully',
+      data: {
+        paymentIntentId: paymentIntent.id,
+        paymentIntentClientSecret: paymentIntent.client_secret,
+        publishableKey: this.getStripePublishableKey(),
+      },
+    };
+  }
+
   async verifyCheckout(verifyDto: VerifyAddonCheckoutDto, userId?: string) {
     if (!userId || !Types.ObjectId.isValid(userId)) {
       throw new HttpException('Invalid user id', 400);
@@ -411,5 +553,86 @@ export class AddonService {
       },
     };
   }
-}
 
+  async verifyMobilePayment(paymentIntentId: string, userId?: string) {
+    if (!userId || !Types.ObjectId.isValid(userId)) {
+      throw new HttpException('Invalid user id', 400);
+    }
+
+    const purchase = await this.addonPurchaseModel
+      .findOne({ stripeSessionId: paymentIntentId })
+      .populate('addonId', 'title credit')
+      .lean();
+
+    if (!purchase) {
+      throw new HttpException('Purchase not found', 400);
+    }
+
+    if (String(purchase.userId) !== userId) {
+      throw new HttpException('You can only verify your own purchase', 403);
+    }
+
+    const paymentIntent = await this.getStripePaymentIntent(paymentIntentId);
+
+    if (paymentIntent.metadata?.userId && paymentIntent.metadata.userId !== userId) {
+      throw new HttpException('Stripe payment metadata mismatch', 403);
+    }
+
+    if (paymentIntent.status !== 'succeeded') {
+      throw new HttpException('Payment not completed yet', 400);
+    }
+
+    let creditsAdded = 0;
+    let userCredits = 0;
+
+    if (purchase.status === AddonPurchaseStatus.COMPLETED) {
+      const existingUser = await this.userModel
+        .findById(userId)
+        .select('credits')
+        .lean();
+
+      userCredits = existingUser?.credits || 0;
+    } else {
+      const updatedUser = await this.userModel
+        .findByIdAndUpdate(
+          userId,
+          { $inc: { credits: purchase.credit } },
+          { new: true },
+        )
+        .select('credits')
+        .lean();
+
+      if (!updatedUser) {
+        throw new HttpException('User not found', 400);
+      }
+
+      creditsAdded = purchase.credit;
+      userCredits = updatedUser.credits || 0;
+
+      await this.addonPurchaseModel.findByIdAndUpdate(purchase._id, {
+        $set: {
+          status: AddonPurchaseStatus.COMPLETED,
+          completedAt: new Date(),
+          stripePaymentIntentId: paymentIntent.id,
+        },
+      });
+    }
+
+    return {
+      message: 'Addon mobile payment verified successfully',
+      data: {
+        paymentIntentId,
+        status: paymentIntent.status,
+        creditsAdded,
+        totalCredits: userCredits,
+        addon: purchase.addonId
+          ? {
+              _id: String((purchase.addonId as any)._id),
+              title: (purchase.addonId as any).title,
+              credit: (purchase.addonId as any).credit,
+            }
+          : null,
+      },
+    };
+  }
+}

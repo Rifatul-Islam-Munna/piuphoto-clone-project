@@ -42,7 +42,7 @@ import {
   DeleteRequestAxios,
   GetRequestNormal,
   PostRequestAxios,
-} from "../../../api-hooks/api-hooks";
+} from "@/api-hooks/api-hooks";
 
 type UserType = "admin" | "editor" | "user" | "photographer";
 
@@ -679,3 +679,4 @@ export default function Users() {
     </AdminLayout>
   );
 }
+

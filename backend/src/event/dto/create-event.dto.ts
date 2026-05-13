@@ -37,6 +37,11 @@ export class CreateEventDto {
   @IsBoolean()
   @IsOptional()
   isPublished?: boolean;
+
+  @ApiPropertyOptional({ example: false, default: false })
+  @IsBoolean()
+  @IsOptional()
+  autoEnhanceImages?: boolean;
 }
 
 export class UpdateEventDto {
@@ -63,6 +68,11 @@ export class UpdateEventDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ example: false, default: false })
+  @IsBoolean()
+  @IsOptional()
+  autoEnhanceImages?: boolean;
 }
 
 export class EventFilterDto {

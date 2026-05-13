@@ -17,8 +17,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import UserLayout from "./UserLayout";
-import { PatchRequestAxios } from "../../../api-hooks/api-hooks";
-import { useQueryWrapper } from "../../../api-hooks/react-query-wrapper";
+import { PatchRequestAxios } from "@/api-hooks/api-hooks";
+import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
 
 type PhotographerInvitation = {
   _id: string;
@@ -244,3 +244,4 @@ export default function UserInvitations() {
     </UserLayout>
   );
 }
+

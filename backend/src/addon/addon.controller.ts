@@ -81,6 +81,18 @@ export class AddonController {
     );
   }
 
+  @Post('mobile-payment-sheet')
+  @UseGuards(AuthGuard)
+  createMobilePaymentSheet(
+    @Body() createCheckoutDto: CreateAddonCheckoutDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.addonService.createMobilePaymentSheet(
+      createCheckoutDto,
+      req.user?.id,
+    );
+  }
+
   @Get('verify-checkout')
   @UseGuards(AuthGuard)
   verifyCheckout(
@@ -88,5 +100,14 @@ export class AddonController {
     @Req() req: ExpressRequest,
   ) {
     return this.addonService.verifyCheckout(verifyDto, req.user?.id);
+  }
+
+  @Get('verify-mobile-payment')
+  @UseGuards(AuthGuard)
+  verifyMobilePayment(
+    @Query('paymentIntentId') paymentIntentId: string,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.addonService.verifyMobilePayment(paymentIntentId, req.user?.id);
   }
 }

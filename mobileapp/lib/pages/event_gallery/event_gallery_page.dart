@@ -4,6 +4,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/platform/image_downloads.dart';
+import 'package:mobileapp/core/utils/image_loader.dart';
+import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_image_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
@@ -11,9 +13,15 @@ class EventGalleryPage extends StatefulWidget {
   const EventGalleryPage({
     super.key,
     required this.eventId,
+    this.albumId,
+    this.albumTitle,
+    this.publicAccess = false,
   });
 
   final String eventId;
+  final String? albumId;
+  final String? albumTitle;
+  final bool publicAccess;
 
   @override
   State<EventGalleryPage> createState() => _EventGalleryPageState();
@@ -24,6 +32,7 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
 
   final _scrollController = ScrollController();
   final List<EventImageModel> _allImages = [];
+  final List<AlbumModel> _albums = [];
   final Set<String> _selectedIds = {};
   int _visibleCount = _pageSize;
   bool _loading = true;
@@ -34,6 +43,9 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
   void initState() {
     super.initState();
     _load();
+    if (!widget.publicAccess) {
+      _loadAlbums();
+    }
     _scrollController.addListener(_loadMoreWhenNeeded);
   }
 
@@ -51,8 +63,12 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
 
     try {
       final response = await DioHelper.get(
-        '/eventImage/get-all',
-        queryParameters: {'eventId': widget.eventId},
+        widget.publicAccess ? '/eventImage/public' : '/eventImage/get-all',
+        queryParameters: {
+          'eventId': widget.eventId,
+          if (!widget.publicAccess && widget.albumId != null)
+            'albumId': widget.albumId,
+        },
       );
       final data = response.data['data'] as List? ?? [];
       final images = data
@@ -75,6 +91,25 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
         setState(() => _loading = false);
       }
     }
+  }
+
+  Future<void> _loadAlbums() async {
+    try {
+      final response = await DioHelper.get(
+        '/album/get-all',
+        queryParameters: {'eventId': widget.eventId},
+      );
+      final data = response.data['data'] as List? ?? [];
+      setState(() {
+        _albums
+          ..clear()
+          ..addAll(
+            data.map(
+              (item) => AlbumModel.fromJson(Map<String, dynamic>.from(item)),
+            ),
+          );
+      });
+    } catch (_) {}
   }
 
   void _loadMoreWhenNeeded() {
@@ -128,6 +163,67 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
     }
   }
 
+  Future<void> _assignToAlbum(AlbumModel album) async {
+    final ids = _selectedIds.toList();
+    if (ids.isEmpty) {
+      AppToast.error('Select images first');
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      for (final id in ids) {
+        await DioHelper.patch(
+          '/eventImage/update?id=$id',
+          data: {
+            'eventId': widget.eventId,
+            'albumId': album.id,
+          },
+        );
+      }
+      AppToast.success('Moved ${ids.length} images to ${album.title}');
+      _selectedIds.clear();
+      await _load();
+    } catch (_) {
+      AppToast.error('Failed to move images');
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  void _showAlbumPicker() {
+    if (_albums.isEmpty) {
+      AppToast.error('Create an album first');
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(title: Text('Move selected to album')),
+            for (final album in _albums)
+              ListTile(
+                leading: const Icon(Icons.photo_album_outlined),
+                title: Text(album.title),
+                subtitle: album.description == null
+                    ? null
+                    : Text(album.description!),
+                onTap: () {
+                  Navigator.pop(context);
+                  _assignToAlbum(album);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final visible = _allImages.take(_visibleCount).toList();
@@ -137,8 +233,16 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Event photos'),
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Colors.white,
+        title: Text(widget.albumTitle ?? 'Event photos'),
         actions: [
+          if (!widget.publicAccess)
+            IconButton(
+              tooltip: 'Move to album',
+              onPressed: _saving ? null : _showAlbumPicker,
+              icon: const Icon(Icons.drive_file_move_outline),
+            ),
           IconButton(
             tooltip: 'Download selected',
             onPressed: _saving ? null : () => _saveImages(selectedImages),
@@ -183,7 +287,7 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
                             children: [
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                child: Image.network(
+                                child: ImageLoader.loadImage(
                                   image.imageUrl,
                                   fit: BoxFit.cover,
                                 ),

@@ -1,7 +1,11 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/utils/image_loader.dart';
+import 'package:mobileapp/models/album_model.dart';
+import 'package:mobileapp/pages/event_gallery/event_gallery_page.dart';
+import 'package:mobileapp/utilities/app_toast.dart';
 
 class EventModel {
   final String id;
@@ -10,6 +14,7 @@ class EventModel {
   final String? imageUrl;
   final bool isPublished;
   final bool isActive;
+  final bool autoEnhanceImages;
   final String? createdAt;
   final int photosCount;
 
@@ -20,9 +25,15 @@ class EventModel {
     this.imageUrl,
     this.isPublished = false,
     this.isActive = false,
+    this.autoEnhanceImages = false,
     this.createdAt,
     this.photosCount = 0,
   });
+
+  static int _intFromJson(dynamic value) {
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
 
   factory EventModel.fromJson(Map<String, dynamic> json) {
     final image = json['image'];
@@ -33,8 +44,9 @@ class EventModel {
       imageUrl: image is Map ? image['url']?.toString() : null,
       isPublished: json['isPublished'] ?? false,
       isActive: json['isActive'] ?? false,
+      autoEnhanceImages: json['autoEnhanceImages'] == true,
       createdAt: json['createdAt']?.toString(),
-      photosCount: json['photosCount'] ?? 0,
+      photosCount: _intFromJson(json['photosCount']),
     );
   }
 }
@@ -101,6 +113,9 @@ class _EventsListViewState extends State<_EventsListView> {
 
   @override
   Widget build(BuildContext context) {
+    final canCreateEvents =
+        !(UserStorage.currentUser.value?.isPhotographer ?? false);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Events'),
@@ -140,11 +155,13 @@ class _EventsListViewState extends State<_EventsListView> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showCreateEventDialog(context),
-        icon: const Icon(Icons.add),
-        label: const Text('Create Event'),
-      ),
+      floatingActionButton: canCreateEvents
+          ? FloatingActionButton.extended(
+              onPressed: () => _showCreateEventDialog(context),
+              icon: const Icon(Icons.add),
+              label: const Text('Create Event'),
+            )
+          : null,
     );
   }
 
@@ -183,11 +200,12 @@ class _EventsListViewState extends State<_EventsListView> {
               ),
             ),
             const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: () => _showCreateEventDialog(context),
-              icon: const Icon(Icons.add),
-              label: const Text('Create Event'),
-            ),
+            if (!(UserStorage.currentUser.value?.isPhotographer ?? false))
+              FilledButton.icon(
+                onPressed: () => _showCreateEventDialog(context),
+                icon: const Icon(Icons.add),
+                label: const Text('Create Event'),
+              ),
           ],
         ),
       ),
@@ -332,6 +350,7 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
   final _descriptionController = TextEditingController();
   bool _isLoading = false;
   bool _isPublished = true;
+  bool _autoEnhanceImages = false;
 
   @override
   void dispose() {
@@ -349,6 +368,7 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),
         'isPublished': _isPublished,
+        'autoEnhanceImages': _autoEnhanceImages,
       });
       
       if (mounted) {
@@ -469,6 +489,13 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
                       onChanged: (value) => setState(() => _isPublished = value),
                       contentPadding: EdgeInsets.zero,
                     ),
+                    SwitchListTile(
+                      title: const Text('AI image enhance'),
+                      subtitle: const Text('Keep original and add enhanced copy'),
+                      value: _autoEnhanceImages,
+                      onChanged: (value) => setState(() => _autoEnhanceImages = value),
+                      contentPadding: EdgeInsets.zero,
+                    ),
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
@@ -546,15 +573,40 @@ class _EventDetailPageState extends State<_EventDetailPage> {
           SliverAppBar(
             expandedHeight: 200,
             pinned: true,
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            foregroundColor: Colors.white,
+            iconTheme: const IconThemeData(color: Colors.white),
             flexibleSpace: FlexibleSpaceBar(
+              title: Text(
+                _event.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              titlePadding: const EdgeInsetsDirectional.only(
+                start: 56,
+                bottom: 16,
+                end: 16,
+              ),
               background: _event.imageUrl != null && _event.imageUrl!.isNotEmpty
-                  ? ImageLoader.loadImage(_event.imageUrl!, fit: BoxFit.cover)
+                  ? Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ImageLoader.loadImage(_event.imageUrl!, fit: BoxFit.cover),
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.35),
+                          ),
+                        ),
+                      ],
+                    )
                   : Container(
-                      color: Theme.of(context).colorScheme.primaryContainer,
-                      child: Icon(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      child: const Icon(
                         Icons.event,
                         size: 64,
-                        color: Theme.of(context).colorScheme.primary,
+                        color: Colors.white,
                       ),
                     ),
             ),
@@ -588,20 +640,63 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
                         ),
                       ),
+                      if (_event.autoEnhanceImages) ...[
+                        const SizedBox(width: 8),
+                        const Chip(
+                          avatar: Icon(Icons.auto_fix_high, size: 16),
+                          label: Text('Enhance'),
+                        ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Icon(Icons.photo_library, color: Theme.of(context).colorScheme.primary),
-                      const SizedBox(width: 8),
-                      Text('${_event.photosCount} photos'),
-                    ],
+                  InkWell(
+                    onTap: () => _openEventGallery(context, _event.id, _event.title),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.photo_library, color: Theme.of(context).colorScheme.primary, size: 28),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Photo Gallery',
+                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${_event.photosCount} photos',
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.arrow_forward_ios,
+                            size: 16,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                   if (_event.description?.isNotEmpty ?? false) ...[
                     const SizedBox(height: 16),
                     Text(_event.description!, style: Theme.of(context).textTheme.bodyLarge),
                   ],
+                  const SizedBox(height: 32),
+                  _EventAlbumsSection(eventId: _event.id),
                   const SizedBox(height: 32),
                   Text('Invite Photographers', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 12),
@@ -611,6 +706,14 @@ class _EventDetailPageState extends State<_EventDetailPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _openEventGallery(BuildContext context, String eventId, String eventTitle) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => EventGalleryPage(eventId: eventId, albumTitle: eventTitle),
       ),
     );
   }
@@ -788,6 +891,270 @@ class _InvitePhotographersSectionState extends State<_InvitePhotographersSection
   }
 }
 
+class _EventAlbumsSection extends StatefulWidget {
+  const _EventAlbumsSection({required this.eventId});
+
+  final String eventId;
+
+  @override
+  State<_EventAlbumsSection> createState() => _EventAlbumsSectionState();
+}
+
+class _EventAlbumsSectionState extends State<_EventAlbumsSection> {
+  List<AlbumModel> _albums = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAlbums();
+  }
+
+  Future<void> _loadAlbums() async {
+    setState(() => _loading = true);
+    try {
+      final response = await DioHelper.get(
+        '/album/get-all',
+        queryParameters: {'eventId': widget.eventId},
+      );
+      final data = response.data['data'] as List? ?? [];
+      setState(() {
+        _albums = data
+            .map((item) => AlbumModel.fromJson(Map<String, dynamic>.from(item)))
+            .toList();
+      });
+    } catch (_) {
+      setState(() => _albums = []);
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  void _openCreateAlbum() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => _CreateAlbumSheet(
+        eventId: widget.eventId,
+        onCreated: _loadAlbums,
+      ),
+    );
+  }
+
+  void _openAlbum(AlbumModel album) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => EventGalleryPage(
+          eventId: widget.eventId,
+          albumId: album.id,
+          albumTitle: album.title,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteAlbum(AlbumModel album) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Album'),
+        content: Text('Delete "${album.title}"? Images will stay in event gallery.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      await DioHelper.delete('/album/delete?id=${album.id}');
+      AppToast.success('Album deleted');
+      _loadAlbums();
+    } catch (_) {
+      AppToast.error('Failed to delete album');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Albums',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: _openCreateAlbum,
+              icon: const Icon(Icons.add),
+              label: const Text('Create'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (_loading)
+          const Center(child: CircularProgressIndicator())
+        else if (_albums.isEmpty)
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.photo_album_outlined),
+              title: const Text('No albums yet'),
+              subtitle: const Text('Create albums inside this event.'),
+              trailing: const Icon(Icons.add),
+              onTap: _openCreateAlbum,
+            ),
+          )
+        else
+          ..._albums.map(
+            (album) => Card(
+              child: ListTile(
+                leading: const Icon(Icons.photo_album_outlined),
+                title: Text(album.title),
+                subtitle: album.description == null
+                    ? null
+                    : Text(album.description!),
+                trailing: Wrap(
+                  spacing: 4,
+                  children: [
+                    IconButton(
+                      tooltip: 'Delete album',
+                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                      onPressed: () => _deleteAlbum(album),
+                    ),
+                    const Icon(Icons.chevron_right),
+                  ],
+                ),
+                onTap: () => _openAlbum(album),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _CreateAlbumSheet extends StatefulWidget {
+  const _CreateAlbumSheet({
+    required this.eventId,
+    required this.onCreated,
+  });
+
+  final String eventId;
+  final VoidCallback onCreated;
+
+  @override
+  State<_CreateAlbumSheet> createState() => _CreateAlbumSheetState();
+}
+
+class _CreateAlbumSheetState extends State<_CreateAlbumSheet> {
+  final _titleController = TextEditingController();
+  final _descriptionController = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _create() async {
+    final title = _titleController.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Album title is required')),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      await DioHelper.post('/album', data: {
+        'eventId': widget.eventId,
+        'title': title,
+        'description': _descriptionController.text.trim(),
+      });
+      widget.onCreated();
+      if (mounted) Navigator.pop(context);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to create album')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Create Album',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _titleController,
+              decoration: const InputDecoration(
+                labelText: 'Album title',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _descriptionController,
+              decoration: const InputDecoration(
+                labelText: 'Description',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _saving ? null : _create,
+                child: Text(_saving ? 'Creating...' : 'Create Album'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _EditEventSheet extends StatefulWidget {
   final EventModel event;
   final TextEditingController titleController;
@@ -808,20 +1175,23 @@ class _EditEventSheet extends StatefulWidget {
 class _EditEventSheetState extends State<_EditEventSheet> {
   bool _isLoading = false;
   bool _isPublished = false;
+  bool _autoEnhanceImages = false;
 
   @override
   void initState() {
     super.initState();
     _isPublished = widget.event.isPublished;
+    _autoEnhanceImages = widget.event.autoEnhanceImages;
   }
 
   Future<void> _saveEvent() async {
     setState(() => _isLoading = true);
     try {
-      await DioHelper.put('/event/update?id=${widget.event.id}', data: {
+      await DioHelper.patch('/event/update?id=${widget.event.id}', data: {
         'title': widget.titleController.text.trim(),
         'description': widget.descriptionController.text.trim(),
         'isPublished': _isPublished,
+        'autoEnhanceImages': _autoEnhanceImages,
       });
       
       final updated = EventModel(
@@ -830,6 +1200,7 @@ class _EditEventSheetState extends State<_EditEventSheet> {
         description: widget.descriptionController.text.trim(),
         isPublished: _isPublished,
         isActive: widget.event.isActive,
+        autoEnhanceImages: _autoEnhanceImages,
         imageUrl: widget.event.imageUrl,
         photosCount: widget.event.photosCount,
       );
@@ -908,6 +1279,13 @@ class _EditEventSheetState extends State<_EditEventSheet> {
                     title: const Text('Published'),
                     value: _isPublished,
                     onChanged: (value) => setState(() => _isPublished = value),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  SwitchListTile(
+                    title: const Text('AI image enhance'),
+                    subtitle: const Text('New uploads keep original and add enhanced copy'),
+                    value: _autoEnhanceImages,
+                    onChanged: (value) => setState(() => _autoEnhanceImages = value),
                     contentPadding: EdgeInsets.zero,
                   ),
                   const SizedBox(height: 24),

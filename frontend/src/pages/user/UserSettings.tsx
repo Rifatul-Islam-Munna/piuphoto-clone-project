@@ -23,8 +23,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import UserLayout from './UserLayout';
-import { GetRequestAxios, PatchRequestAxios, PostRequestAxios } from '../../../api-hooks/api-hooks';
-import { useQueryWrapper } from '../../../api-hooks/react-query-wrapper';
+import { GetRequestAxios, PatchRequestAxios, PostRequestAxios } from '@/api-hooks/api-hooks';
+import { useQueryWrapper } from '@/api-hooks/react-query-wrapper';
 
 type UserProfile = {
   _id: string;
@@ -380,3 +380,4 @@ export default function UserSettings() {
     </UserLayout>
   );
 }
+

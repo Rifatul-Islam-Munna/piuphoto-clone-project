@@ -32,6 +32,11 @@ export default defineConfig(({ mode }) => ({
         changeOrigin: true,
         secure: false,
       },
+      "/eventImage": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+        secure: false,
+      },
       "/auth": {
         target: "http://localhost:4000",
         changeOrigin: true,

@@ -33,8 +33,8 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import AdminLayout from "./AdminLayout";
 import { featureMapping, limitMapping, getFeatureDescription, getLimitDescription } from "@/lib/constants/features";
-import { useQueryWrapper } from "../../../api-hooks/react-query-wrapper";
-import { useCommonMutationApi } from "../../../api-hooks/use-api-mutation";
+import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
+import { useCommonMutationApi } from "@/api-hooks/use-api-mutation";
 
 type SubscriptionPlan = {
   _id: string;
@@ -538,3 +538,4 @@ export default function Plans() {
     </AdminLayout>
   );
 }
+

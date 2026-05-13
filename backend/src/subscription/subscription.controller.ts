@@ -62,6 +62,18 @@ export class SubscriptionPlanController {
     );
   }
 
+  @Post('mobile-payment-sheet')
+  @UseGuards(AuthGuard)
+  createMobilePaymentSheet(
+    @Body() body: CreateSubscriptionCheckoutDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.subscriptionPlanService.createMobilePaymentSheet(
+      body.id,
+      req.user?.id,
+    );
+  }
+
   @Get('verify-checkout')
   @UseGuards(AuthGuard)
   verifyCheckout(
@@ -70,6 +82,18 @@ export class SubscriptionPlanController {
   ) {
     return this.subscriptionPlanService.verifyCheckout(
       query.sessionId,
+      req.user?.id,
+    );
+  }
+
+  @Get('verify-mobile-payment')
+  @UseGuards(AuthGuard)
+  verifyMobilePayment(
+    @Query('paymentIntentId') paymentIntentId: string,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.subscriptionPlanService.verifyMobilePayment(
+      paymentIntentId,
       req.user?.id,
     );
   }

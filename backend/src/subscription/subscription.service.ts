@@ -36,6 +36,15 @@ type StripeCheckoutSession = {
   metadata?: Record<string, string | undefined>;
 };
 
+type StripePaymentIntent = {
+  id: string;
+  client_secret?: string;
+  status?: string;
+  amount?: number;
+  currency?: string;
+  metadata?: Record<string, string | undefined>;
+};
+
 @Injectable()
 export class SubscriptionPlanService {
   private logger = new Logger(SubscriptionPlanService.name);
@@ -140,6 +149,21 @@ export class SubscriptionPlanService {
     return stripeSecretKey;
   }
 
+  private getStripePublishableKey() {
+    const key =
+      this.configService.get<string>('STRIPE_PUBLISHABLE_KEY')?.trim() ||
+      this.configService
+        .get<string>('NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY')
+        ?.trim() ||
+      '';
+
+    if (!key) {
+      throw new HttpException('Stripe publishable key missing', 500);
+    }
+
+    return key;
+  }
+
   private getFrontendBaseUrl() {
     const configuredOrigins =
       this.configService.get<string>('CORS_ORIGIN')?.trim() || '';
@@ -231,6 +255,71 @@ export class SubscriptionPlanService {
       throw new HttpException(
         error?.response?.data?.error?.message ||
           'Failed to verify Stripe checkout session',
+        400,
+      );
+    }
+  }
+
+  private async createStripePaymentIntent(
+    plan: Record<string, any>,
+    userId: string,
+    credit: number,
+  ) {
+    const amount = Math.round(Number(plan.discount_price ?? plan.price) * 100);
+    if (!amount || amount < 1) {
+      throw new HttpException('Invalid plan price', 400);
+    }
+
+    const params = new URLSearchParams();
+    params.append('amount', String(amount));
+    params.append('currency', String(plan.currency || 'USD').toLowerCase());
+    params.append('automatic_payment_methods[enabled]', 'true');
+    params.append('automatic_payment_methods[allow_redirects]', 'never');
+    params.append('metadata[userId]', userId);
+    params.append('metadata[planId]', String(plan._id));
+    params.append('metadata[credit]', String(credit));
+    params.append('description', `Plan purchase: ${plan.title}`);
+
+    try {
+      const { data } = await axios.post<StripePaymentIntent>(
+        'https://api.stripe.com/v1/payment_intents',
+        params.toString(),
+        {
+          headers: {
+            Authorization: `Bearer ${this.getStripeSecretKey()}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        },
+      );
+
+      return data;
+    } catch (error: any) {
+      this.logger.error('Stripe plan mobile payment intent failed', error);
+      throw new HttpException(
+        error?.response?.data?.error?.message ||
+          'Failed to create Stripe mobile payment',
+        400,
+      );
+    }
+  }
+
+  private async getStripePaymentIntent(paymentIntentId: string) {
+    try {
+      const { data } = await axios.get<StripePaymentIntent>(
+        `https://api.stripe.com/v1/payment_intents/${paymentIntentId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${this.getStripeSecretKey()}`,
+          },
+        },
+      );
+
+      return data;
+    } catch (error: any) {
+      this.logger.error('Stripe plan mobile payment verification failed', error);
+      throw new HttpException(
+        error?.response?.data?.error?.message ||
+          'Failed to verify Stripe mobile payment',
         400,
       );
     }
@@ -463,6 +552,68 @@ export class SubscriptionPlanService {
     };
   }
 
+  async createMobilePaymentSheet(planId: string, userId?: string) {
+    if (!userId) {
+      throw new HttpException('Invalid user id', 400);
+    }
+
+    const plan = await this.subscriptionPlanModel
+      .findById(planId)
+      .select(
+        'title description price discount_price currency billingUnit permissions isActive',
+      )
+      .lean();
+
+    if (!plan || !plan.isActive) {
+      throw new HttpException('Plan not found or inactive', 400);
+    }
+
+    const credit = this.extractPermissionLimit(
+      Array.isArray(plan.permissions) ? plan.permissions : [],
+      'credit',
+    );
+
+    const paymentIntent = await this.createStripePaymentIntent(
+      plan,
+      userId,
+      credit,
+    );
+
+    if (!paymentIntent.id || !paymentIntent.client_secret) {
+      throw new HttpException('Invalid Stripe mobile payment response', 400);
+    }
+
+    await this.subscriptionPlanPurchaseModel.findOneAndUpdate(
+      { stripeSessionId: paymentIntent.id },
+      {
+        $set: {
+          planId: (plan as any)._id,
+          userId,
+          price: Number(plan.discount_price ?? plan.price),
+          currency: plan.currency || 'USD',
+          billingUnit: plan.billingUnit || BillingUnit.PER_MONTH,
+          credit,
+          status: SubscriptionPlanPurchaseStatus.PENDING,
+          stripePaymentIntentId: paymentIntent.id,
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      },
+    );
+
+    return {
+      message: 'Mobile payment sheet created successfully',
+      data: {
+        paymentIntentId: paymentIntent.id,
+        paymentIntentClientSecret: paymentIntent.client_secret,
+        publishableKey: this.getStripePublishableKey(),
+      },
+    };
+  }
+
   async verifyCheckout(sessionId: string, userId?: string) {
     if (!userId) {
       throw new HttpException('Invalid user id', 400);
@@ -534,6 +685,86 @@ export class SubscriptionPlanService {
       message: 'Plan purchase verified successfully',
       data: {
         sessionId,
+        creditsAdded,
+        totalCredits,
+        plan: plan
+          ? {
+              _id: String(plan._id),
+              title: plan.title,
+            }
+          : null,
+      },
+    };
+  }
+
+  async verifyMobilePayment(paymentIntentId: string, userId?: string) {
+    if (!userId) {
+      throw new HttpException('Invalid user id', 400);
+    }
+
+    const purchase = await this.subscriptionPlanPurchaseModel
+      .findOne({ stripeSessionId: paymentIntentId })
+      .lean();
+
+    if (!purchase) {
+      throw new HttpException('Plan purchase not found', 400);
+    }
+
+    if (String(purchase.userId) !== userId) {
+      throw new HttpException('You can only verify your own purchase', 403);
+    }
+
+    const paymentIntent = await this.getStripePaymentIntent(paymentIntentId);
+
+    if (paymentIntent.metadata?.userId && paymentIntent.metadata.userId !== userId) {
+      throw new HttpException('Stripe payment metadata mismatch', 403);
+    }
+
+    if (paymentIntent.status !== 'succeeded') {
+      throw new HttpException('Payment not completed yet', 400);
+    }
+
+    let creditsAdded = 0;
+    let totalCredits = 0;
+    const plan = purchase.planId
+      ? await this.subscriptionPlanModel
+          .findById(purchase.planId)
+          .select('title')
+          .lean()
+      : null;
+
+    if (purchase.status === SubscriptionPlanPurchaseStatus.COMPLETED) {
+      const profile = await this.userService.finMyProfile(userId);
+      totalCredits = profile?.credits || 0;
+    } else {
+      const normalizedPlanId =
+        purchase.planId &&
+        typeof (purchase.planId as any)?.toHexString === 'function'
+          ? (purchase.planId as any).toHexString()
+          : String(purchase.planId);
+
+      const assignedPlan = await this.userService.assignPlan(
+        userId,
+        normalizedPlanId,
+        { creditOverride: purchase.credit },
+      );
+
+      creditsAdded = purchase.credit;
+      totalCredits = assignedPlan?.data?.credits || 0;
+
+      await this.subscriptionPlanPurchaseModel.findByIdAndUpdate(purchase._id, {
+        $set: {
+          status: SubscriptionPlanPurchaseStatus.COMPLETED,
+          completedAt: new Date(),
+          stripePaymentIntentId: paymentIntent.id,
+        },
+      });
+    }
+
+    return {
+      message: 'Plan mobile payment verified successfully',
+      data: {
+        paymentIntentId,
         creditsAdded,
         totalCredits,
         plan: plan

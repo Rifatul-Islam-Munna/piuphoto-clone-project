@@ -25,6 +25,9 @@ export class Event {
 
   @Prop({ default: true })
   isActive: boolean;
+
+  @Prop({ default: false })
+  autoEnhanceImages: boolean;
 }
 
 export const EventSchema = SchemaFactory.createForClass(Event);

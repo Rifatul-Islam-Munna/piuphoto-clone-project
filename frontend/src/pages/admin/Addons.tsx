@@ -31,8 +31,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import AdminLayout from "./AdminLayout";
-import { useQueryWrapper } from "../../../api-hooks/react-query-wrapper";
-import { useCommonMutationApi } from "../../../api-hooks/use-api-mutation";
+import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
+import { useCommonMutationApi } from "@/api-hooks/use-api-mutation";
 
 type Addon = {
   _id: string;
@@ -390,3 +390,4 @@ export default function Addons() {
     </AdminLayout>
   );
 }
+

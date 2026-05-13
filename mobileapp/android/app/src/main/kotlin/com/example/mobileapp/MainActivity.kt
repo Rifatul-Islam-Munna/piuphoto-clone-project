@@ -11,12 +11,12 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
 import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
 
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterFragmentActivity() {
     private val otgChannel = "piuphoto/otg_picker"
     private val settingsChannel = "piuphoto/device_settings"
     private val galleryChannel = "piuphoto/gallery_import"

@@ -32,7 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import AdminLayout from "./AdminLayout";
-import { useQueryWrapper } from "../../../api-hooks/react-query-wrapper";
+import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
 
 type PurchaseItem = {
   _id: string;
@@ -298,4 +298,5 @@ export default function Billing() {
     </AdminLayout>
   );
 }
+
 

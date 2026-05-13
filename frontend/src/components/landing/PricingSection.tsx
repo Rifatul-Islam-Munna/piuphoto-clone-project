@@ -7,8 +7,8 @@ import { toast } from 'sonner';
 import PricingCard from './PricingCard';
 import { Button } from '@/components/ui/button';
 import { getFeatureDescription, getLimitDescription } from '@/lib/constants/features';
-import { useQueryWrapper } from '../../../api-hooks/react-query-wrapper';
-import { GetRequestAxios, PostRequestAxios } from '../../../api-hooks/api-hooks';
+import { useQueryWrapper } from '@/api-hooks/react-query-wrapper';
+import { GetRequestAxios, PostRequestAxios } from '@/api-hooks/api-hooks';
 
 type PlanPermission =
   | { key?: string; value?: number | string }
@@ -515,3 +515,4 @@ const PricingSection = () => {
 };
 
 export default PricingSection;
+

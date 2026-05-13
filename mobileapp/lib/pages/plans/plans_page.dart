@@ -1,11 +1,12 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:mobileapp/core/constants/feature_mapping.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
+import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 @RoutePage()
 class PlansPage extends StatefulWidget {
@@ -107,8 +108,9 @@ class _PlansPageState extends State<PlansPage> {
                   .map((plan) => _PlanCard(
                         plan: plan,
                         isYearly: _isYearly,
-                        onBuy: () => _openCheckout(
-                          endpoint: '/subscription-plan/create-checkout-session',
+                        onBuy: () => _openMobilePaymentSheet(
+                          endpoint: '/subscription-plan/mobile-payment-sheet',
+                          verifyEndpoint: '/subscription-plan/verify-mobile-payment',
                           data: {'id': plan['_id']},
                         ),
                       ))
@@ -176,8 +178,9 @@ class _PlansPageState extends State<PlansPage> {
               children: addons
                   .map((addon) => _AddonCard(
                         addon: addon,
-                        onBuy: () => _openCheckout(
-                          endpoint: '/addon/create-checkout-session',
+                        onBuy: () => _openMobilePaymentSheet(
+                          endpoint: '/addon/mobile-payment-sheet',
+                          verifyEndpoint: '/addon/verify-mobile-payment',
                           data: {'addonId': addon['_id']},
                         ),
                       ))
@@ -201,8 +204,9 @@ class _PlansPageState extends State<PlansPage> {
     return data.map((item) => Map<String, dynamic>.from(item as Map)).toList();
   }
 
-  Future<void> _openCheckout({
+  Future<void> _openMobilePaymentSheet({
     required String endpoint,
+    required String verifyEndpoint,
     required Map<String, dynamic> data,
   }) async {
     final user = UserStorage.currentUser.value;
@@ -213,20 +217,58 @@ class _PlansPageState extends State<PlansPage> {
 
     try {
       final response = await DioHelper.post(endpoint, data: data);
-      final url = response.data['url']?.toString();
-      if (url == null || url.isEmpty) {
-        throw Exception('Checkout URL missing');
+      final paymentData = Map<String, dynamic>.from(
+        response.data['data'] as Map? ?? {},
+      );
+      final publishableKey = paymentData['publishableKey']?.toString();
+      final clientSecret =
+          paymentData['paymentIntentClientSecret']?.toString();
+      final paymentIntentId = paymentData['paymentIntentId']?.toString();
+
+      if (publishableKey == null ||
+          publishableKey.isEmpty ||
+          clientSecret == null ||
+          clientSecret.isEmpty ||
+          paymentIntentId == null ||
+          paymentIntentId.isEmpty) {
+        throw Exception('Mobile payment data missing');
       }
 
-      final launched = await launchUrl(
-        Uri.parse(url),
-        mode: LaunchMode.externalApplication,
+      Stripe.publishableKey = publishableKey;
+      await Stripe.instance.applySettings();
+      await Stripe.instance.initPaymentSheet(
+        paymentSheetParameters: SetupPaymentSheetParameters(
+          paymentIntentClientSecret: clientSecret,
+          merchantDisplayName: 'Nikofly',
+          style: ThemeMode.light,
+        ),
       );
-      if (!launched) {
-        throw Exception('Unable to open checkout');
-      }
+
+      await Stripe.instance.presentPaymentSheet();
+      await DioHelper.get(
+        verifyEndpoint,
+        queryParameters: {'paymentIntentId': paymentIntentId},
+      );
+      try {
+        await _refreshCurrentUser();
+      } catch (_) {}
+      AppToast.success('Payment successful');
     } catch (e) {
-      AppToast.error('Failed to open checkout');
+      if (e is StripeException) {
+        AppToast.error(e.error.localizedMessage ?? 'Payment cancelled');
+        return;
+      }
+      AppToast.error('Payment failed');
+    }
+  }
+
+  Future<void> _refreshCurrentUser() async {
+    final response = await DioHelper.get('/user/get-my-profile');
+    final rawUser = response.data['data'] ?? response.data;
+    if (rawUser is Map) {
+      await UserStorage.saveUser(
+        UserModel.fromJson(Map<String, dynamic>.from(rawUser)),
+      );
     }
   }
 }

@@ -36,7 +36,10 @@ class _EventQrScanPageState extends State<EventQrScanPage> {
     _handled = true;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => EventGalleryPage(eventId: eventId),
+        builder: (_) => EventGalleryPage(
+          eventId: eventId,
+          publicAccess: true,
+        ),
       ),
     );
   }

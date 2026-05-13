@@ -50,7 +50,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      title: 'PiuPhoto',
+      title: 'Nikofly',
       debugShowCheckedModeBanner: false,
       scaffoldMessengerKey: AppToast.messengerKey,
       theme: AppTheme.lightTheme,

@@ -44,8 +44,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import AdminLayout from "./AdminLayout";
-import { DeleteRequestAxios, PatchRequestAxios, PostRequestAxios } from "../../../api-hooks/api-hooks";
-import { useQueryWrapper } from "../../../api-hooks/react-query-wrapper";
+import { DeleteRequestAxios, PatchRequestAxios, PostRequestAxios } from "@/api-hooks/api-hooks";
+import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
 
 type EventType = {
   _id: string;
@@ -457,3 +457,4 @@ export default function Events() {
     </AdminLayout>
   );
 }
+

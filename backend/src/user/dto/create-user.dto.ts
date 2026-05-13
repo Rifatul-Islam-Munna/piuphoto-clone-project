@@ -30,7 +30,7 @@ export class CreateUserDto {
   })
   @IsString()
   @IsOptional()
-  role?: UserType.USER;
+  role?: UserType;
 
   @ApiPropertyOptional({ example: '01712345678' })
   @IsString()

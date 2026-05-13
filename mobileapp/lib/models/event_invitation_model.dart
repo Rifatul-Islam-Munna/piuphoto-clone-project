@@ -4,12 +4,19 @@ class EventSummary {
     required this.title,
     this.description,
     this.imageUrl,
+    this.photosCount = 0,
   });
 
   final String id;
   final String title;
   final String? description;
   final String? imageUrl;
+  final int photosCount;
+
+  static int _intFromJson(dynamic value) {
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
 
   factory EventSummary.fromJson(Map<String, dynamic> json) {
     final image = json['image'];
@@ -18,6 +25,7 @@ class EventSummary {
       title: json['title']?.toString() ?? 'Untitled event',
       description: json['description']?.toString(),
       imageUrl: image is Map ? image['url']?.toString() : null,
+      photosCount: _intFromJson(json['photosCount']),
     );
   }
 
@@ -27,6 +35,7 @@ class EventSummary {
       'title': title,
       'description': description,
       'image': imageUrl == null ? null : {'url': imageUrl},
+      'photosCount': photosCount,
     };
   }
 }

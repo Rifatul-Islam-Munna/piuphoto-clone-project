@@ -14,6 +14,10 @@ import {
   SubscriptionPlan,
   SubscriptionPlanDocument,
 } from '../subscription/entities/subscription-plan.entity';
+import {
+  EventImage,
+  EventImageDocument,
+} from '../event-image/entities/event-image.entity';
 
 @Injectable()
 export class EventService {
@@ -28,6 +32,8 @@ export class EventService {
     private userModel: Model<UserDocument>,
     @InjectModel(SubscriptionPlan.name)
     private subscriptionPlanModel: Model<SubscriptionPlanDocument>,
+    @InjectModel(EventImage.name)
+    private eventImageModel: Model<EventImageDocument>,
   ) {}
 
   private normalizeId(id: string | Types.ObjectId) {
@@ -246,14 +252,26 @@ export class EventService {
     const subscription = await this.getUserSubscriptionMeta(normalizedUserId);
     const eventIds = data.map((event) => this.toObjectId(String(event._id)));
 
-    const invitations = eventIds.length
-      ? await this.eventInvitationModel
-          .find({ eventId: { $in: eventIds } })
-          .populate('photographerId', 'name email phone userId')
-          .sort({ createdAt: -1 })
-          .lean()
-          .exec()
-      : [];
+    const [invitations, photoCounts] = eventIds.length
+      ? await Promise.all([
+          this.eventInvitationModel
+            .find({ eventId: { $in: eventIds } })
+            .populate('photographerId', 'name email phone userId')
+            .sort({ createdAt: -1 })
+            .lean()
+            .exec(),
+          this.eventImageModel
+            .aggregate<{ _id: Types.ObjectId; count: number }>([
+              { $match: { eventId: { $in: eventIds } } },
+              { $group: { _id: '$eventId', count: { $sum: 1 } } },
+            ])
+            .exec(),
+        ])
+      : [[], []];
+
+    const photoCountMap = new Map(
+      photoCounts.map((item) => [String(item._id), item.count]),
+    );
 
     const invitationMap = new Map<string, ReturnType<typeof this.toOwnerInvitationView>[]>();
 
@@ -287,6 +305,7 @@ export class EventService {
             0,
           ),
         },
+        photosCount: photoCountMap.get(String(event._id)) ?? 0,
       };
     });
 

@@ -17,7 +17,6 @@ class MainShellPage extends StatelessWidget {
         final routes = isPhotographer
             ? [
                 const HomeRoute(),
-                const EventsRoute(),
                 const UploadRoute(),
                 const InvitationsRoute(),
                 const ProfileRoute(),
@@ -28,10 +27,6 @@ class MainShellPage extends StatelessWidget {
                 const PlansRoute(),
                 const ProfileRoute(),
               ];
-
-        final labels = isPhotographer
-            ? ['Home', 'Events', 'Upload', 'Invites', 'Profile']
-            : ['Home', 'Events', 'Plans', 'Profile'];
 
         return AutoTabsScaffold(
           key: ValueKey(user?.role ?? 'guest'),

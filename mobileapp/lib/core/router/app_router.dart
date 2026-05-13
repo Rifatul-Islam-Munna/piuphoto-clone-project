@@ -121,7 +121,6 @@ List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
   if (user?.isPhotographer ?? false) {
     return const [
       BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: 'Home'),
-      BottomNavigationBarItem(icon: Icon(Icons.event_outlined), label: 'Events'),
       BottomNavigationBarItem(
         icon: Icon(Icons.cloud_upload_outlined),
         label: 'Upload',

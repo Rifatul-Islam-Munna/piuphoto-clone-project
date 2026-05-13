@@ -44,6 +44,14 @@ export class EventImageController {
     return this.eventImageService.findAll(query);
   }
 
+  @Get('public')
+  findPublic(
+    @Query('eventId') eventId: string,
+    @Query('albumId') albumId?: string,
+  ) {
+    return this.eventImageService.findPublicByEvent(eventId, albumId);
+  }
+
   @Get('get-one')
   @UseGuards(AuthGuard)
   findOne(@Query() query: EventImageQueryDto) {

@@ -14,6 +14,9 @@ export class EventImage {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   userTakenBy: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'Album', index: true })
+  albumId?: Types.ObjectId;
+
   @Prop({ default: false, index: true })
   isEnhanced: boolean;
 }
@@ -22,3 +25,4 @@ export const EventImageSchema = SchemaFactory.createForClass(EventImage);
 
 EventImageSchema.index({ eventId: 1, createdAt: -1 });
 EventImageSchema.index({ eventId: 1, userTakenBy: 1, createdAt: -1 });
+EventImageSchema.index({ eventId: 1, albumId: 1, createdAt: -1 });

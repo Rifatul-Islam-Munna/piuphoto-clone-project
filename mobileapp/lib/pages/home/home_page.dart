@@ -1,13 +1,14 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:mobileapp/core/constants/feature_mapping.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
+import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/pages/event_gallery/event_qr_scan_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 @RoutePage()
 class HomePage extends StatelessWidget {
@@ -25,18 +26,70 @@ class HomePage extends StatelessWidget {
     return data.map((item) => Map<String, dynamic>.from(item as Map)).toList();
   }
 
-  Future<void> _openCheckout({
+  Future<void> _openMobilePaymentSheet({
     required BuildContext context,
     required String endpoint,
+    required String verifyEndpoint,
     required Map<String, dynamic> data,
   }) async {
+    final user = UserStorage.currentUser.value;
+    if (user == null) {
+      context.router.root.push(const LoginRoute());
+      return;
+    }
+
     try {
       final response = await DioHelper.post(endpoint, data: data);
-      final url = response.data['url']?.toString();
-      if (url == null || url.isEmpty) throw Exception('Checkout URL missing');
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      final paymentData = Map<String, dynamic>.from(
+        response.data['data'] as Map? ?? {},
+      );
+      final publishableKey = paymentData['publishableKey']?.toString();
+      final clientSecret =
+          paymentData['paymentIntentClientSecret']?.toString();
+      final paymentIntentId = paymentData['paymentIntentId']?.toString();
+
+      if (publishableKey == null ||
+          publishableKey.isEmpty ||
+          clientSecret == null ||
+          clientSecret.isEmpty ||
+          paymentIntentId == null ||
+          paymentIntentId.isEmpty) {
+        throw Exception('Mobile payment data missing');
+      }
+
+      Stripe.publishableKey = publishableKey;
+      await Stripe.instance.applySettings();
+      await Stripe.instance.initPaymentSheet(
+        paymentSheetParameters: SetupPaymentSheetParameters(
+          paymentIntentClientSecret: clientSecret,
+          merchantDisplayName: 'Nikofly',
+          style: ThemeMode.light,
+        ),
+      );
+
+      await Stripe.instance.presentPaymentSheet();
+      await DioHelper.get(
+        verifyEndpoint,
+        queryParameters: {'paymentIntentId': paymentIntentId},
+      );
+      try {
+        await _refreshCurrentUser();
+      } catch (_) {}
+      AppToast.success('Payment successful');
+    } on StripeException catch (e) {
+      AppToast.error(e.error.localizedMessage ?? 'Payment cancelled');
     } catch (_) {
-      AppToast.error('Failed to open checkout');
+      AppToast.error('Payment failed');
+    }
+  }
+
+  Future<void> _refreshCurrentUser() async {
+    final response = await DioHelper.get('/user/get-my-profile');
+    final rawUser = response.data['data'] ?? response.data;
+    if (rawUser is Map) {
+      await UserStorage.saveUser(
+        UserModel.fromJson(Map<String, dynamic>.from(rawUser)),
+      );
     }
   }
 
@@ -126,7 +179,7 @@ class HomePage extends StatelessWidget {
                     const Icon(Icons.camera_alt, color: Colors.white, size: 24),
                     const SizedBox(width: 8),
                     const Text(
-                      'PiuPhoto',
+                      'Nikofly',
                       style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                     const Spacer(),
@@ -152,7 +205,7 @@ class HomePage extends StatelessWidget {
             const SizedBox(height: 12),
             _buildStatsRow(),
             const SizedBox(height: 24),
-            _buildSectionTitle(context, 'Active Event'),
+            _buildSectionTitle(context, 'Assigned Event'),
             const SizedBox(height: 12),
             _buildEventCard(context, activeEvent),
             const SizedBox(height: 24),
@@ -195,7 +248,9 @@ class HomePage extends StatelessWidget {
       children: [
         _buildHeroSection(context),
         const SizedBox(height: 24),
-        _buildSectionTitle(context, 'Why PiuPhoto?'),
+        _buildGuestQrCard(context),
+        const SizedBox(height: 24),
+        _buildSectionTitle(context, 'Why Nikofly?'),
         const SizedBox(height: 12),
         _buildFeaturesList(context),
         const SizedBox(height: 24),
@@ -224,7 +279,7 @@ class HomePage extends StatelessWidget {
       children: [
         Expanded(child: _StatTile(icon: Icons.photo_library_outlined, value: '0', label: 'Photos', color: Colors.blue)),
         const SizedBox(width: 12),
-        Expanded(child: _StatTile(icon: Icons.event_outlined, value: '0', label: 'Events', color: Colors.purple)),
+        Expanded(child: _StatTile(icon: Icons.mail_outline, value: '0', label: 'Invites', color: Colors.purple)),
         const SizedBox(width: 12),
         Expanded(child: _StatTile(icon: Icons.cloud_done_outlined, value: '0', label: 'Uploaded', color: Colors.green)),
       ],
@@ -257,14 +312,14 @@ class HomePage extends StatelessWidget {
               children: [
                 Text(hasEvent ? event.title : 'No Active Event', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
-                Text(hasEvent ? '${event.photosCount ?? 0} photos' : 'Select an event to start', style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 14)),
+                Text(hasEvent ? '${event.photosCount} photos' : 'Accept an invitation first', style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 14)),
               ],
             ),
           ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
-            child: Text(hasEvent ? 'Change' : 'Select', style: TextStyle(color: hasEvent ? Colors.green : Colors.grey, fontWeight: FontWeight.bold)),
+            child: Text(hasEvent ? 'Active' : 'None', style: TextStyle(color: hasEvent ? Colors.green : Colors.grey, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -369,6 +424,70 @@ class HomePage extends StatelessWidget {
     );
   }
 
+  Widget _buildGuestQrCard(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const EventQrScanPage()),
+        ),
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.qr_code_scanner, color: Colors.white),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Scan QR Code',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.onPrimaryContainer,
+                          ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Open event photos without login',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onPrimaryContainer
+                                .withValues(alpha: 0.75),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildFeaturesList(BuildContext context) {
     return Column(
       children: [
@@ -409,7 +528,12 @@ class HomePage extends StatelessWidget {
               period: '/mo',
               features: allItems.isEmpty ? ['View all features in Plans page'] : allItems,
               isPopular: isPopular,
-              onBuy: () => _openCheckout(context: context, endpoint: '/subscription-plan/create-checkout-session', data: {'id': plan['_id']}),
+              onBuy: () => _openMobilePaymentSheet(
+                context: context,
+                endpoint: '/subscription-plan/mobile-payment-sheet',
+                verifyEndpoint: '/subscription-plan/verify-mobile-payment',
+                data: {'id': plan['_id']},
+              ),
             );
           }).toList(),
         );
@@ -545,7 +669,12 @@ class HomePage extends StatelessWidget {
               title: addon['title']?.toString() ?? '',
               credits: addon['credit'] ?? 0,
               price: (addon['price'] ?? 0).toDouble(),
-              onBuy: () => _openCheckout(context: context, endpoint: '/addon/create-checkout-session', data: {'addonId': addon['_id']}),
+              onBuy: () => _openMobilePaymentSheet(
+                context: context,
+                endpoint: '/addon/mobile-payment-sheet',
+                verifyEndpoint: '/addon/verify-mobile-payment',
+                data: {'addonId': addon['_id']},
+              ),
             );
           }).toList(),
         );

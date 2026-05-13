@@ -16,6 +16,7 @@ import UserDashboard from "./pages/user/UserDashboard";
 import UserInvitations from "./pages/user/UserInvitations";
 import UserSettings from "./pages/user/UserSettings";
 import Pricing from "./pages/Pricing";
+import EventPublicGallery from "./pages/public/EventPublicGallery";
 
 const ProtectedAdminRoute = ({ children }: { children: React.ReactNode }) => {
   const token = localStorage.getItem("access_token");
@@ -59,6 +60,15 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
           <Route path="/pricing" element={<Pricing />} />
+          <Route path="/event/:eventId" element={<EventPublicGallery />} />
+          <Route
+            path="/event/:eventId/album/:albumId"
+            element={<EventPublicGallery />}
+          />
+          <Route
+            path="/event/:eventId/image/:imageId"
+            element={<EventPublicGallery />}
+          />
           <Route
             path="/admin/dashboard"
             element={
