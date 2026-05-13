@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobileapp/core/di/locator.dart';
 import 'package:mobileapp/models/user_model.dart';
@@ -75,6 +76,7 @@ class UserStorage {
     await _secure.delete(key: _accessTokenKey);
     await _secure.delete(key: _refreshTokenKey);
     await _prefs.remove(_userKey);
+    await ActiveEventStorage.clear();
     currentUser.value = null;
   }
 }

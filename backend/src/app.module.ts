@@ -10,6 +10,7 @@ import { SubscriptionModule } from './subscription/subscription.module';
 import { ImageModule } from './image/image.module';
 import { EventModule } from './event/event.module';
 import { AddonModule } from './addon/addon.module';
+import { EventImageModule } from './event-image/event-image.module';
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import { AddonModule } from './addon/addon.module';
     AddonModule,
     ImageModule,
     EventModule,
+    EventImageModule,
   ],
   controllers: [],
   providers: [],

@@ -15,6 +15,8 @@ class MutationConfig<TData, TVariables> {
   final String? mutationKey;
   final String? successMessage;
   final TData Function(dynamic json)? fromJson;
+  final dynamic Function(TVariables variables)? body;
+  final Map<String, dynamic>? Function(TVariables variables)? queryParameters;
   final void Function(TData data)? onSuccess;
   final void Function(Failure failure)? onError;
 
@@ -24,6 +26,8 @@ class MutationConfig<TData, TVariables> {
     this.mutationKey,
     this.successMessage,
     this.fromJson,
+    this.body,
+    this.queryParameters,
     this.onSuccess,
     this.onError,
   });
@@ -78,14 +82,26 @@ Future<MutationResult<TData>> _executeMutation<TData, TVariables>({
 }) async {
   try {
     Response response;
+    final requestBody = config.body != null
+        ? config.body!(variables)
+        : variables;
+    final requestQuery = config.queryParameters?.call(variables);
 
     switch (config.method) {
       case HttpMethod.post:
-        response = await DioHelper.dio.post(config.url, data: variables);
+        response = await DioHelper.dio.post(
+          config.url,
+          data: requestBody,
+          queryParameters: requestQuery,
+        );
         break;
 
       case HttpMethod.patch:
-        response = await DioHelper.dio.patch(config.url, data: variables);
+        response = await DioHelper.dio.patch(
+          config.url,
+          data: requestBody,
+          queryParameters: requestQuery,
+        );
         break;
 
       case HttpMethod.delete:
@@ -95,7 +111,9 @@ Future<MutationResult<TData>> _executeMutation<TData, TVariables>({
             : (variables as dynamic)?.id?.toString();
         response = await DioHelper.dio.delete(
           config.url,
-          queryParameters: id != null ? {'id': id} : null,
+          queryParameters:
+              requestQuery ??
+              (id != null ? {'id': id} : null),
         );
         break;
     }

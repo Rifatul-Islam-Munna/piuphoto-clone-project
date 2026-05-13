@@ -10,6 +10,7 @@ import 'package:mobileapp/core/di/locator.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/router/auth_guard.dart';
+import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
@@ -22,6 +23,7 @@ Future<void> setupDependencies() async {
   final prefs = await SharedPreferences.getInstance();
   getIt.registerSingleton<SharedPreferences>(prefs);
   await UserStorage.init();
+  await ActiveEventStorage.init();
   DioHelper.init();
 }
 
