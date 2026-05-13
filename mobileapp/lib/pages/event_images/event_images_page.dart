@@ -123,8 +123,8 @@ class _EventImagesPageState extends State<EventImagesPage> {
                                   child: Padding(
                                     padding: const EdgeInsets.all(6),
                                     child: Text(
-                                      image.referenceId?.isNotEmpty ?? false
-                                          ? image.referenceId!
+                                      image.isEnhanced
+                                          ? 'Enhanced'
                                           : image.takenBy ?? 'Uploaded',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,

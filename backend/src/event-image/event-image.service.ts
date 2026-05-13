@@ -86,7 +86,6 @@ export class EventImageService {
       eventId: this.toObjectId(createEventImageDto.eventId),
       imageUrl: createEventImageDto.imageUrl,
       userTakenBy: this.toObjectId(String(userId)),
-      referenceId: createEventImageDto.referenceId?.trim() || undefined,
       isEnhanced: createEventImageDto.isEnhanced ?? false,
     });
 
@@ -102,10 +101,6 @@ export class EventImageService {
 
     if (query.userTakenBy && Types.ObjectId.isValid(query.userTakenBy)) {
       filter.userTakenBy = this.toObjectId(query.userTakenBy);
-    }
-
-    if (query.referenceId) {
-      filter.referenceId = query.referenceId;
     }
 
     if (query.isEnhanced !== undefined && query.isEnhanced !== 'all') {
@@ -167,10 +162,6 @@ export class EventImageService {
     if (updateEventImageDto.eventId) {
       update.eventId = this.toObjectId(updateEventImageDto.eventId);
     }
-    if (updateEventImageDto.referenceId !== undefined) {
-      update.referenceId = updateEventImageDto.referenceId.trim() || undefined;
-    }
-
     const eventImage = await this.eventImageModel
       .findByIdAndUpdate(id, { $set: update }, { new: true })
       .lean();

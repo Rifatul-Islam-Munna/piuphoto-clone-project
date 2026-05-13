@@ -20,11 +20,6 @@ export class CreateEventImageDto {
   @IsNotEmpty()
   imageUrl: string;
 
-  @ApiPropertyOptional({ example: 'CAM-OTP-4921' })
-  @IsString()
-  @IsOptional()
-  referenceId?: string;
-
   @ApiPropertyOptional({ example: false })
   @IsBoolean()
   @IsOptional()
@@ -41,11 +36,6 @@ export class EventImageFilterDto {
   @IsMongoId()
   @IsOptional()
   userTakenBy?: string;
-
-  @ApiPropertyOptional({ example: 'CAM-OTP-4921' })
-  @IsString()
-  @IsOptional()
-  referenceId?: string;
 
   @ApiPropertyOptional({ example: false })
   @IsOptional()

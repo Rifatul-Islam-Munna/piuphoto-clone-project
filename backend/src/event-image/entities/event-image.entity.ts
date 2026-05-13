@@ -14,9 +14,6 @@ export class EventImage {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   userTakenBy: Types.ObjectId;
 
-  @Prop({ trim: true, index: true })
-  referenceId?: string;
-
   @Prop({ default: false, index: true })
   isEnhanced: boolean;
 }
