@@ -2,7 +2,7 @@ import 'package:animations/animations.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:mobileapp/core/router/auth_guard.dart';
-import 'package:mobileapp/core/storage/user_storage.dart';
+
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/pages/auth/login_page.dart';
