@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Users,
   Calendar,
-  Image,
   Settings,
   CreditCard,
   Package2,
@@ -13,8 +12,6 @@ import {
   Menu,
   X,
   ChevronRight,
-  FolderOpen,
-  MessageSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -23,18 +20,15 @@ interface AdminLayoutProps {
   children: ReactNode;
 }
 
-const navItems = [
-  { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
-  { icon: CreditCard, label: "Subscription Plans", href: "/admin/plans" },
-  { icon: Package2, label: "Addons", href: "/admin/addons" },
-  { icon: Receipt, label: "Billing", href: "/admin/billing" },
-  { icon: Users, label: "Users", href: "/admin/users" },
-  { icon: Calendar, label: "Events", href: "/admin/events" },
-  { icon: Image, label: "Images", href: "/admin/images" },
-  { icon: FolderOpen, label: "Templates", href: "/admin/templates" },
-  { icon: MessageSquare, label: "Messages", href: "/admin/messages" },
-  { icon: Settings, label: "Settings", href: "/admin/settings" },
-];
+  const navItems = [
+    { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
+    { icon: CreditCard, label: "Subscription Plans", href: "/admin/plans" },
+    { icon: Package2, label: "Addons", href: "/admin/addons" },
+    { icon: Receipt, label: "Billing", href: "/admin/billing" },
+    { icon: Users, label: "Users", href: "/admin/users" },
+    { icon: Calendar, label: "Events", href: "/admin/events" },
+    { icon: Settings, label: "Settings", href: "/admin/settings" },
+  ];
 
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const location = useLocation();
