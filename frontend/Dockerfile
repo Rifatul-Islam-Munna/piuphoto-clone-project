@@ -7,16 +7,21 @@ RUN npm ci
 
 COPY . .
 
+ARG VITE_BASE_URL
+ARG VITE_API_URL
 ARG REACT_APP_API_URL
+
+ENV VITE_BASE_URL=$VITE_BASE_URL
+ENV VITE_API_URL=$VITE_API_URL
 ENV REACT_APP_API_URL=$REACT_APP_API_URL
 
 RUN npm run build
 
 FROM nginx:1.27-alpine
 
-# Nginx reads this SPA config from /etc/nginx/conf.d/default.conf.
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/build /usr/share/nginx/html
+
+COPY --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 80
 
