@@ -24,13 +24,11 @@ async function bootstrap() {
 
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  app.enableCors({
-    origin: corsOrigin
-      ? corsOrigin.split(',').map((origin) => origin.trim())
-      : true,
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    credentials: true,
-  });
+ app.enableCors({
+  origin: true,
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+  credentials: true,
+});
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('PiuPhoto API')

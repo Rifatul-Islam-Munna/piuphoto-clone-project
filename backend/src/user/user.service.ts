@@ -254,7 +254,9 @@ export class UserService implements OnModuleInit {
 
     const findOneUser = await this.userModel
       .findOne({ email })
-      .select('email id role phone name password userId gender credits')
+      .select(
+        'email id role phone name password userId gender whatsapp age maritalStatus bloodGroup weight subscriptionPlanId isSubscriber subscriptionStartDate subscriptionEndDate profileImage isActive isPublished isEmailVerified credits createdAt updatedAt',
+      )
       .lean();
 
     if (!findOneUser) {
@@ -278,10 +280,13 @@ export class UserService implements OnModuleInit {
       { expiresIn: '10d', secret: secret },
     );
 
+    const user = { ...findOneUser };
+    delete user.password;
+
     return {
       message: 'User logged in successfully',
       access_token,
-      user: findOneUser,
+      user,
     };
   }
 
