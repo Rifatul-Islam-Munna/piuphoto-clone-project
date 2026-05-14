@@ -1,8 +1,11 @@
+import 'dart:io';
+
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/utils/image_loader.dart';
+import 'package:mobileapp/core/utils/image_upload_helper.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/pages/event_gallery/event_gallery_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
@@ -351,6 +354,8 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
   bool _isLoading = false;
   bool _isPublished = true;
   bool _autoEnhanceImages = false;
+  String? _selectedImagePath;
+  String? _selectedImageName;
 
   @override
   void dispose() {
@@ -359,16 +364,42 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
     super.dispose();
   }
 
+  Future<void> _pickCoverImage() async {
+    try {
+      final picked = await ImageUploadHelper.pickFromGallery();
+      if (picked == null || !mounted) return;
+      setState(() {
+        _selectedImagePath = picked.path;
+        _selectedImageName = picked.name;
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to pick cover image')),
+        );
+      }
+    }
+  }
+
   Future<void> _createEvent() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
     
     try {
+      String? imageUrl;
+      if (_selectedImagePath != null && _selectedImageName != null) {
+        imageUrl = await ImageUploadHelper.uploadFile(
+          path: _selectedImagePath!,
+          filename: _selectedImageName!,
+        );
+      }
+
       await DioHelper.post('/event', data: {
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),
         'isPublished': _isPublished,
         'autoEnhanceImages': _autoEnhanceImages,
+        if (imageUrl != null && imageUrl.isNotEmpty) 'image': {'url': imageUrl},
       });
       
       if (mounted) {
@@ -425,33 +456,56 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      height: 150,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
-                          style: BorderStyle.solid,
+                    InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: _isLoading ? null : _pickCoverImage,
+                      child: Container(
+                        height: 150,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
+                            style: BorderStyle.solid,
+                          ),
                         ),
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.add_photo_alternate,
-                            size: 48,
-                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Add Event Cover Image',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
-                            ),
-                          ),
-                        ],
+                        clipBehavior: Clip.antiAlias,
+                        child: _selectedImagePath != null
+                            ? Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Image.file(File(_selectedImagePath!), fit: BoxFit.cover),
+                                  Align(
+                                    alignment: Alignment.bottomCenter,
+                                    child: Container(
+                                      color: Colors.black.withValues(alpha: 0.45),
+                                      padding: const EdgeInsets.all(8),
+                                      child: const Text(
+                                        'Tap to change cover image',
+                                        style: TextStyle(color: Colors.white),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.add_photo_alternate,
+                                    size: 48,
+                                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Add Event Cover Image',
+                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+                                    ),
+                                  ),
+                                ],
+                              ),
                       ),
                     ),
                     const SizedBox(height: 24),
@@ -1176,6 +1230,8 @@ class _EditEventSheetState extends State<_EditEventSheet> {
   bool _isLoading = false;
   bool _isPublished = false;
   bool _autoEnhanceImages = false;
+  String? _selectedImagePath;
+  String? _selectedImageName;
 
   @override
   void initState() {
@@ -1184,25 +1240,44 @@ class _EditEventSheetState extends State<_EditEventSheet> {
     _autoEnhanceImages = widget.event.autoEnhanceImages;
   }
 
+  Future<void> _pickCoverImage() async {
+    try {
+      final picked = await ImageUploadHelper.pickFromGallery();
+      if (picked == null || !mounted) return;
+      setState(() {
+        _selectedImagePath = picked.path;
+        _selectedImageName = picked.name;
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to pick cover image')),
+        );
+      }
+    }
+  }
+
   Future<void> _saveEvent() async {
     setState(() => _isLoading = true);
     try {
-      await DioHelper.patch('/event/update?id=${widget.event.id}', data: {
+      String? imageUrl = widget.event.imageUrl;
+      if (_selectedImagePath != null && _selectedImageName != null) {
+        imageUrl = await ImageUploadHelper.uploadFile(
+          path: _selectedImagePath!,
+          filename: _selectedImageName!,
+        );
+      }
+
+      final response = await DioHelper.patch('/event/update?id=${widget.event.id}', data: {
         'title': widget.titleController.text.trim(),
         'description': widget.descriptionController.text.trim(),
         'isPublished': _isPublished,
         'autoEnhanceImages': _autoEnhanceImages,
+        if (imageUrl != null && imageUrl.isNotEmpty) 'image': {'url': imageUrl},
       });
-      
-      final updated = EventModel(
-        id: widget.event.id,
-        title: widget.titleController.text.trim(),
-        description: widget.descriptionController.text.trim(),
-        isPublished: _isPublished,
-        isActive: widget.event.isActive,
-        autoEnhanceImages: _autoEnhanceImages,
-        imageUrl: widget.event.imageUrl,
-        photosCount: widget.event.photosCount,
+
+      final updated = EventModel.fromJson(
+        Map<String, dynamic>.from(response.data['data'] as Map),
       );
       
       widget.onSave(updated);
@@ -1247,20 +1322,49 @@ class _EditEventSheetState extends State<_EditEventSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    height: 150,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.add_photo_alternate, size: 48, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
-                        const SizedBox(height: 8),
-                        Text('Change Cover Image', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
-                      ],
+                  InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: _isLoading ? null : _pickCoverImage,
+                    child: Container(
+                      height: 150,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: _selectedImagePath != null
+                          ? Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Image.file(File(_selectedImagePath!), fit: BoxFit.cover),
+                                Align(
+                                  alignment: Alignment.bottomCenter,
+                                  child: Container(
+                                    color: Colors.black.withValues(alpha: 0.45),
+                                    padding: const EdgeInsets.all(8),
+                                    child: const Text(
+                                      'Tap to change cover image',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            )
+                          : (widget.event.imageUrl != null &&
+                                  widget.event.imageUrl!.isNotEmpty)
+                              ? ImageLoader.loadImage(
+                                  widget.event.imageUrl,
+                                  fit: BoxFit.cover,
+                                )
+                              : Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.add_photo_alternate, size: 48, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+                                    const SizedBox(height: 8),
+                                    Text('Change Cover Image', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
+                                  ],
+                                ),
                     ),
                   ),
                   const SizedBox(height: 24),

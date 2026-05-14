@@ -1,8 +1,12 @@
+import 'dart:io';
+
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
+import 'package:mobileapp/core/utils/image_loader.dart';
+import 'package:mobileapp/core/utils/image_upload_helper.dart';
 import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
@@ -21,6 +25,8 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _editing = false;
   bool _saving = false;
   String? _editingUserKey;
+  String? _selectedProfileImagePath;
+  String? _selectedProfileImageName;
 
   @override
   void dispose() {
@@ -40,20 +46,54 @@ class _ProfilePageState extends State<ProfilePage> {
     _whatsappController.text = user.whatsapp ?? '';
   }
 
+  Future<void> _pickProfileImage() async {
+    try {
+      final picked = await ImageUploadHelper.pickFromGallery();
+      if (picked == null || !mounted) return;
+      setState(() {
+        _selectedProfileImagePath = picked.path;
+        _selectedProfileImageName = picked.name;
+      });
+    } catch (_) {
+      AppToast.error('Failed to pick profile image');
+    }
+  }
+
   Future<void> _save(UserModel user) async {
     setState(() => _saving = true);
     try {
+      String? profileImageUrl = user.profileImage?['url']?.toString();
+      final selectedPath = _selectedProfileImagePath;
+      final selectedName = _selectedProfileImageName;
+
+      if (selectedPath != null && selectedName != null) {
+        final uploadedUrl = await ImageUploadHelper.uploadFile(
+          path: selectedPath,
+          filename: selectedName,
+        );
+        if (uploadedUrl.isEmpty) {
+          throw Exception('Profile image upload returned no URL');
+        }
+        profileImageUrl = uploadedUrl;
+      }
+
       final response = await DioHelper.dio.patch(
         '/user/update-profile',
         data: {
           'name': _nameController.text.trim(),
           'phone': _phoneController.text.trim(),
           'whatsapp': _whatsappController.text.trim(),
+          if (profileImageUrl != null && profileImageUrl.isNotEmpty)
+            'profileImage': {'url': profileImageUrl},
         },
       );
       final data = Map<String, dynamic>.from(response.data['data'] as Map);
       await UserStorage.saveUser(UserModel.fromJson(data));
-      setState(() => _editing = false);
+      setState(() {
+        _editing = false;
+        _selectedProfileImagePath = null;
+        _selectedProfileImageName = null;
+      });
       AppToast.success('Profile updated');
     } catch (_) {
       AppToast.error('Failed to update profile');
@@ -86,6 +126,8 @@ class _ProfilePageState extends State<ProfilePage> {
                           setState(() {
                             if (_editing) {
                               _editingUserKey = null;
+                              _selectedProfileImagePath = null;
+                              _selectedProfileImageName = null;
                               _syncControllers(user);
                             }
                             _editing = !_editing;
@@ -101,12 +143,54 @@ class _ProfilePageState extends State<ProfilePage> {
                 ? const Center(child: Text('No user profile loaded.'))
                 : ListView(
                     children: [
-                      CircleAvatar(
-                        radius: 32,
-                        child: Text(user.avatarText),
+                      Stack(
+                        children: [
+                          CircleAvatar(
+                            radius: 40,
+                            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                            child: ClipOval(
+                              child: _selectedProfileImagePath != null
+                                  ? Image.file(
+                                      File(_selectedProfileImagePath!),
+                                      width: 80,
+                                      height: 80,
+                                      fit: BoxFit.cover,
+                                    )
+                                  : SizedBox(
+                                      width: 80,
+                                      height: 80,
+                                      child: (user.profileImage?['url']?.toString().isNotEmpty ?? false)
+                                          ? ImageLoader.loadImageCircle(
+                                              user.profileImage?['url']?.toString(),
+                                              size: 80,
+                                            )
+                                          : Center(child: Text(user.avatarText)),
+                                    ),
+                            ),
+                          ),
+                          if (_editing)
+                            Positioned(
+                              right: 0,
+                              bottom: 0,
+                              child: IconButton.filled(
+                                onPressed: _saving ? null : _pickProfileImage,
+                                icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                                iconSize: 18,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 16),
                       if (_editing) ...[
+                        if (_selectedProfileImageName != null) ...[
+                          Text(
+                            _selectedProfileImageName!,
+                            style: Theme.of(context).textTheme.bodySmall,
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 12),
+                        ],
                         TextField(
                           controller: _nameController,
                           decoration: const InputDecoration(
