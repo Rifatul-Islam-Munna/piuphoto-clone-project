@@ -11,7 +11,7 @@ const CaseStudySection = () => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center">
           <div className="rounded-2xl overflow-hidden border border-border">
             <img
-              src={eventPhoto}
+              src={settings.caseStudy.imageUrl || eventPhoto}
               alt="Wedding event photography"
               className="w-full h-auto object-cover"
               loading="lazy"

@@ -25,6 +25,11 @@ export class CreateSettingDto {
   @ApiPropertyOptional({ type: Object })
   @IsOptional()
   @IsObject()
+  productShowcase?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ type: Object })
+  @IsOptional()
+  @IsObject()
   featuresGrid?: Record<string, unknown>;
 
   @ApiPropertyOptional({ type: Object })
@@ -71,4 +76,9 @@ export class CreateSettingDto {
   @IsOptional()
   @IsObject()
   footer?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ type: Object })
+  @IsOptional()
+  @IsObject()
+  policy?: Record<string, unknown>;
 }

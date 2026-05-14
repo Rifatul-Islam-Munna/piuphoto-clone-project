@@ -29,6 +29,9 @@ export type SiteSettings = {
     appStoreText: LocalizedText;
     playStoreText: LocalizedText;
   };
+  productShowcase: {
+    imageUrl: string;
+  };
   featuresGrid: {
     items: Array<{
       icon: string;
@@ -40,17 +43,21 @@ export type SiteSettings = {
   flyPhotos: {
     heading: LocalizedText;
     description: LocalizedText;
+    cameraImageUrl: string;
+    phoneImageUrl: string;
   };
   eventStreaming: {
     heading: LocalizedText;
     chips: LocalizedText[];
     ctaLabel: LocalizedText;
+    phoneImageUrl: string;
     features: LocalizedText[];
   };
   apiSection: {
     heading: LocalizedText;
     description: LocalizedText;
     cardTitle: LocalizedText;
+    imageUrl: string;
     features: LocalizedText[];
   };
   connectionSection: {
@@ -61,12 +68,14 @@ export type SiteSettings = {
     wirelessTitle: LocalizedText;
     wirelessDescription: LocalizedText;
     ctaLabel: LocalizedText;
+    imageUrl: string;
   };
   trustedBrands: {
     heading: LocalizedText;
     brands: string[];
   };
   caseStudy: {
+    imageUrl: string;
     quote: LocalizedText;
     name: string;
     title: LocalizedText;
@@ -78,6 +87,7 @@ export type SiteSettings = {
     readMoreLabel: LocalizedText;
     items: Array<{
       date: string;
+      imageUrl: string;
       title: LocalizedText;
       excerpt: LocalizedText;
     }>;
@@ -98,6 +108,10 @@ export type SiteSettings = {
     companyLinks: LocalizedLink[];
     contactLinks: LocalizedLink[];
     legalLinks: LocalizedLink[];
+  };
+  policy: {
+    privacyPolicy: LocalizedText[];
+    termsAndConditions: LocalizedText[];
   };
 };
 
@@ -135,6 +149,9 @@ export const defaultSiteSettings: SiteSettings = {
     appStoreText: { en: "Download on App Store", gr: "Ληψη στο App Store" },
     playStoreText: { en: "Get it on Google Play", gr: "Ληψη στο Google Play" },
   },
+  productShowcase: {
+    imageUrl: "",
+  },
   featuresGrid: {
     items: [
       {
@@ -169,6 +186,8 @@ export const defaultSiteSettings: SiteSettings = {
       en: "From camera to phone to social media - share your moments instantly",
       gr: "Απο την καμερα στο κινητο και στα social media - μοιραστειτε τις στιγμες σας αμεσα",
     },
+    cameraImageUrl: "",
+    phoneImageUrl: "",
   },
   eventStreaming: {
     heading: {
@@ -180,6 +199,7 @@ export const defaultSiteSettings: SiteSettings = {
       { en: "AI Beautify", gr: "Βελτιωση AI" },
     ],
     ctaLabel: { en: "Get Started", gr: "Ξεκινηστε" },
+    phoneImageUrl: "",
     features: [
       { en: "AI-powered photo selection and curation", gr: "Επιλογη και επιμελεια φωτογραφιων με AI" },
       { en: "Automatic enhancement and beautification", gr: "Αυτοματη βελτιωση και ομορφυνση" },
@@ -198,6 +218,7 @@ export const defaultSiteSettings: SiteSettings = {
       en: "Integrate nikofly in your product or website with ease",
       gr: "Ενσωματωστε το nikofly στο προϊον ή στην ιστοσελιδα σας ευκολα",
     },
+    imageUrl: "",
     features: [
       { en: "Simple REST API with comprehensive documentation", gr: "Απλο REST API με πληρη τεκμηριωση" },
       { en: "Real-time webhooks for instant updates", gr: "Realtime webhooks για αμεσες ενημερωσεις" },
@@ -222,6 +243,7 @@ export const defaultSiteSettings: SiteSettings = {
       gr: "Χωρις καλωδια με συνδεση FTP για μεγιστη ευελιξια στις εκδηλωσεις",
     },
     ctaLabel: { en: "Get Started", gr: "Ξεκινηστε" },
+    imageUrl: "",
   },
   trustedBrands: {
     heading: { en: "Trusted by Top Brands", gr: "Εμπιστοσυνη απο κορυφαια brands" },
@@ -233,6 +255,7 @@ export const defaultSiteSettings: SiteSettings = {
     ],
   },
   caseStudy: {
+    imageUrl: "",
     quote: {
       en: "nikofly transformed how we deliver wedding photos. Guests can now see and share their photos in real-time, creating an unforgettable experience. Our client satisfaction has never been higher.",
       gr: "Το nikofly μεταμορφωσε τον τροπο που παραδιδουμε φωτογραφιες γαμου. Οι καλεσμενοι μπορουν τωρα να βλεπουν και να μοιραζονται φωτογραφιες σε πραγματικο χρονο, δημιουργωντας αξέχαστη εμπειρια. Η ικανοποιηση των πελατων μας δεν ηταν ποτε υψηλοτερη.",
@@ -248,6 +271,7 @@ export const defaultSiteSettings: SiteSettings = {
     items: [
       {
         date: "Jan 15, 2026",
+        imageUrl: "",
         title: {
           en: "nikofly Launches AI-Powered Photo Selection Feature",
           gr: "Το nikofly λανσαρει δυνατοτητα επιλογης φωτογραφιων με AI",
@@ -259,6 +283,7 @@ export const defaultSiteSettings: SiteSettings = {
       },
       {
         date: "Dec 28, 2025",
+        imageUrl: "",
         title: {
           en: "How Event Photographers Are Embracing Real-Time Streaming",
           gr: "Πως οι φωτογραφοι εκδηλωσεων υιοθετουν το realtime streaming",
@@ -270,6 +295,7 @@ export const defaultSiteSettings: SiteSettings = {
       },
       {
         date: "Dec 10, 2025",
+        imageUrl: "",
         title: {
           en: "nikofly Partners with Major Camera Manufacturers",
           gr: "Το nikofly συνεργαζεται με μεγαλους κατασκευαστες καμερων",
@@ -316,9 +342,39 @@ export const defaultSiteSettings: SiteSettings = {
       { label: { en: "San Francisco, CA", gr: "San Francisco, CA" }, href: "#" },
     ],
     legalLinks: [
-      { label: { en: "Terms of Service", gr: "Οροι χρησης" }, href: "#" },
-      { label: { en: "Privacy Policy", gr: "Πολιτικη απορρητου" }, href: "#" },
+      { label: { en: "Terms and Conditions", gr: "Οροι και προϋποθεσεις" }, href: "/terms-and-conditions" },
+      { label: { en: "Privacy Policy", gr: "Πολιτικη απορρητου" }, href: "/privacy-policy" },
       { label: { en: "Cookie Policy", gr: "Πολιτικη cookies" }, href: "#" },
+    ],
+  },
+  policy: {
+    privacyPolicy: [
+      {
+        en: "We collect account, usage, and uploaded content data needed to operate nikofly services.",
+        gr: "Συλλεγουμε στοιχεια λογαριασμου, χρησης και ανεβασμενου περιεχομενου που απαιτουνται για τη λειτουργια του nikofly.",
+      },
+      {
+        en: "We use your data to deliver photo streaming, account access, billing, support, and security.",
+        gr: "Χρησιμοποιουμε τα δεδομενα σας για photo streaming, προσβαση λογαριασμου, χρεωση, υποστηριξη και ασφαλεια.",
+      },
+      {
+        en: "We do not sell personal information. We may share data with infrastructure, payment, and storage providers only as needed to run the service.",
+        gr: "Δεν πουλαμε προσωπικα δεδομενα. Ενδεχεται να μοιραζομαστε δεδομενα με παροχους υποδομης, πληρωμων και αποθηκευσης μονο οπου απαιτειται για τη λειτουργια της υπηρεσιας.",
+      },
+    ],
+    termsAndConditions: [
+      {
+        en: "By using nikofly, you agree to use the service lawfully and only for content you own or are authorized to manage.",
+        gr: "Χρησιμοποιωντας το nikofly, συμφωνειτε να χρησιμοποιειτε την υπηρεσια νομιμα και μονο για περιεχομενο που κατεχετε ή εχετε αδεια να διαχειριζεστε.",
+      },
+      {
+        en: "You are responsible for account security, uploaded content, and activity performed through your account.",
+        gr: "Ειστε υπευθυνοι για την ασφαλεια του λογαριασμου, το ανεβασμενο περιεχομενο και καθε ενεργεια που γινεται μεσω του λογαριασμου σας.",
+      },
+      {
+        en: "We may suspend or terminate access for abuse, illegal activity, non-payment, or violations of platform rules.",
+        gr: "Μπορουμε να αναστειλουμε ή να τερματισουμε την προσβαση για καταχρηση, παρανομη δραστηριοτητα, μη πληρωμη ή παραβιαση των κανονων της πλατφορμας.",
+      },
     ],
   },
 };

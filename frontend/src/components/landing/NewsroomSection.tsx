@@ -21,7 +21,7 @@ const NewsroomSection = () => {
           {settings.newsroom.items.map((item, index) => (
             <NewsCard
               key={index}
-              image={eventPhoto}
+              image={item.imageUrl || eventPhoto}
               date={item.date}
               title={t(item.title)}
               excerpt={t(item.excerpt)}

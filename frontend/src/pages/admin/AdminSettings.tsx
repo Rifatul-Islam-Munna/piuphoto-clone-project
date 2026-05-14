@@ -28,6 +28,13 @@ type UploadResponse = {
   message?: string;
 };
 
+type ImageFieldProps = {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onUpload: (url: string) => void;
+};
+
 const cloneSettings = (value: SiteSettings) =>
   JSON.parse(JSON.stringify(value)) as SiteSettings;
 
@@ -150,6 +157,67 @@ const LocalizedTextarea = ({
     </div>
   </div>
 );
+
+const ImageField = ({ label, value, onChange, onUpload }: ImageFieldProps) => {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const uploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+    setUploading(true);
+
+    const [response, error] = await PostRequestAxios<UploadResponse>(
+      "/image/upload",
+      formData,
+      {
+        withToken: true,
+        withCredentials: true,
+        headers: { "Content-Type": "multipart/form-data" },
+      },
+    );
+
+    setUploading(false);
+    if (error || !response?.url) {
+      toast.error(error?.message || "Failed to upload image");
+      return;
+    }
+
+    onUpload(response.url || "");
+    toast.success(`${label} uploaded`);
+    event.target.value = "";
+  };
+
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <div className="flex items-center gap-3">
+        {value ? (
+          <img src={value} alt={label} className="h-16 w-16 rounded-lg object-cover border" />
+        ) : (
+          <div className="h-16 w-16 rounded-lg border flex items-center justify-center">
+            <ImagePlus className="h-5 w-5 text-muted-foreground" />
+          </div>
+        )}
+        <div className="flex flex-1 gap-2">
+          <Button type="button" variant="outline" onClick={() => inputRef.current?.click()} disabled={uploading}>
+            {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+            Upload
+          </Button>
+          <Input
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="https://..."
+          />
+        </div>
+        <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={uploadImage} />
+      </div>
+    </div>
+  );
+};
 
 export default function AdminSettings() {
   const queryClient = useQueryClient();
@@ -417,6 +485,20 @@ export default function AdminSettings() {
                 </div>
 
                 <div className="space-y-4">
+                  <SectionTitle title="Product Showcase Image" description="Main product/mockup image below hero." />
+                  <ImageField
+                    label="Showcase image"
+                    value={draft.productShowcase.imageUrl}
+                    onChange={(value) => updateNested(setDraft, (next) => {
+                      next.productShowcase.imageUrl = value;
+                    })}
+                    onUpload={(url) => updateNested(setDraft, (next) => {
+                      next.productShowcase.imageUrl = url;
+                    })}
+                  />
+                </div>
+
+                <div className="space-y-4">
                   <SectionTitle title="Features Grid" description="Four cards. Keep variants as yellow, blue, purple, pink." />
                   {featureCards.map((feature, index) => (
                     <div key={index} className="rounded-lg border p-4 space-y-4">
@@ -474,6 +556,26 @@ export default function AdminSettings() {
                       next.flyPhotos.description[language] = value;
                     })}
                   />
+                  <ImageField
+                    label="Camera image"
+                    value={draft.flyPhotos.cameraImageUrl}
+                    onChange={(value) => updateNested(setDraft, (next) => {
+                      next.flyPhotos.cameraImageUrl = value;
+                    })}
+                    onUpload={(url) => updateNested(setDraft, (next) => {
+                      next.flyPhotos.cameraImageUrl = url;
+                    })}
+                  />
+                  <ImageField
+                    label="Phone image"
+                    value={draft.flyPhotos.phoneImageUrl}
+                    onChange={(value) => updateNested(setDraft, (next) => {
+                      next.flyPhotos.phoneImageUrl = value;
+                    })}
+                    onUpload={(url) => updateNested(setDraft, (next) => {
+                      next.flyPhotos.phoneImageUrl = url;
+                    })}
+                  />
                 </div>
 
                 <div className="space-y-4">
@@ -490,6 +592,16 @@ export default function AdminSettings() {
                     value={draft.eventStreaming.ctaLabel}
                     onChange={(language, value) => updateNested(setDraft, (next) => {
                       next.eventStreaming.ctaLabel[language] = value;
+                    })}
+                  />
+                  <ImageField
+                    label="Phone image"
+                    value={draft.eventStreaming.phoneImageUrl}
+                    onChange={(value) => updateNested(setDraft, (next) => {
+                      next.eventStreaming.phoneImageUrl = value;
+                    })}
+                    onUpload={(url) => updateNested(setDraft, (next) => {
+                      next.eventStreaming.phoneImageUrl = url;
                     })}
                   />
                   <div className="grid gap-4 md:grid-cols-2">
@@ -559,6 +671,16 @@ export default function AdminSettings() {
                     value={draft.apiSection.cardTitle}
                     onChange={(language, value) => updateNested(setDraft, (next) => {
                       next.apiSection.cardTitle[language] = value;
+                    })}
+                  />
+                  <ImageField
+                    label="API illustration"
+                    value={draft.apiSection.imageUrl}
+                    onChange={(value) => updateNested(setDraft, (next) => {
+                      next.apiSection.imageUrl = value;
+                    })}
+                    onUpload={(url) => updateNested(setDraft, (next) => {
+                      next.apiSection.imageUrl = url;
                     })}
                   />
                   <div className="grid gap-4 md:grid-cols-2">
@@ -636,6 +758,16 @@ export default function AdminSettings() {
                       next.connectionSection.ctaLabel[language] = value;
                     })}
                   />
+                  <ImageField
+                    label="Connection diagram"
+                    value={draft.connectionSection.imageUrl}
+                    onChange={(value) => updateNested(setDraft, (next) => {
+                      next.connectionSection.imageUrl = value;
+                    })}
+                    onUpload={(url) => updateNested(setDraft, (next) => {
+                      next.connectionSection.imageUrl = url;
+                    })}
+                  />
                 </div>
 
                 <div className="space-y-4">
@@ -667,6 +799,16 @@ export default function AdminSettings() {
                     rows={4}
                     onChange={(language, value) => updateNested(setDraft, (next) => {
                       next.caseStudy.quote[language] = value;
+                    })}
+                  />
+                  <ImageField
+                    label="Case study image"
+                    value={draft.caseStudy.imageUrl}
+                    onChange={(value) => updateNested(setDraft, (next) => {
+                      next.caseStudy.imageUrl = value;
+                    })}
+                    onUpload={(url) => updateNested(setDraft, (next) => {
+                      next.caseStudy.imageUrl = url;
                     })}
                   />
                   <div className="grid gap-4 md:grid-cols-2">
@@ -730,6 +872,16 @@ export default function AdminSettings() {
                           })}
                         />
                       </div>
+                      <ImageField
+                        label={`News ${index + 1} image`}
+                        value={item.imageUrl}
+                        onChange={(value) => updateNested(setDraft, (next) => {
+                          next.newsroom.items[index].imageUrl = value;
+                        })}
+                        onUpload={(url) => updateNested(setDraft, (next) => {
+                          next.newsroom.items[index].imageUrl = url;
+                        })}
+                      />
                       <LocalizedInput
                         label={`News ${index + 1} title`}
                         value={item.title}
@@ -858,6 +1010,54 @@ export default function AdminSettings() {
                         next.footer.legalLinks = parseLinksText(event.target.value);
                       })}
                     />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <SectionTitle title="Policy Pages" description="One line = one paragraph. Admin controls Privacy Policy and Terms and Conditions here." />
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Privacy Policy (EN)</Label>
+                      <Textarea
+                        rows={8}
+                        value={localizedLinesValue(draft.policy.privacyPolicy, "en")}
+                        onChange={(event) => updateNested(setDraft, (next) => {
+                          next.policy.privacyPolicy = updateLocalizedLines(next.policy.privacyPolicy, "en", event.target.value);
+                        })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Privacy Policy (GR)</Label>
+                      <Textarea
+                        rows={8}
+                        value={localizedLinesValue(draft.policy.privacyPolicy, "gr")}
+                        onChange={(event) => updateNested(setDraft, (next) => {
+                          next.policy.privacyPolicy = updateLocalizedLines(next.policy.privacyPolicy, "gr", event.target.value);
+                        })}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Terms and Conditions (EN)</Label>
+                      <Textarea
+                        rows={8}
+                        value={localizedLinesValue(draft.policy.termsAndConditions, "en")}
+                        onChange={(event) => updateNested(setDraft, (next) => {
+                          next.policy.termsAndConditions = updateLocalizedLines(next.policy.termsAndConditions, "en", event.target.value);
+                        })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Terms and Conditions (GR)</Label>
+                      <Textarea
+                        rows={8}
+                        value={localizedLinesValue(draft.policy.termsAndConditions, "gr")}
+                        onChange={(event) => updateNested(setDraft, (next) => {
+                          next.policy.termsAndConditions = updateLocalizedLines(next.policy.termsAndConditions, "gr", event.target.value);
+                        })}
+                      />
+                    </div>
                   </div>
                 </div>
 

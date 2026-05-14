@@ -21,6 +21,8 @@ import UserGallery from "./pages/user/UserGallery";
 import Pricing from "./pages/Pricing";
 import EventPublicGallery from "./pages/public/EventPublicGallery";
 import { SiteSettingsProvider } from "./components/landing/site-settings-context";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
+import TermsAndConditions from "./pages/TermsAndConditions";
 
 const ProtectedAdminRoute = ({ children }: { children: ReactNode }) => {
   const token = localStorage.getItem("access_token");
@@ -65,6 +67,8 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
           <Route path="/pricing" element={<Pricing />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
           <Route path="/event/:eventId" element={<EventPublicGallery />} />
           <Route
             path="/event/:eventId/album/:albumId"

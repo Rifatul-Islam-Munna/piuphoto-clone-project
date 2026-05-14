@@ -34,7 +34,7 @@ const ConnectionSection = () => {
 
           <div className="flex justify-center">
             <img
-              src={connectionDiagram}
+              src={settings.connectionSection.imageUrl || connectionDiagram}
               alt="Camera to phone connection"
               className="w-full max-w-sm object-contain"
               loading="lazy"

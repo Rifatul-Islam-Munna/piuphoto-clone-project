@@ -1,6 +1,9 @@
 import heroMockup from "@/assets/hero-mockup.png";
+import { useSiteSettings } from "./site-settings-context";
 
 const ProductShowcase = () => {
+  const { settings } = useSiteSettings();
+
   return (
     <section className="py-12 px-6 bg-card">
       <div className="container-custom">
@@ -10,7 +13,7 @@ const ProductShowcase = () => {
           
           <div className="rounded-2xl border border-primary/20 overflow-hidden bg-dark-section">
             <img
-              src={heroMockup}
+              src={settings.productShowcase.imageUrl || heroMockup}
               alt="nikofly app interface showing photo gallery on tablet and phone"
               className="w-full h-auto"
               loading="eager"

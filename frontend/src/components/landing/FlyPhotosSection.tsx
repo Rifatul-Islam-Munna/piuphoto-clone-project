@@ -28,7 +28,7 @@ const FlyPhotosSection = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12 items-center">
           <div className="flex justify-center">
             <img
-              src={camera}
+              src={settings.flyPhotos.cameraImageUrl || camera}
               alt="Professional DSLR Camera"
               className="w-full max-w-xs lg:max-w-sm object-contain animate-float"
               loading="lazy"
@@ -37,7 +37,7 @@ const FlyPhotosSection = () => {
 
           <div className="flex justify-center order-first lg:order-none">
             <img
-              src={phoneMockup}
+              src={settings.flyPhotos.phoneImageUrl || phoneMockup}
               alt="Phone showing photo gallery"
               className="w-48 md:w-56 lg:w-64 object-contain"
               loading="lazy"

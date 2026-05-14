@@ -37,7 +37,7 @@ const APISection = () => {
 
           <div className="flex justify-center">
             <img
-              src={apiIllustration}
+              src={settings.apiSection.imageUrl || apiIllustration}
               alt="API workflow illustration"
               className="w-full max-w-md object-contain"
               loading="lazy"

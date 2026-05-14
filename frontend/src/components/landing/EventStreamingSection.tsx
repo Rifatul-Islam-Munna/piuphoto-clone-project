@@ -13,7 +13,7 @@ const EventStreamingSection = () => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
           <div className="flex justify-center order-2 lg:order-1">
             <img
-              src={phoneMockup}
+              src={settings.eventStreaming.phoneImageUrl || phoneMockup}
               alt="Event photo gallery on phone"
               className="w-56 md:w-64 lg:w-72 object-contain"
               loading="lazy"

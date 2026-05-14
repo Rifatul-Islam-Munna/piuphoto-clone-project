@@ -18,6 +18,9 @@ export class Setting {
   @Prop({ type: Object, default: () => defaultWebsiteSettings.hero })
   hero: Record<string, unknown>;
 
+  @Prop({ type: Object, default: () => defaultWebsiteSettings.productShowcase })
+  productShowcase: Record<string, unknown>;
+
   @Prop({ type: Object, default: () => defaultWebsiteSettings.featuresGrid })
   featuresGrid: Record<string, unknown>;
 
@@ -47,6 +50,9 @@ export class Setting {
 
   @Prop({ type: Object, default: () => defaultWebsiteSettings.footer })
   footer: Record<string, unknown>;
+
+  @Prop({ type: Object, default: () => defaultWebsiteSettings.policy })
+  policy: Record<string, unknown>;
 }
 
 export const SettingSchema = SchemaFactory.createForClass(Setting);
