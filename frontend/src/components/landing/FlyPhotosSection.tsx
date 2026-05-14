@@ -1,6 +1,7 @@
 import camera from "@/assets/camera.png";
 import phoneMockup from "@/assets/phone-mockup.png";
 import { Instagram, Facebook, Twitter, MessageCircle } from "lucide-react";
+import { useSiteSettings } from "./site-settings-context";
 
 const socialIcons = [
   { icon: Instagram, label: "Instagram" },
@@ -10,20 +11,21 @@ const socialIcons = [
 ];
 
 const FlyPhotosSection = () => {
+  const { settings, t } = useSiteSettings();
+
   return (
     <section className="section-padding gradient-cream">
       <div className="container-custom">
         <div className="text-center mb-16">
           <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
-            Fly Your Photos Everywhere
+            {t(settings.flyPhotos.heading)}
           </h2>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            From camera to phone to social media - share your moments instantly
+            {t(settings.flyPhotos.description)}
           </p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12 items-center">
-          {/* Camera */}
           <div className="flex justify-center">
             <img
               src={camera}
@@ -33,7 +35,6 @@ const FlyPhotosSection = () => {
             />
           </div>
 
-          {/* Phone Mockup */}
           <div className="flex justify-center order-first lg:order-none">
             <img
               src={phoneMockup}
@@ -43,7 +44,6 @@ const FlyPhotosSection = () => {
             />
           </div>
 
-          {/* Social Icons Stack */}
           <div className="flex justify-center">
             <div className="flex flex-row lg:flex-col gap-4">
               {socialIcons.map(({ icon: Icon, label }, index) => (

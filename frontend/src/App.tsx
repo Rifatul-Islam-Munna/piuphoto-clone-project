@@ -2,6 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
+import { ReactNode } from "react";
 import QueryClint from "../lib/QueryClint";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
@@ -19,8 +20,9 @@ import UserSettings from "./pages/user/UserSettings";
 import UserGallery from "./pages/user/UserGallery";
 import Pricing from "./pages/Pricing";
 import EventPublicGallery from "./pages/public/EventPublicGallery";
+import { SiteSettingsProvider } from "./components/landing/site-settings-context";
 
-const ProtectedAdminRoute = ({ children }: { children: React.ReactNode }) => {
+const ProtectedAdminRoute = ({ children }: { children: ReactNode }) => {
   const token = localStorage.getItem("access_token");
   const userStr = localStorage.getItem("user");
   const user = userStr ? JSON.parse(userStr) : null;
@@ -36,7 +38,7 @@ const ProtectedAdminRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
-const ProtectedUserRoute = ({ children }: { children: React.ReactNode }) => {
+const ProtectedUserRoute = ({ children }: { children: ReactNode }) => {
   const token = localStorage.getItem("access_token");
   const userStr = localStorage.getItem("user");
   const user = userStr ? JSON.parse(userStr) : null;
@@ -55,10 +57,11 @@ const ProtectedUserRoute = ({ children }: { children: React.ReactNode }) => {
 const App = () => (
   <QueryClint>
     <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <HashRouter>
-        <Routes>
+      <SiteSettingsProvider>
+        <Toaster />
+        <Sonner />
+        <HashRouter>
+          <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
           <Route path="/pricing" element={<Pricing />} />
@@ -168,9 +171,10 @@ const App = () => (
             }
           />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </HashRouter>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </HashRouter>
+      </SiteSettingsProvider>
     </TooltipProvider>
   </QueryClint>
 );

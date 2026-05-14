@@ -6,15 +6,23 @@ interface NewsCardProps {
   date: string;
   title: string;
   excerpt: string;
+  readMoreLabel?: string;
   className?: string;
 }
 
-const NewsCard = ({ image, date, title, excerpt, className }: NewsCardProps) => {
+const NewsCard = ({
+  image,
+  date,
+  title,
+  excerpt,
+  readMoreLabel = "Read more",
+  className,
+}: NewsCardProps) => {
   return (
     <article
       className={cn(
         "bg-card rounded-xl border border-border overflow-hidden card-hover group",
-        className
+        className,
       )}
     >
       <div className="aspect-video relative overflow-hidden">
@@ -28,7 +36,7 @@ const NewsCard = ({ image, date, title, excerpt, className }: NewsCardProps) => 
           {date}
         </div>
       </div>
-      
+
       <div className="p-6">
         <h3 className="text-lg font-bold text-foreground mb-2 line-clamp-2 group-hover:text-primary transition-colors">
           {title}
@@ -40,7 +48,7 @@ const NewsCard = ({ image, date, title, excerpt, className }: NewsCardProps) => 
           href="#"
           className="inline-flex items-center gap-2 text-primary font-medium text-sm group-hover:gap-3 transition-all"
         >
-          Read more
+          {readMoreLabel}
           <ArrowRight className="w-4 h-4" />
         </a>
       </div>

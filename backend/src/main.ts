@@ -74,6 +74,7 @@ async function bootstrap() {
         !req.path.startsWith('/subscription') &&
         !req.path.startsWith('/subscription-plan') &&
         !req.path.startsWith('/addon') &&
+        !req.path.startsWith('/settings') &&
         !req.path.startsWith('/uploads');
 
       if (!isPageRequest) {

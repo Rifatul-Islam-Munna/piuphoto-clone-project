@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Menu, X, ChevronDown, Globe, LogOut, LayoutDashboard, User } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -11,16 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-const menuItems = [
-  { label: "Try our event", href: "#event" },
-  { label: "AI Magic", href: "#ai-magic" },
-  { label: "API", href: "#api" },
-  { label: "Connect & Transfer", href: "#connect" },
-  { label: "Pricing", href: "/pricing" },
-  { label: "Case Studies", href: "#case-studies" },
-  { label: "Features", href: "#features" },
-];
+import { useSiteSettings } from "./site-settings-context";
 
 type UserInfo = {
   _id: string;
@@ -33,6 +24,9 @@ const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [user, setUser] = useState<UserInfo | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
+  const { settings, language, setLanguage, t } = useSiteSettings();
+  const brandLetter = settings.site.title?.trim()?.charAt(0)?.toLowerCase() || "n";
 
   useEffect(() => {
     const token = localStorage.getItem("access_token");
@@ -55,53 +49,89 @@ const Navbar = () => {
 
   const getInitials = (name: string | undefined, email: string) => {
     if (name) {
-      return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
+      return name.split(" ").map((item) => item[0]).join("").toUpperCase().slice(0, 2);
     }
     return email[0].toUpperCase();
+  };
+
+  const goToSection = (href: string) => {
+    const sectionId = href.replace(/^#/, "");
+    const scrollToSection = () => {
+      const element = document.getElementById(sectionId);
+      if (!element) return;
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    setIsOpen(false);
+
+    if (location.pathname === "/") {
+      scrollToSection();
+      return;
+    }
+
+    navigate(`/?section=${sectionId}`);
+    window.setTimeout(scrollToSection, 120);
   };
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-card/80 backdrop-blur-md border-b border-border">
       <div className="container-custom">
         <div className="flex items-center justify-between h-16 lg:h-20">
-          {/* Logo */}
           <a href="#" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-lg">n</span>
-            </div>
-            <span className="font-bold text-xl text-foreground">nikofly</span>
+            {settings.site.logoUrl ? (
+              <img
+                src={settings.site.logoUrl}
+                alt={settings.site.title}
+                className="h-8 w-8 rounded-lg object-cover"
+              />
+            ) : (
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
+                <span className="text-primary-foreground font-bold text-lg">{brandLetter}</span>
+              </div>
+            )}
+            <span className="font-bold text-xl text-foreground">{settings.site.title}</span>
           </a>
 
-          {/* Desktop Menu */}
           <div className="hidden lg:flex items-center gap-1">
-            {menuItems.map((item) => (
-              item.href.startsWith('#') ? (
+            {settings.navbar.menuItems.map((item) => (
+              item.href.startsWith("#") ? (
                 <a
-                  key={item.label}
+                  key={`${item.href}-${item.label.en}`}
                   href={item.href}
                   className="px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    goToSection(item.href);
+                  }}
                 >
-                  {item.label}
+                  {t(item.label)}
                 </a>
               ) : (
                 <Link
-                  key={item.label}
+                  key={`${item.href}-${item.label.en}`}
                   to={item.href}
                   className="px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  {item.label}
+                  {t(item.label)}
                 </Link>
               )
             ))}
           </div>
 
-          {/* Right Side */}
           <div className="hidden lg:flex items-center gap-4">
-            <button className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
-              <Globe className="w-4 h-4" />
-              EN
-              <ChevronDown className="w-3 h-3" />
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                  <Globe className="w-4 h-4" />
+                  {language.toUpperCase()}
+                  <ChevronDown className="w-3 h-3" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setLanguage("en")}>EN</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLanguage("gr")}>GR</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {user ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -122,28 +152,27 @@ const Navbar = () => {
                   {user.role === "admin" && (
                     <DropdownMenuItem onClick={() => navigate("/admin/dashboard")}>
                       <LayoutDashboard className="mr-2 h-4 w-4" />
-                      Dashboard
+                      {t(settings.navbar.dashboardLabel)}
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuItem onClick={() => navigate("/user/dashboard")}>
                     <User className="mr-2 h-4 w-4" />
-                    Profile
+                    {t(settings.navbar.profileLabel)}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600">
                     <LogOut className="mr-2 h-4 w-4" />
-                    Logout
+                    {t(settings.navbar.logoutLabel)}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
               <Button variant="default" size="default" asChild>
-                <Link to="/login">Login</Link>
+                <Link to="/login">{t(settings.navbar.loginLabel)}</Link>
               </Button>
             )}
           </div>
 
-          {/* Mobile Menu Button */}
           <button
             onClick={() => setIsOpen(!isOpen)}
             className="lg:hidden p-2 text-foreground"
@@ -153,41 +182,51 @@ const Navbar = () => {
           </button>
         </div>
 
-        {/* Mobile Menu */}
         <div
           className={cn(
             "lg:hidden overflow-hidden transition-all duration-300",
-            isOpen ? "max-h-[500px] pb-6" : "max-h-0"
+            isOpen ? "max-h-[500px] pb-6" : "max-h-0",
           )}
         >
           <div className="flex flex-col gap-2 pt-4">
-            {menuItems.map((item) => (
-              item.href.startsWith('#') ? (
+            {settings.navbar.menuItems.map((item) => (
+              item.href.startsWith("#") ? (
                 <a
-                  key={item.label}
+                  key={`${item.href}-${item.label.en}`}
                   href={item.href}
                   className="px-4 py-3 text-foreground font-medium hover:bg-muted rounded-lg transition-colors"
-                  onClick={() => setIsOpen(false)}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    goToSection(item.href);
+                  }}
                 >
-                  {item.label}
+                  {t(item.label)}
                 </a>
               ) : (
                 <Link
-                  key={item.label}
+                  key={`${item.href}-${item.label.en}`}
                   to={item.href}
                   className="px-4 py-3 text-foreground font-medium hover:bg-muted rounded-lg transition-colors"
                   onClick={() => setIsOpen(false)}
                 >
-                  {item.label}
+                  {t(item.label)}
                 </Link>
               )
             ))}
             <div className="flex items-center gap-4 px-4 pt-4 border-t border-border mt-2">
-              <button className="flex items-center gap-1 text-sm text-muted-foreground">
-                <Globe className="w-4 h-4" />
-                EN
-                <ChevronDown className="w-3 h-3" />
-              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center gap-1 text-sm text-muted-foreground">
+                    <Globe className="w-4 h-4" />
+                    {language.toUpperCase()}
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={() => setLanguage("en")}>EN</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setLanguage("gr")}>GR</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               {user ? (
                 <div className="flex flex-1 flex-col gap-2">
                   <div className="flex items-center gap-2 px-3 py-2 bg-muted rounded-lg">
@@ -204,18 +243,18 @@ const Navbar = () => {
                   {user.role === "admin" && (
                     <Button variant="outline" onClick={() => { navigate("/admin/dashboard"); setIsOpen(false); }}>
                       <LayoutDashboard className="mr-2 h-4 w-4" />
-                      Dashboard
+                      {t(settings.navbar.dashboardLabel)}
                     </Button>
                   )}
                   <Button variant="destructive" onClick={handleLogout}>
                     <LogOut className="mr-2 h-4 w-4" />
-                    Logout
+                    {t(settings.navbar.logoutLabel)}
                   </Button>
                 </div>
               ) : (
                 <Button variant="default" className="flex-1" asChild>
                   <Link to="/login" onClick={() => setIsOpen(false)}>
-                    Login
+                    {t(settings.navbar.loginLabel)}
                   </Link>
                 </Button>
               )}
