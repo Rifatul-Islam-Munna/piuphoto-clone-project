@@ -28,8 +28,17 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>PiuPhoto needs camera access to capture event photos.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>PiuPhoto needs local network access to discover and import photos from wireless cameras.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>PiuPhoto needs photo library add access to save downloaded event photos.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>PiuPhoto needs photo library access to upload event photos.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

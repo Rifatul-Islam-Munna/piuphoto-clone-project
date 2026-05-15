@@ -61,6 +61,8 @@ class _UploadPageState extends State<UploadPage> {
   String? _selectedAlbumId;
   List<AlbumModel> _albums = [];
 
+  bool get _wirelessImporting => _wirelessScanning || _autoImporting;
+
   @override
   void dispose() {
     _wirelessTimer?.cancel();
@@ -676,10 +678,42 @@ class _UploadPageState extends State<UploadPage> {
                   ),
                   label: Text(
                     _galleryImporting
-                        ? 'Stop camera auto-upload'
-                        : 'Auto upload from camera',
+                        ? 'Stop phone auto-upload'
+                        : 'Auto upload from phone gallery',
                   ),
                 ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed:
+                          activeEvent == null || _uploading || _wirelessBusy
+                              ? null
+                              : _wirelessImporting
+                                  ? _stopWirelessImport
+                                  : () =>
+                                      _findAndStartWirelessImport(activeEvent),
+                      icon: Icon(
+                        _wirelessImporting
+                            ? Icons.pause_circle_outline
+                            : Icons.wifi_tethering,
+                      ),
+                      label: Text(
+                        _wirelessImporting
+                            ? 'Stop wireless import'
+                            : 'Start wireless import',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _openWifiSettings,
+                    icon: const Icon(Icons.wifi_outlined),
+                    label: const Text('Wi-Fi'),
+                  ),
+                ],
               ),
               const SizedBox(height: 8),
               SizedBox(
@@ -695,6 +729,13 @@ class _UploadPageState extends State<UploadPage> {
                 const SizedBox(height: 6),
                 Text(
                   _galleryStatus!,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+              if (_wirelessStatus != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  _wirelessStatus!,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
