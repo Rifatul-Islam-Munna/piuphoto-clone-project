@@ -11,8 +11,37 @@ import 'package:mobileapp/pages/event_gallery/event_qr_scan_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
 @RoutePage()
-class HomePage extends StatelessWidget {
+class HomePage extends StatefulWidget {
   const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+  bool _isRefreshingProfile = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshProfileSilently();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshProfileSilently();
+    }
+  }
 
   Future<List<Map<String, dynamic>>> _loadPlans() async {
     final response = await DioHelper.get('/subscription-plan/get-all?limit=100&isActive=true');
@@ -84,12 +113,44 @@ class HomePage extends StatelessWidget {
   }
 
   Future<void> _refreshCurrentUser() async {
+    final accessToken = await UserStorage.getAccessToken();
+    if (accessToken == null || accessToken.isEmpty) return;
+
     final response = await DioHelper.get('/user/get-my-profile');
     final rawUser = response.data['data'] ?? response.data;
     if (rawUser is Map) {
       await UserStorage.saveUser(
         UserModel.fromJson(Map<String, dynamic>.from(rawUser)),
       );
+    }
+  }
+
+  Future<void> _refreshProfileSilently() async {
+    if (_isRefreshingProfile) return;
+
+    setState(() => _isRefreshingProfile = true);
+    try {
+      await _refreshCurrentUser();
+    } catch (_) {
+    } finally {
+      if (mounted) {
+        setState(() => _isRefreshingProfile = false);
+      }
+    }
+  }
+
+  Future<void> _refreshProfileWithFeedback() async {
+    if (_isRefreshingProfile) return;
+
+    setState(() => _isRefreshingProfile = true);
+    try {
+      await _refreshCurrentUser();
+    } catch (_) {
+      AppToast.error('Failed to refresh account');
+    } finally {
+      if (mounted) {
+        setState(() => _isRefreshingProfile = false);
+      }
     }
   }
 
@@ -100,20 +161,31 @@ class HomePage extends StatelessWidget {
       builder: (context, user, _) {
         final isPhotographer = user?.isPhotographer ?? false;
         return Scaffold(
-          body: CustomScrollView(
-            slivers: [
-              _buildAppBar(context, user, isPhotographer),
-              SliverPadding(
-                padding: const EdgeInsets.all(16),
-                sliver: SliverList(
-                  delegate: SliverChildListDelegate(
-                    isPhotographer 
-                      ? [_buildPhotographerHome(context)]
-                      : [_buildUserHome(context, user)],
+          body: RefreshIndicator(
+            onRefresh: _refreshProfileWithFeedback,
+            child: CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                _buildAppBar(context, user, isPhotographer),
+                SliverPadding(
+                  padding: const EdgeInsets.all(16),
+                  sliver: SliverList(
+                    delegate: SliverChildListDelegate(
+                      [
+                        if (_isRefreshingProfile)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 12),
+                            child: LinearProgressIndicator(),
+                          ),
+                        isPhotographer
+                            ? _buildPhotographerHome(context)
+                            : _buildUserHome(context, user),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
