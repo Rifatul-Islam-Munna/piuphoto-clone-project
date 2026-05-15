@@ -1,8 +1,6 @@
 import Flutter
 import Photos
 import UIKit
-import UniformTypeIdentifiers
-
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate {
   private enum PhotoAccessMode {
@@ -148,7 +146,12 @@ import UniformTypeIdentifiers
     }
 
     otgResult = result
-    let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.image], asCopy: true)
+    let picker: UIDocumentPickerViewController
+    if #available(iOS 14.0, *) {
+      picker = UIDocumentPickerViewController(forOpeningContentTypes: [.image], asCopy: true)
+    } else {
+      picker = UIDocumentPickerViewController(documentTypes: ["public.image"], in: .import)
+    }
     picker.delegate = self
     picker.allowsMultipleSelection = false
     window?.rootViewController?.present(picker, animated: true)
