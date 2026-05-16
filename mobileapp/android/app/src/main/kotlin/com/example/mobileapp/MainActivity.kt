@@ -25,6 +25,7 @@ class MainActivity : FlutterFragmentActivity() {
     private val deleteImageRequest = 4818
     private var pendingResult: MethodChannel.Result? = null
     private var pendingDeleteResult: MethodChannel.Result? = null
+    private var pendingMultiPick = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -33,6 +34,7 @@ class MainActivity : FlutterFragmentActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "pickImage" -> pickOtgImage(result)
+                    "pickImages" -> pickOtgImages(result)
                     else -> result.notImplemented()
                 }
             }
@@ -109,16 +111,26 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     private fun pickOtgImage(result: MethodChannel.Result) {
+        openOtgPicker(result, false)
+    }
+
+    private fun pickOtgImages(result: MethodChannel.Result) {
+        openOtgPicker(result, true)
+    }
+
+    private fun openOtgPicker(result: MethodChannel.Result, allowMultiple: Boolean) {
         if (pendingResult != null) {
             result.error("PICK_IN_PROGRESS", "A file picker is already open", null)
             return
         }
 
         pendingResult = result
+        pendingMultiPick = allowMultiple
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "image/*"
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple)
         }
         startActivityForResult(intent, pickOtgRequest)
     }
@@ -279,6 +291,8 @@ class MainActivity : FlutterFragmentActivity() {
 
         val result = pendingResult
         pendingResult = null
+        val allowMultiple = pendingMultiPick
+        pendingMultiPick = false
 
         if (result == null) return
         if (resultCode != Activity.RESULT_OK) {
@@ -286,30 +300,43 @@ class MainActivity : FlutterFragmentActivity() {
             return
         }
 
-        val uri = data?.data
-        if (uri == null) {
-            result.success(null)
-            return
-        }
-
         try {
-            val name = getDisplayName(uri)
-            val target = File(cacheDir, "otg_${System.currentTimeMillis()}_$name")
-            val inputStream = contentResolver.openInputStream(uri)
-                ?: throw IllegalArgumentException("Unable to open selected image")
-
-            inputStream.use { input ->
-                FileOutputStream(target).use { output ->
-                    input.copyTo(output)
+            val uris = mutableListOf<Uri>()
+            data?.clipData?.let { clipData ->
+                for (index in 0 until clipData.itemCount) {
+                    uris.add(clipData.getItemAt(index).uri)
                 }
             }
+            data?.data?.let { uris.add(it) }
 
-            result.success(
+            if (uris.isEmpty()) {
+                result.success(null)
+                return
+            }
+
+            val files = uris.map { uri ->
+                val name = getDisplayName(uri)
+                val target = File(cacheDir, "otg_${System.currentTimeMillis()}_$name")
+                val inputStream = contentResolver.openInputStream(uri)
+                    ?: throw IllegalArgumentException("Unable to open selected image")
+
+                inputStream.use { input ->
+                    FileOutputStream(target).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
                 mapOf(
                     "path" to target.absolutePath,
                     "name" to name
                 )
-            )
+            }
+
+            if (allowMultiple) {
+                result.success(files)
+            } else {
+                result.success(files.first())
+            }
         } catch (error: Exception) {
             result.error("PICK_FAILED", error.message, null)
         }

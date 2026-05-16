@@ -13,6 +13,7 @@ import UIKit
   private let galleryChannelName = "piuphoto/gallery_import"
   private let downloadsChannelName = "piuphoto/image_downloads"
   private var otgResult: FlutterResult?
+  private var otgAllowsMultipleSelection = false
 
   override func application(
     _ application: UIApplication,
@@ -26,12 +27,15 @@ import UIKit
         binaryMessenger: controller.binaryMessenger
       )
       otgChannel.setMethodCallHandler { [weak self] call, result in
-        guard call.method == "pickImage" else {
+        guard call.method == "pickImage" || call.method == "pickImages" else {
           result(FlutterMethodNotImplemented)
           return
         }
 
-        self?.pickExternalImage(result: result)
+        self?.pickExternalImage(
+          allowsMultipleSelection: call.method == "pickImages",
+          result: result
+        )
       }
 
       let settingsChannel = FlutterMethodChannel(
@@ -133,7 +137,10 @@ import UIKit
     saveImageToLibrary(bytes: typedBytes.data, filename: filename, result: result)
   }
 
-  private func pickExternalImage(result: @escaping FlutterResult) {
+  private func pickExternalImage(
+    allowsMultipleSelection: Bool,
+    result: @escaping FlutterResult
+  ) {
     if otgResult != nil {
       result(
         FlutterError(
@@ -146,6 +153,7 @@ import UIKit
     }
 
     otgResult = result
+    otgAllowsMultipleSelection = allowsMultipleSelection
     let picker: UIDocumentPickerViewController
     if #available(iOS 14.0, *) {
       picker = UIDocumentPickerViewController(forOpeningContentTypes: [.image], asCopy: true)
@@ -153,40 +161,50 @@ import UIKit
       picker = UIDocumentPickerViewController(documentTypes: ["public.image"], in: .import)
     }
     picker.delegate = self
-    picker.allowsMultipleSelection = false
+    picker.allowsMultipleSelection = allowsMultipleSelection
     window?.rootViewController?.present(picker, animated: true)
   }
 
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
     guard let result = otgResult else { return }
     otgResult = nil
+    let allowsMultipleSelection = otgAllowsMultipleSelection
+    otgAllowsMultipleSelection = false
 
-    guard let url = urls.first else {
+    guard !urls.isEmpty else {
       result(nil)
       return
     }
 
-    let didAccess = url.startAccessingSecurityScopedResource()
-    defer {
-      if didAccess {
-        url.stopAccessingSecurityScopedResource()
-      }
-    }
-
     do {
-      let fileName = url.lastPathComponent.isEmpty ? "external-image.jpg" : url.lastPathComponent
-      let target = FileManager.default.temporaryDirectory
-        .appendingPathComponent("otg_\(Int(Date().timeIntervalSince1970 * 1000))_\(fileName)")
+      let payloads = try urls.map { url in
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+          if didAccess {
+            url.stopAccessingSecurityScopedResource()
+          }
+        }
 
-      if FileManager.default.fileExists(atPath: target.path) {
-        try FileManager.default.removeItem(at: target)
+        let fileName = url.lastPathComponent.isEmpty ? "external-image.jpg" : url.lastPathComponent
+        let target = FileManager.default.temporaryDirectory
+          .appendingPathComponent("otg_\(Int(Date().timeIntervalSince1970 * 1000))_\(fileName)")
+
+        if FileManager.default.fileExists(atPath: target.path) {
+          try FileManager.default.removeItem(at: target)
+        }
+
+        try FileManager.default.copyItem(at: url, to: target)
+        return [
+          "path": target.path,
+          "name": fileName,
+        ]
       }
 
-      try FileManager.default.copyItem(at: url, to: target)
-      result([
-        "path": target.path,
-        "name": fileName,
-      ])
+      if allowsMultipleSelection {
+        result(payloads)
+      } else {
+        result(payloads.first)
+      }
     } catch {
       result(FlutterError(code: "PICK_FAILED", message: error.localizedDescription, details: nil))
     }
@@ -195,6 +213,7 @@ import UIKit
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
     otgResult?(nil)
     otgResult = nil
+    otgAllowsMultipleSelection = false
   }
 
   private func fetchRecentImages(

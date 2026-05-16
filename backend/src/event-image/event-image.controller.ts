@@ -13,6 +13,7 @@ import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { EventImageService } from './event-image.service';
 import {
   CreateEventImageDto,
+  CreateEventImagesBatchDto,
   EnhanceEventImageDto,
   EventImageFilterDto,
   EventImageQueryDto,
@@ -34,6 +35,20 @@ export class EventImageController {
   ) {
     return this.eventImageService.create(
       createEventImageDto,
+      req.user?.id,
+      req.user?.role,
+    );
+  }
+
+  @Post('batch')
+  @UseGuards(AuthGuard, ThrottlerGuard)
+  @Throttle({ default: { limit: 500, ttl: 3600000 } })
+  createBatch(
+    @Body() createEventImagesBatchDto: CreateEventImagesBatchDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.eventImageService.createMany(
+      createEventImagesBatchDto,
       req.user?.id,
       req.user?.role,
     );

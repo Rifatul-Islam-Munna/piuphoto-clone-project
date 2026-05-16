@@ -1,5 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsNumberString,
   IsMongoId,
@@ -20,6 +23,38 @@ export class CreateEventImageDto {
   @IsUrl({ require_tld: false })
   @IsNotEmpty()
   imageUrl: string;
+
+  @ApiPropertyOptional({ example: false })
+  @IsBoolean()
+  @IsOptional()
+  isEnhanced?: boolean;
+
+  @ApiPropertyOptional({ example: '507f1f77bcf86cd799439014' })
+  @IsMongoId()
+  @IsOptional()
+  albumId?: string;
+
+  @ApiPropertyOptional({ example: 'Make lighting warm and cinematic' })
+  @IsString()
+  @IsOptional()
+  enhancePrompt?: string;
+}
+
+export class CreateEventImagesBatchDto {
+  @ApiProperty({ example: '507f1f77bcf86cd799439011' })
+  @IsMongoId()
+  @IsNotEmpty()
+  eventId: string;
+
+  @ApiProperty({
+    example: ['https://cdn.example.com/events/photo-1.jpg'],
+    type: [String],
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsUrl({ require_tld: false }, { each: true })
+  imageUrls: string[];
 
   @ApiPropertyOptional({ example: false })
   @IsBoolean()

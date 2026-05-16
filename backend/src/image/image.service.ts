@@ -19,6 +19,31 @@ export class ImageService {
     return { message: 'File uploaded successfully', url: fileUrl };
   }
 
+  async uploadImages(files: any[]) {
+    if (!Array.isArray(files) || files.length === 0) {
+      throw new HttpException('At least one file is required', HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      const urls = await Promise.all(
+        files.map(async (file) => this.minioService.uploadFile(file)),
+      );
+
+      return {
+        message: 'Files uploaded successfully',
+        urls,
+      };
+    } finally {
+      await Promise.all(
+        files.map(async (file) => {
+          try {
+            await unlink(file?.path);
+          } catch (_) {}
+        }),
+      );
+    }
+  }
+
   async deleteImage(fileName: string) {
     const result = await this.minioService.deleteService(fileName);
 

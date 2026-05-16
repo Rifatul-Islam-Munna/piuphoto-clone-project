@@ -13,8 +13,8 @@ import 'package:mobileapp/core/platform/gallery_auto_import.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
-import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/core/storage/uploaded_gallery_storage.dart';
+import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -29,6 +29,16 @@ class _CameraProbe {
   final String signature;
 }
 
+class _SelectedUploadFile {
+  const _SelectedUploadFile({
+    required this.path,
+    required this.name,
+  });
+
+  final String path;
+  final String name;
+}
+
 @RoutePage()
 class UploadPage extends StatefulWidget {
   const UploadPage({super.key});
@@ -39,6 +49,7 @@ class UploadPage extends StatefulWidget {
 
 class _UploadPageState extends State<UploadPage> {
   final _picker = ImagePicker();
+  final List<_SelectedUploadFile> _selectedFiles = [];
   Timer? _wirelessTimer;
   Timer? _galleryTimer;
   bool _isEnhanced = false;
@@ -52,11 +63,10 @@ class _UploadPageState extends State<UploadPage> {
   int? _gallerySinceMs;
   final Set<String> _processedGalleryIds = {};
   String? _galleryStatus;
+  String? _uploadStatus;
   String? _wirelessStatus;
   String? _wirelessImageUrl;
   String? _lastWirelessSignature;
-  String? _selectedFilePath;
-  String? _selectedFileName;
   String? _loadedAlbumEventId;
   String? _selectedAlbumId;
   List<AlbumModel> _albums = [];
@@ -70,28 +80,54 @@ class _UploadPageState extends State<UploadPage> {
     super.dispose();
   }
 
-  Future<void> _pick(ImageSource source) async {
-    final image = await _picker.pickImage(
-      source: source,
-      imageQuality: 92,
-    );
-    if (image == null) return;
+  void _addSelectedFiles(List<_SelectedUploadFile> files) {
+    if (files.isEmpty) return;
+
+    final existingPaths = _selectedFiles.map((file) => file.path).toSet();
+    final freshFiles =
+        files.where((file) => !existingPaths.contains(file.path)).toList();
+    if (freshFiles.isEmpty) return;
+
     setState(() {
-      _selectedFilePath = image.path;
-      _selectedFileName = image.name;
+      _selectedFiles.addAll(freshFiles);
     });
   }
 
-  Future<void> _pickOtgFile() async {
+  Future<void> _pickPhoneImages() async {
+    final images = await _picker.pickMultiImage(imageQuality: 92);
+    if (images.isEmpty) return;
+
+    _addSelectedFiles(
+      images
+          .map((image) => _SelectedUploadFile(path: image.path, name: image.name))
+          .toList(),
+    );
+  }
+
+  Future<void> _pickCameraImage() async {
+    final image = await _picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 92,
+    );
+    if (image == null) return;
+
+    _addSelectedFiles([
+      _SelectedUploadFile(path: image.path, name: image.name),
+    ]);
+  }
+
+  Future<void> _pickOtgFiles() async {
     try {
-      final file = await OtgFilePicker.pickImage();
-      if (file == null) return;
-      setState(() {
-        _selectedFilePath = file.path;
-        _selectedFileName = file.name;
-      });
+      final files = await OtgFilePicker.pickImages();
+      if (files.isEmpty) return;
+
+      _addSelectedFiles(
+        files
+            .map((file) => _SelectedUploadFile(path: file.path, name: file.name))
+            .toList(),
+      );
     } on MissingPluginException {
-      AppToast.error('Rebuild the app once to enable OTG picker');
+      AppToast.error('Rebuild app once to enable OTG picker');
     } catch (_) {
       AppToast.error('Failed to open OTG file picker');
     }
@@ -101,7 +137,7 @@ class _UploadPageState extends State<UploadPage> {
     try {
       await DeviceSettings.openWifiSettings();
     } on MissingPluginException {
-      AppToast.error('Restart the app once to enable Wi-Fi settings');
+      AppToast.error('Restart app once to enable Wi-Fi settings');
     } catch (_) {
       AppToast.error('Open phone Wi-Fi settings and join camera Wi-Fi');
     }
@@ -129,6 +165,21 @@ class _UploadPageState extends State<UploadPage> {
     return response.data['url']?.toString() ?? '';
   }
 
+  Future<List<String>> _uploadFilesBatch(List<_SelectedUploadFile> files) async {
+    final formData = FormData.fromMap({
+      'files': [
+        for (final file in files)
+          await MultipartFile.fromFile(
+            file.path,
+            filename: file.name,
+          ),
+      ],
+    });
+    final response = await DioHelper.post('/image/upload/batch', data: formData);
+    final urls = response.data['urls'] as List? ?? [];
+    return urls.map((url) => url.toString()).where((url) => url.isNotEmpty).toList();
+  }
+
   Future<String> _uploadBytes({
     required Uint8List bytes,
     required String filename,
@@ -149,6 +200,21 @@ class _UploadPageState extends State<UploadPage> {
       data: {
         'eventId': event.id,
         'imageUrl': imageUrl,
+        'isEnhanced': _isEnhanced,
+        if (_selectedAlbumId != null) 'albumId': _selectedAlbumId,
+      },
+    );
+  }
+
+  Future<void> _createEventImages(
+    EventSummary event,
+    List<String> imageUrls,
+  ) async {
+    await DioHelper.post(
+      '/eventImage/batch',
+      data: {
+        'eventId': event.id,
+        'imageUrls': imageUrls,
         'isEnhanced': _isEnhanced,
         if (_selectedAlbumId != null) 'albumId': _selectedAlbumId,
       },
@@ -378,7 +444,7 @@ class _UploadPageState extends State<UploadPage> {
 
       await _createEventImage(event, imageUrl);
       setState(() => _wirelessStatus = 'Uploaded latest camera image');
-    } catch (error) {
+    } catch (_) {
       setState(() {
         _wirelessStatus =
             'Wireless import failed. Check camera Wi-Fi and internet.';
@@ -439,7 +505,7 @@ class _UploadPageState extends State<UploadPage> {
       }
     } on MissingPluginException {
       setState(() {
-        _galleryStatus = 'Restart the app once to enable phone auto-upload';
+        _galleryStatus = 'Restart app once to enable phone auto-upload';
       });
     } catch (_) {
       setState(() {
@@ -530,34 +596,42 @@ class _UploadPageState extends State<UploadPage> {
   }
 
   Future<void> _submit(EventSummary event) async {
-    final filePath = _selectedFilePath;
-    final fileName = _selectedFileName;
-    if (filePath == null || fileName == null) {
-      AppToast.error('Choose an image first');
+    if (_selectedFiles.isEmpty) {
+      AppToast.error('Choose images first');
       return;
     }
 
-    setState(() => _uploading = true);
+    final files = List<_SelectedUploadFile>.from(_selectedFiles);
+
+    setState(() {
+      _uploading = true;
+      _uploadStatus = 'Uploading ${files.length} images...';
+    });
+
     try {
-      final imageUrl = await _uploadFile(path: filePath, filename: fileName);
-      if (imageUrl.isEmpty) {
-        throw Exception('Image upload returned no URL');
+      final imageUrls = await _uploadFilesBatch(files);
+      if (imageUrls.isEmpty) {
+        throw Exception('Image upload returned no URLs');
       }
 
-      await _createEventImage(event, imageUrl);
-      AppToast.success('Image uploaded to ${event.title}');
       setState(() {
-        _selectedFilePath = null;
-        _selectedFileName = null;
+        _uploadStatus = 'Saving ${imageUrls.length} images to ${event.title}...';
+      });
+
+      await _createEventImages(event, imageUrls);
+      AppToast.success('${imageUrls.length} images uploaded to ${event.title}');
+      setState(() {
+        _selectedFiles.clear();
         _isEnhanced = false;
+        _uploadStatus = null;
       });
     } on DioException catch (error) {
       AppToast.error(
         error.response?.data?['message']?.toString() ??
-            'Failed to upload image',
+            'Failed to upload images',
       );
     } catch (_) {
-      AppToast.error('Failed to upload image');
+      AppToast.error('Failed to upload images');
     } finally {
       if (mounted) {
         setState(() => _uploading = false);
@@ -637,19 +711,17 @@ class _UploadPageState extends State<UploadPage> {
                 runSpacing: 8,
                 children: [
                   OutlinedButton.icon(
-                    onPressed:
-                        _uploading ? null : () => _pick(ImageSource.gallery),
+                    onPressed: _uploading ? null : _pickPhoneImages,
                     icon: const Icon(Icons.photo_library_outlined),
                     label: const Text('Phone'),
                   ),
                   OutlinedButton.icon(
-                    onPressed:
-                        _uploading ? null : () => _pick(ImageSource.camera),
+                    onPressed: _uploading ? null : _pickCameraImage,
                     icon: const Icon(Icons.camera_alt_outlined),
                     label: const Text('Camera'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: _uploading ? null : _pickOtgFile,
+                    onPressed: _uploading ? null : _pickOtgFiles,
                     icon: const Icon(Icons.usb_outlined),
                     label: const Text('OTG'),
                   ),
@@ -719,8 +791,7 @@ class _UploadPageState extends State<UploadPage> {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed:
-                      _freeingSpace ? null : _freeUploadedGallerySpace,
+                  onPressed: _freeingSpace ? null : _freeUploadedGallerySpace,
                   icon: const Icon(Icons.cleaning_services_outlined),
                   label: Text(_freeingSpace ? 'Cleaning...' : 'Free space'),
                 ),
@@ -747,16 +818,43 @@ class _UploadPageState extends State<UploadPage> {
                     ? null
                     : (value) => setState(() => _isEnhanced = value),
               ),
-              if (_selectedFilePath != null) ...[
+              if (_selectedFiles.isNotEmpty) ...[
+                Card(
+                  child: ListTile(
+                    title: Text('${_selectedFiles.length} images selected'),
+                    subtitle: Text(
+                      _selectedFiles
+                          .take(3)
+                          .map((file) => file.name)
+                          .join(', '),
+                    ),
+                    trailing: TextButton(
+                      onPressed: _uploading
+                          ? null
+                          : () => setState(() {
+                                _selectedFiles.clear();
+                                _uploadStatus = null;
+                              }),
+                      child: const Text('Clear'),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 16),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Image.file(
-                    File(_selectedFilePath!),
+                    File(_selectedFiles.first.path),
                     height: 220,
                     width: double.infinity,
                     fit: BoxFit.cover,
                   ),
+                ),
+              ],
+              if (_uploadStatus != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _uploadStatus!,
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
               const SizedBox(height: 24),
@@ -768,7 +866,7 @@ class _UploadPageState extends State<UploadPage> {
                       : () => _submit(activeEvent),
                   icon: const Icon(Icons.cloud_upload_outlined),
                   label: _uploading
-                      ? const Text('Uploading...')
+                      ? Text('Uploading ${_selectedFiles.length}...')
                       : const Text('Upload to active event'),
                 ),
               ),

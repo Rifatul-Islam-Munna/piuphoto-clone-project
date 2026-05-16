@@ -5,6 +5,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
   CreateEventImageDto,
+  CreateEventImagesBatchDto,
   EventImageFilterDto,
 } from './dto/create-event-image.dto';
 import { UpdateEventImageDto } from './dto/update-event-image.dto';
@@ -196,7 +197,11 @@ export class EventImageService {
     };
   }
 
-  private async assertEventUploadLimit(eventId: string, ownerId: string) {
+  private async assertEventUploadLimit(
+    eventId: string,
+    ownerId: string,
+    uploadCount = 1,
+  ) {
     const meta = await this.getOwnerPlanMeta(ownerId);
     if (meta.monthlyPhotoLimit <= 0) return;
 
@@ -205,7 +210,7 @@ export class EventImageService {
       isEnhanced: { $ne: true },
     });
 
-    if (currentCount >= meta.monthlyPhotoLimit) {
+    if (currentCount + uploadCount > meta.monthlyPhotoLimit) {
       throw new HttpException('Max image upload limit reached for this event', 400);
     }
   }
@@ -322,6 +327,76 @@ export class EventImageService {
       message: 'Event image created successfully',
       data: eventImage,
       enhancedData: enhancedImage,
+    };
+  }
+
+  async createMany(
+    createEventImagesBatchDto: CreateEventImagesBatchDto,
+    userId?: string,
+    role?: string,
+  ) {
+    const event = await this.assertCanUseEvent(
+      createEventImagesBatchDto.eventId,
+      userId,
+      role,
+    );
+
+    if (createEventImagesBatchDto.albumId) {
+      await this.assertAlbumBelongsToEvent(
+        createEventImagesBatchDto.albumId,
+        createEventImagesBatchDto.eventId,
+      );
+    }
+
+    await this.assertEventUploadLimit(
+      createEventImagesBatchDto.eventId,
+      String(event.userId),
+      createEventImagesBatchDto.imageUrls.length,
+    );
+
+    const docs = createEventImagesBatchDto.imageUrls.map((imageUrl) => ({
+      eventId: this.toObjectId(createEventImagesBatchDto.eventId),
+      imageUrl,
+      userTakenBy: this.toObjectId(String(userId)),
+      albumId: createEventImagesBatchDto.albumId
+        ? this.toObjectId(createEventImagesBatchDto.albumId)
+        : undefined,
+      isEnhanced: createEventImagesBatchDto.isEnhanced ?? false,
+    }));
+
+    const eventImages = await this.eventImageModel.insertMany(docs);
+
+    let enhancedImages: EventImageDocument[] = [];
+    if (event.autoEnhanceImages && !createEventImagesBatchDto.isEnhanced) {
+      const results = await Promise.allSettled(
+        createEventImagesBatchDto.imageUrls.map((imageUrl) =>
+          this.tryEnhanceForOwner(
+            imageUrl,
+            createEventImagesBatchDto.eventId,
+            String(userId),
+            String(event.userId),
+            createEventImagesBatchDto.albumId,
+            createEventImagesBatchDto.enhancePrompt,
+          ),
+        ),
+      );
+
+      enhancedImages = results
+        .map((result) => {
+          if (result.status === 'rejected') {
+            this.logger.error('image-enhance-failed', result.reason);
+            return null;
+          }
+          return result.value;
+        })
+        .filter((image): image is EventImageDocument => image !== null);
+    }
+
+    return {
+      message: 'Event images created successfully',
+      data: eventImages,
+      enhancedData: enhancedImages,
+      uploadedCount: eventImages.length,
     };
   }
 
