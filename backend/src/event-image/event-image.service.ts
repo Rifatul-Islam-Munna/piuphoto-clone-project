@@ -222,7 +222,7 @@ export class EventImageService {
     ownerId: string,
     albumId?: string,
     prompt?: string,
-  ) {
+  ): Promise<EventImageDocument | null> {
     const meta = await this.getOwnerPlanMeta(ownerId);
     const customPrompt = prompt?.trim();
     const finalPrompt = meta.hasCustomEnhancer ? customPrompt : undefined;
@@ -389,7 +389,7 @@ export class EventImageService {
           }
           return result.value;
         })
-        .filter((image): image is EventImageDocument => image !== null);
+        .filter((image): image is NonNullable<typeof image> => image !== null);
     }
 
     return {
