@@ -1,4 +1,4 @@
-package com.example.mobileapp
+package com.nikofly.app
 
 import android.app.Activity
 import android.app.RecoverableSecurityException
