@@ -1,13 +1,19 @@
 workflows:
-  ios_unsigned_ipa:
-    name: iOS Unsigned IPA
+  ios_testflight:
+    name: iOS TestFlight Upload
     max_build_duration: 120
     instance_type: mac_mini_m2
     working_directory: mobileapp
 
+    integrations:
+      app_store_connect: nikofly
+
     environment:
       flutter: stable
       xcode: latest
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.nikofly.app
       vars:
         APP_NAME: Runner
 
@@ -21,20 +27,31 @@ workflows:
 
     scripts:
       - name: Flutter pub get
-        script: flutter pub get
-      - name: Build iOS without codesign
         script: |
-          flutter build ios --release --no-codesign --build-number=$BUILD_NUMBER
-      - name: Pack unsigned IPA
+          flutter pub get
+
+      - name: Install pods
         script: |
-          cd build/ios/iphoneos
-          mkdir Payload
-          cp -R "$APP_NAME.app" Payload/
-          zip -r "$APP_NAME-unsigned.ipa" Payload
-          mv "$APP_NAME-unsigned.ipa" ../
+          find . -name "Podfile" -execdir pod install \;
+
+      - name: Set up iOS code signing
+        script: |
+          xcode-project use-profiles
+
+      - name: Build signed IPA
+        script: |
+          flutter build ipa --release \
+            --build-number=$BUILD_NUMBER \
+            --export-options-plist=/Users/builder/export_options.plist
 
     artifacts:
-      - build/ios/*.ipa
+      - build/ios/ipa/*.ipa
       - build/ios/iphoneos/*.app
       - /tmp/xcodebuild_logs/*.log
       - flutter_drive.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false
