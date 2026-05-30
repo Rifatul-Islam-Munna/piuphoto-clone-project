@@ -3,19 +3,26 @@ workflows:
     name: iOS TestFlight Upload
     max_build_duration: 120
     instance_type: mac_mini_m2
-    working_directory: mobileapp
+    working_directory: ai_photo
 
     integrations:
-      app_store_connect: nikofly
+      app_store_connect: "ai photos"
 
     environment:
       flutter: stable
       xcode: latest
+      cocoapods: default
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: com.nikofly.app
+        bundle_identifier: com.example.aiPhoto
       vars:
         APP_NAME: Runner
+
+    cache:
+      cache_paths:
+        - $FLUTTER_ROOT/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+        - $HOME/.gradle/caches
 
     triggering:
       events:
@@ -26,17 +33,37 @@ workflows:
           source: true
 
     scripts:
+      - name: Check project files
+        script: |
+          echo "Current directory:"
+          pwd
+
+          echo "Project files:"
+          ls -la
+
+          echo "Checking pubspec.yaml:"
+          test -f pubspec.yaml
+
+          echo "Checking iOS project:"
+          test -f ios/Runner.xcodeproj/project.pbxproj
+
+      - name: Flutter clean
+        script: |
+          flutter clean
+
       - name: Flutter pub get
         script: |
-          flutter pub get
+          flutter pub get --verbose
 
       - name: Install pods
         script: |
-          find . -name "Podfile" -execdir pod install \;
+          cd ios
+          pod install
+          cd ..
 
       - name: Set up iOS code signing
         script: |
-          xcode-project use-profiles
+          xcode-project use-profiles --project ios/Runner.xcodeproj --verbose
 
       - name: Build signed IPA
         script: |
@@ -48,7 +75,6 @@ workflows:
       - build/ios/ipa/*.ipa
       - build/ios/iphoneos/*.app
       - /tmp/xcodebuild_logs/*.log
-      - flutter_drive.log
 
     publishing:
       app_store_connect:
