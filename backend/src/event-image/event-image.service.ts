@@ -94,12 +94,82 @@ export class EventImageService {
 
   private defaultEnhancePrompt() {
     return [
-      'Professional Adobe Photoshop-style photo enhancement.',
-      'Preserve the original subject identity, pose, clothing, scene, and composition.',
-      'Correct red-eye, closed or half-closed eyes, harsh flash, blur, low light, shadows, skin tone, white balance, exposure, and noise.',
-      'Improve sharpness, facial details, natural eyes, color grading, dynamic range, and event photography polish.',
-      'Keep the image realistic and natural. Do not add new people, objects, text, logos, watermarks, or change the event context.',
+      'Subtle professional event photo enhancement.',
+      'Preserve the original image as much as possible.',
+      'Keep the same person identity, facial structure, skin texture, body shape, age, pose, clothing, hairstyle, background, scene, perspective, crop, composition, lighting direction, and event context.',
+      'Only make gentle corrections to color, white balance, exposure, contrast, dynamic range, noise, sharpness, and clarity.',
+      'Retain natural pores, realistic skin texture, original proportions, and authentic camera look.',
+      'Do not over-smooth skin, over-sharpen faces, reshape the body, enlarge eyes, alter facial features, remove important details, or create plastic AI skin.',
+      'Do not add new people, objects, text, logos, watermarks, accessories, makeup, jewelry, background elements, or change outfit colors.',
+      'If any beautification is requested, apply it very lightly and naturally.',
+      'Output should look like the same original photo, only gently polished by a professional editor.',
     ].join(' ');
+  }
+
+  private enhanceModePrompt(prompt?: string) {
+    const value = prompt?.trim();
+    if (!value) return '';
+
+    const normalized = value.toLowerCase();
+    const presets: Array<{ match: string[]; text: string }> = [
+      {
+        match: ['colour enhancement', 'color enhancement'],
+        text: [
+          'Apply only subtle color enhancement.',
+          'Improve white balance, skin tone accuracy, and tonal richness softly.',
+          'Keep original colors realistic and faithful to the scene.',
+        ].join(' '),
+      },
+      {
+        match: ['skin beautification'],
+        text: [
+          'Apply very light skin cleanup only.',
+          'Reduce temporary blemishes and uneven tone gently while preserving pores, wrinkles, fine texture, and natural detail.',
+          'Do not create smooth plastic skin.',
+        ].join(' '),
+      },
+      {
+        match: ['facial beautification'],
+        text: [
+          'Apply very subtle facial beautification only.',
+          'Keep the same face shape, eyes, nose, lips, jawline, expression, and identity.',
+          'Only reduce minor distraction softly without changing facial structure.',
+        ].join(' '),
+      },
+      {
+        match: ['body beautification'],
+        text: [
+          'Apply very subtle body refinement only if clearly needed.',
+          'Do not change body shape, weight, proportions, pose, or clothing fit in any noticeable way.',
+          'Preserve the real appearance of the subject.',
+        ].join(' '),
+      },
+      {
+        match: ['vehicle privacy protection'],
+        text: [
+          'Protect visible vehicle privacy details only.',
+          'Blur or obscure license plates and sensitive identifiers gently while keeping the rest of the image unchanged.',
+        ].join(' '),
+      },
+    ];
+
+    for (const preset of presets) {
+      if (preset.match.some((keyword) => normalized.includes(keyword))) {
+        return preset.text;
+      }
+    }
+
+    return [
+      'User requested these extra enhancement notes.',
+      'Follow them only in a subtle, realistic, preserve-original way:',
+      value,
+    ].join(' ');
+  }
+
+  private buildEnhancePrompt(prompt?: string) {
+    const base = this.defaultEnhancePrompt();
+    const modePrompt = this.enhanceModePrompt(prompt);
+    return modePrompt ? `${base} ${modePrompt}` : base;
   }
 
   private async enhanceImage(imageUrl: string, prompt?: string) {
@@ -116,9 +186,9 @@ export class EventImageService {
     }>(
       'https://fal.run/fal-ai/bytedance/seedream/v4/edit',
       {
-        prompt: prompt?.trim() || this.defaultEnhancePrompt(),
+        prompt: this.buildEnhancePrompt(prompt),
         image_urls: [imageUrl],
-        image_size: 'auto',
+        image_size: 'auto_4K',
         num_images: 1,
         max_images: 1,
         enable_safety_checker: true,

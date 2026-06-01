@@ -76,6 +76,7 @@ class _UploadPageState extends State<UploadPage> {
   bool _autoImporting = false;
   bool _wirelessScanning = false;
   bool _wirelessBusy = false;
+  int _wirelessFailureCount = 0;
   int? _gallerySinceMs;
   final Set<String> _processedGalleryIds = {};
   final Set<String> _processedOtgIds = {};
@@ -307,11 +308,20 @@ class _UploadPageState extends State<UploadPage> {
     );
   }
 
+  String _wirelessFingerprint({
+    required EventSummary event,
+    required String imageUrl,
+    required String signature,
+  }) {
+    return '${event.id}|wireless|$imageUrl|$signature';
+  }
+
   Future<void> _queueBytesOnly({
     required EventSummary event,
     required Uint8List bytes,
     required String filename,
     required String source,
+    String? fingerprint,
     String? lastError,
   }) async {
     await UploadQueueService.queueBytesOnly(
@@ -321,6 +331,7 @@ class _UploadPageState extends State<UploadPage> {
       isEnhanced: _isEnhanced,
       albumId: _selectedAlbumId,
       source: source,
+      fingerprint: fingerprint,
       lastError: lastError,
     );
   }
@@ -666,6 +677,7 @@ class _UploadPageState extends State<UploadPage> {
 
     setState(() {
       _wirelessScanning = false;
+      _wirelessFailureCount = 0;
       _wirelessSourceUrl = probe.sourceUrl;
       _wirelessImageUrl = probe.imageUrl;
       _wirelessUsesListing = probe.usesListing;
@@ -740,28 +752,44 @@ class _UploadPageState extends State<UploadPage> {
           bytes: bytes,
           filename: filename,
           source: 'wireless-hotspot',
+          fingerprint: _wirelessFingerprint(
+            event: event,
+            imageUrl: imageUrl,
+            signature: signature,
+          ),
           lastError: 'Waiting for internet connection',
         );
         setState(() {
           _wirelessStatus = 'Saved latest camera image. Upload queued.';
         });
       } else {
-        final uploaded = await _uploadOrQueueBytes(
+        final uploaded = await UploadQueueService.importBytesLocalFirst(
           event: event,
           bytes: bytes,
           filename: filename,
+          isEnhanced: _isEnhanced,
+          albumId: _selectedAlbumId,
           source: 'wireless-shared-network',
+          fingerprint: _wirelessFingerprint(
+            event: event,
+            imageUrl: imageUrl,
+            signature: signature,
+          ),
+          tryUploadNow: true,
         );
         setState(() {
           _wirelessStatus = uploaded
-              ? 'Uploaded latest camera image'
+              ? 'Saved and uploaded latest camera image'
               : 'Saved latest camera image. Waiting for internet upload.';
         });
       }
     } catch (_) {
       setState(() {
+        _wirelessFailureCount += 1;
         _wirelessStatus =
-            'Wireless import failed. Check camera Wi-Fi and internet.';
+            _wirelessFailureCount >= 3
+                ? 'Wireless import unstable. Keeping session, retrying automatically.'
+                : 'Wireless import failed. Check camera Wi-Fi and internet.';
       });
     } finally {
       if (mounted) {
@@ -1008,6 +1036,7 @@ class _UploadPageState extends State<UploadPage> {
     setState(() {
       _autoImporting = false;
       _wirelessScanning = false;
+      _wirelessFailureCount = 0;
       _wirelessMode = null;
       _wirelessSourceUrl = null;
       _wirelessImageUrl = null;

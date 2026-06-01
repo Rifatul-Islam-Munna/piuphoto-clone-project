@@ -12,6 +12,7 @@ import 'package:mobileapp/models/event_invitation_model.dart';
 class UploadQueueService {
   UploadQueueService._();
 
+  static const _maxRetryDelayMinutes = 30;
   static final ValueNotifier<bool> isProcessing = ValueNotifier<bool>(false);
   static Timer? _timer;
 
@@ -113,6 +114,7 @@ class UploadQueueService {
     required bool isEnhanced,
     required String source,
     String? albumId,
+    String? fingerprint,
     String? lastError,
   }) async {
     await _queueBytes(
@@ -122,8 +124,67 @@ class UploadQueueService {
       isEnhanced: isEnhanced,
       source: source,
       albumId: albumId,
+      fingerprint: fingerprint,
       lastError: lastError,
     );
+  }
+
+  static Future<bool> importBytesLocalFirst({
+    required EventSummary event,
+    required Uint8List bytes,
+    required String filename,
+    required bool isEnhanced,
+    required String source,
+    String? albumId,
+    String? fingerprint,
+    bool tryUploadNow = false,
+  }) async {
+    final queued = await _queueBytes(
+      bytes: bytes,
+      filename: filename,
+      event: event,
+      isEnhanced: isEnhanced,
+      source: source,
+      albumId: albumId,
+      lastError: tryUploadNow ? 'Waiting to upload' : 'Waiting for internet connection',
+      fingerprint: fingerprint,
+    );
+
+    if (tryUploadNow) {
+      await processQueue();
+      return !UploadQueueStorage.items.value.any((item) => item.id == queued.id);
+    }
+
+    return false;
+  }
+
+  static Future<bool> importFileLocalFirst({
+    required EventSummary event,
+    required String path,
+    required String filename,
+    required bool isEnhanced,
+    required String source,
+    String? albumId,
+    String? fingerprint,
+    bool tryUploadNow = false,
+  }) async {
+    final queued = await _queueFile(
+      sourcePath: path,
+      filename: filename,
+      event: event,
+      isEnhanced: isEnhanced,
+      source: source,
+      albumId: albumId,
+      lastError: tryUploadNow ? 'Waiting to upload' : 'Waiting for internet connection',
+      fingerprint: fingerprint,
+    );
+
+    if (tryUploadNow) {
+      await processQueue();
+      return !UploadQueueStorage.items.value.any((item) => item.id == queued.id);
+    }
+
+    return false;
   }
 
   static Future<void> processQueue() async {
@@ -131,8 +192,13 @@ class UploadQueueService {
 
     isProcessing.value = true;
     try {
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
       final snapshot = List<PendingUploadItem>.from(UploadQueueStorage.items.value);
       for (final item in snapshot) {
+        if (item.nextRetryAt != null && item.nextRetryAt! > nowMs) {
+          continue;
+        }
+
         final file = File(item.localPath);
         if (!await file.exists()) {
           await UploadQueueStorage.remove(item.id);
@@ -157,10 +223,15 @@ class UploadQueueService {
           } catch (_) {}
           await UploadQueueStorage.remove(item.id);
         } catch (error) {
+          final now = DateTime.now().millisecondsSinceEpoch;
+          final nextDelayMinutes =
+              _retryDelayMinutes(item.attempts + 1).clamp(1, _maxRetryDelayMinutes);
           await UploadQueueStorage.update(
             item.copyWith(
               attempts: item.attempts + 1,
               lastError: _errorText(error),
+              lastAttemptAt: now,
+              nextRetryAt: now + Duration(minutes: nextDelayMinutes).inMilliseconds,
             ),
           );
         }
@@ -224,7 +295,7 @@ class UploadQueueService {
     );
   }
 
-  static Future<void> _queueFile({
+  static Future<PendingUploadItem> _queueFile({
     required String sourcePath,
     required String filename,
     required EventSummary event,
@@ -232,7 +303,13 @@ class UploadQueueService {
     required String source,
     String? albumId,
     String? lastError,
+    String? fingerprint,
   }) async {
+    if (fingerprint != null) {
+      final existing = UploadQueueStorage.findByFingerprint(fingerprint);
+      if (existing != null) return existing;
+    }
+
     final sourceFile = File(sourcePath);
     if (!await sourceFile.exists()) {
       throw Exception('Local import file missing before queue');
@@ -242,23 +319,24 @@ class UploadQueueService {
     final target = await _queueTargetPath(itemId, filename);
     await sourceFile.copy(target);
 
-    await UploadQueueStorage.add(
-      PendingUploadItem(
-        id: itemId,
-        eventId: event.id,
-        eventTitle: event.title,
-        localPath: target,
-        filename: filename,
-        source: source,
-        isEnhanced: isEnhanced,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-        albumId: albumId,
-        lastError: lastError,
-      ),
+    final item = PendingUploadItem(
+      id: itemId,
+      eventId: event.id,
+      eventTitle: event.title,
+      localPath: target,
+      filename: filename,
+      source: source,
+      isEnhanced: isEnhanced,
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      fingerprint: fingerprint,
+      albumId: albumId,
+      lastError: lastError,
     );
+    await UploadQueueStorage.add(item);
+    return item;
   }
 
-  static Future<void> _queueBytes({
+  static Future<PendingUploadItem> _queueBytes({
     required Uint8List bytes,
     required String filename,
     required EventSummary event,
@@ -266,26 +344,33 @@ class UploadQueueService {
     required String source,
     String? albumId,
     String? lastError,
+    String? fingerprint,
   }) async {
+    if (fingerprint != null) {
+      final existing = UploadQueueStorage.findByFingerprint(fingerprint);
+      if (existing != null) return existing;
+    }
+
     final itemId = DateTime.now().microsecondsSinceEpoch.toString();
     final target = await _queueTargetPath(itemId, filename);
     final file = File(target);
     await file.writeAsBytes(bytes, flush: true);
 
-    await UploadQueueStorage.add(
-      PendingUploadItem(
-        id: itemId,
-        eventId: event.id,
-        eventTitle: event.title,
-        localPath: target,
-        filename: filename,
-        source: source,
-        isEnhanced: isEnhanced,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-        albumId: albumId,
-        lastError: lastError,
-      ),
+    final item = PendingUploadItem(
+      id: itemId,
+      eventId: event.id,
+      eventTitle: event.title,
+      localPath: target,
+      filename: filename,
+      source: source,
+      isEnhanced: isEnhanced,
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      fingerprint: fingerprint,
+      albumId: albumId,
+      lastError: lastError,
     );
+    await UploadQueueStorage.add(item);
+    return item;
   }
 
   static Future<String> _queueTargetPath(String itemId, String filename) async {
@@ -306,5 +391,13 @@ class UploadQueueService {
       return error.message ?? 'Network error';
     }
     return error.toString();
+  }
+
+  static int _retryDelayMinutes(int attempts) {
+    if (attempts <= 1) return 1;
+    if (attempts == 2) return 2;
+    if (attempts == 3) return 5;
+    if (attempts == 4) return 10;
+    return 30;
   }
 }

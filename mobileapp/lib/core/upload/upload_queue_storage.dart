@@ -14,9 +14,12 @@ class PendingUploadItem {
     required this.source,
     required this.isEnhanced,
     required this.createdAt,
+    this.fingerprint,
     this.albumId,
     this.attempts = 0,
     this.lastError,
+    this.lastAttemptAt,
+    this.nextRetryAt,
   });
 
   final String id;
@@ -27,14 +30,19 @@ class PendingUploadItem {
   final String source;
   final bool isEnhanced;
   final int createdAt;
+  final String? fingerprint;
   final String? albumId;
   final int attempts;
   final String? lastError;
+  final int? lastAttemptAt;
+  final int? nextRetryAt;
 
   PendingUploadItem copyWith({
     String? localPath,
     int? attempts,
     String? lastError,
+    int? lastAttemptAt,
+    int? nextRetryAt,
     bool clearLastError = false,
   }) {
     return PendingUploadItem(
@@ -46,9 +54,12 @@ class PendingUploadItem {
       source: source,
       isEnhanced: isEnhanced,
       createdAt: createdAt,
+      fingerprint: fingerprint,
       albumId: albumId,
       attempts: attempts ?? this.attempts,
       lastError: clearLastError ? null : (lastError ?? this.lastError),
+      lastAttemptAt: lastAttemptAt ?? this.lastAttemptAt,
+      nextRetryAt: nextRetryAt ?? this.nextRetryAt,
     );
   }
 
@@ -62,9 +73,12 @@ class PendingUploadItem {
       'source': source,
       'isEnhanced': isEnhanced,
       'createdAt': createdAt,
+      'fingerprint': fingerprint,
       'albumId': albumId,
       'attempts': attempts,
       'lastError': lastError,
+      'lastAttemptAt': lastAttemptAt,
+      'nextRetryAt': nextRetryAt,
     };
   }
 
@@ -78,9 +92,12 @@ class PendingUploadItem {
       source: json['source']?.toString() ?? 'import',
       isEnhanced: json['isEnhanced'] == true,
       createdAt: int.tryParse(json['createdAt']?.toString() ?? '') ?? 0,
+      fingerprint: json['fingerprint']?.toString(),
       albumId: json['albumId']?.toString(),
       attempts: int.tryParse(json['attempts']?.toString() ?? '') ?? 0,
       lastError: json['lastError']?.toString(),
+      lastAttemptAt: int.tryParse(json['lastAttemptAt']?.toString() ?? ''),
+      nextRetryAt: int.tryParse(json['nextRetryAt']?.toString() ?? ''),
     );
   }
 }
@@ -118,6 +135,13 @@ class UploadQueueStorage {
   static Future<void> add(PendingUploadItem item) async {
     final next = List<PendingUploadItem>.from(items.value)..add(item);
     await _save(next);
+  }
+
+  static PendingUploadItem? findByFingerprint(String fingerprint) {
+    for (final item in items.value) {
+      if (item.fingerprint == fingerprint) return item;
+    }
+    return null;
   }
 
   static Future<void> update(PendingUploadItem item) async {
