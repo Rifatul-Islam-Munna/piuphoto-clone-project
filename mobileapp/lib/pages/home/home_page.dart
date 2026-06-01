@@ -1,6 +1,6 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:flutter_stripe/flutter_stripe.dart' hide Card;
 import 'package:mobileapp/core/constants/feature_mapping.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/router/app_router.dart';
@@ -285,9 +285,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             const SizedBox(height: 12),
             _buildActionsGrid(context, activeEvent),
             const SizedBox(height: 24),
-            _buildSectionTitle(context, 'Upload Methods'),
+            _buildSectionTitle(context, 'How It Works'),
             const SizedBox(height: 12),
-            _buildUploadMethods(context),
+            _buildHowItWorks(context),
           ],
         );
       },
@@ -416,12 +416,189 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildUploadMethods(BuildContext context) {
+  Widget _buildHowItWorks(BuildContext context) {
+    final user = UserStorage.currentUser.value;
+    if (!(user?.isPhotographer ?? false)) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+    final subStyle = theme.textTheme.bodySmall?.copyWith(
+      color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+      height: 1.5,
+    );
+
+    Widget step(int number, String text) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 22,
+              height: 22,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Text(
+                '$number',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(text, style: subStyle),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget modeLabel(IconData icon, String label) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 4),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: theme.colorScheme.primary),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Column(
       children: [
-        _MethodCard(icon: Icons.wifi, title: 'Auto Upload', description: 'Connect camera via WiFi - photos auto-upload', color: Colors.indigo),
-        _MethodCard(icon: Icons.usb, title: 'OTG / USB', description: 'Use USB drive, card reader, or file picker', color: Colors.brown),
-        _MethodCard(icon: Icons.photo_library, title: 'Phone Gallery', description: 'Manually select photos from phone', color: Colors.pink),
+        Card(
+          margin: const EdgeInsets.only(bottom: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: ExpansionTile(
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.indigo.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.wifi, color: Colors.indigo, size: 20),
+            ),
+            title: const Text(
+              'Wireless Import',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            ),
+            subtitle: Text(
+              'WiFi camera to phone to cloud',
+              style: subStyle,
+            ),
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+            expandedCrossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              step(1, 'Open Upload page and tap "Wireless Import".'),
+              step(2, 'Choose a mode:'),
+              const SizedBox(height: 2),
+              modeLabel(Icons.router_outlined, 'Shared Network (live upload)'),
+              step(3, 'Put phone and camera on the same Wi-Fi network.'),
+              step(4, 'App auto-detects camera and polls for new photos.'),
+              step(5, 'Every new photo uploads to cloud automatically.'),
+              const Divider(height: 18),
+              modeLabel(Icons.wifi_tethering_outlined, 'Camera Hotspot (save & upload later)'),
+              step(3, 'Join the camera\'s own Wi-Fi hotspot from phone settings.'),
+              step(4, 'App detects camera and saves every new photo locally.'),
+              step(5, 'Reconnect phone to internet, then tap "Upload All" to send everything to cloud.'),
+            ],
+          ),
+        ),
+        Card(
+          margin: const EdgeInsets.only(bottom: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: ExpansionTile(
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.brown.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.usb, color: Colors.brown, size: 20),
+            ),
+            title: const Text(
+              'OTG / USB Import',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            ),
+            subtitle: Text(
+              'USB cable, card reader, or adapter',
+              style: subStyle,
+            ),
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+            expandedCrossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              step(1, 'Connect camera or card reader to phone via USB / OTG adapter.'),
+              step(2, 'Tap "OTG" on the Upload page and choose a mode:'),
+              const SizedBox(height: 2),
+              modeLabel(Icons.photo_library_outlined, 'Pick Images (one time)'),
+              step(3, 'Select images from the file picker.'),
+              step(4, 'Tap "Upload to active event" to upload them all.'),
+              const Divider(height: 18),
+              modeLabel(Icons.folder_open, 'Watch Folder (auto-upload)'),
+              step(3, 'Select the camera\'s DCIM folder.'),
+              step(4, 'App watches the folder and auto-uploads every new image.'),
+              step(5, 'Keep taking photos \u2014 they upload as they appear.'),
+            ],
+          ),
+        ),
+        Card(
+          margin: const EdgeInsets.only(bottom: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: ExpansionTile(
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.pink.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.photo_library, color: Colors.pink, size: 20),
+            ),
+            title: const Text(
+              'Phone Gallery',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            ),
+            subtitle: Text(
+              'Pick photos or auto-detect new ones',
+              style: subStyle,
+            ),
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+            expandedCrossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              modeLabel(Icons.touch_app_outlined, 'Manual Pick'),
+              step(1, 'Tap "Phone" to open gallery and select photos.'),
+              step(2, 'Tap "Upload to active event" to upload.'),
+              const Divider(height: 18),
+              modeLabel(Icons.autorenew, 'Auto Upload'),
+              step(1, 'Tap "Auto upload from phone photos".'),
+              step(2, 'App monitors your phone gallery continuously.'),
+              step(3, 'Every new photo taken or saved auto-uploads to cloud.'),
+            ],
+          ),
+        ),
       ],
     );
   }

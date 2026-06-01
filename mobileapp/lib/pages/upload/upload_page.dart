@@ -416,14 +416,24 @@ class _UploadPageState extends State<UploadPage> {
   List<String> _wirelessCameraCandidates() {
     const hosts = [
       'http://192.168.0.1',
+      'http://192.168.0.10',
+      'http://192.168.0.100',
       'http://192.168.1.1',
       'http://192.168.1.2',
       'http://192.168.1.10',
+      'http://192.168.1.100',
+      'http://192.168.1.254',
+      'http://192.168.2.1',
+      'http://192.168.3.1',
       'http://192.168.4.1',
+      'http://192.168.5.1',
       'http://192.168.42.1',
       'http://192.168.49.1',
+      'http://192.168.100.1',
       'http://10.0.0.1',
       'http://10.0.0.10',
+      'http://10.0.1.1',
+      'http://172.16.0.1',
       'http://172.20.10.1',
     ];
     const paths = [
@@ -432,6 +442,8 @@ class _UploadPageState extends State<UploadPage> {
       '/DCIM/',
       '/DCIM/100CANON/',
       '/DCIM/101CANON/',
+      '/DCIM/100EOS/',
+      '/DCIM/101EOS/',
       '/DCIM/100NIKON/',
       '/DCIM/101NIKON/',
       '/DCIM/100MSDCF/',
@@ -442,6 +454,21 @@ class _UploadPageState extends State<UploadPage> {
       '/DCIM/101_PANA/',
       '/DCIM/100PENTX/',
       '/DCIM/101PENTX/',
+      '/DCIM/100OLYMP/',
+      '/DCIM/101OLYMP/',
+      '/DCIM/100RICOH/',
+      '/DCIM/101RICOH/',
+      '/DCIM/100LEICA/',
+      '/DCIM/101LEICA/',
+      '/DCIM/100HASBL/',
+      '/DCIM/101HASBL/',
+      '/DCIM/100GOPRO/',
+      '/DCIM/101GOPRO/',
+      '/DCIM/100MEDIA/',
+      '/DCIM/101MEDIA/',
+      '/DCIM/100APPLE/',
+      '/DCIM/100ANDRO/',
+      '/sd/DCIM/',
       '/latest.jpg',
       '/latest.jpeg',
       '/image.jpg',
@@ -449,6 +476,10 @@ class _UploadPageState extends State<UploadPage> {
       '/capture',
       '/snapshot',
       '/shot.jpg',
+      '/view.jpg',
+      '/live.jpg',
+      '/live',
+      '/api/v1/photos/latest',
     ];
 
     return [
@@ -1059,8 +1090,9 @@ class _UploadPageState extends State<UploadPage> {
         return Scaffold(
           appBar: AppBar(title: const Text('Upload')),
           body: ListView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             children: [
+              // ── Active event ──
               if (activeEvent == null)
                 const Card(
                   child: Padding(
@@ -1073,126 +1105,211 @@ class _UploadPageState extends State<UploadPage> {
               else
                 Card(
                   child: ListTile(
+                    dense: true,
                     title: const Text('Active event'),
                     subtitle: Text(activeEvent.title),
                     trailing: IconButton(
                       tooltip: 'Clear active event',
                       onPressed: _uploading ? null : ActiveEventStorage.clear,
-                      icon: const Icon(Icons.close),
+                      icon: const Icon(Icons.close, size: 20),
                     ),
                   ),
                 ),
-              if (activeEvent != null && _albums.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String?>(
-                  value: _selectedAlbumId,
-                  decoration: const InputDecoration(
-                    labelText: 'Upload album',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('No album'),
+
+              // ── Album picker ──
+              if (activeEvent != null && _albums.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: DropdownButtonFormField<String?>(
+                    value: _selectedAlbumId,
+                    isDense: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Upload album',
+                      border: OutlineInputBorder(),
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     ),
-                    ..._albums.map(
-                      (album) => DropdownMenuItem<String?>(
-                        value: album.id,
-                        child: Text(album.title),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('No album'),
                       ),
-                    ),
-                  ],
-                  onChanged: _uploading
-                      ? null
-                      : (value) => setState(() => _selectedAlbumId = value),
-                ),
-              ],
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: _uploading ? null : _pickPhoneImages,
-                    icon: const Icon(Icons.photo_library_outlined),
-                    label: const Text('Phone'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _uploading ? null : _pickCameraImage,
-                    icon: const Icon(Icons.camera_alt_outlined),
-                    label: const Text('Camera'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _uploading || _otgBusy
+                      ..._albums.map(
+                        (album) => DropdownMenuItem<String?>(
+                          value: album.id,
+                          child: Text(album.title),
+                        ),
+                      ),
+                    ],
+                    onChanged: _uploading
                         ? null
-                        : () => _handleOtgAction(activeEvent),
-                    icon: Icon(
-                      _otgImporting ? Icons.sync : Icons.usb_outlined,
-                    ),
-                    label: Text(_otgImporting ? 'OTG on' : 'OTG'),
-                  ),
-                  if (activeEvent != null)
-                    OutlinedButton.icon(
-                      onPressed: () =>
-                          context.router.root.push(const EventImagesRoute()),
-                      icon: const Icon(Icons.image_outlined),
-                      label: const Text('Uploads'),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: activeEvent == null || _uploading || _galleryBusy
-                      ? null
-                      : _galleryImporting
-                          ? _stopGalleryAutoImport
-                          : () => _startGalleryAutoImport(activeEvent),
-                  icon: Icon(
-                    _galleryImporting
-                        ? Icons.pause_circle_outline
-                        : Icons.autorenew,
-                  ),
-                  label: Text(
-                    _galleryImporting
-                        ? 'Stop phone photos auto-upload'
-                        : 'Auto upload from phone photos',
+                        : (value) => setState(() => _selectedAlbumId = value),
                   ),
                 ),
-              ),
+
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed:
-                          activeEvent == null || _uploading || _wirelessBusy
+
+              // ── Section 1: Import Sources ──
+              Card(
+                margin: EdgeInsets.zero,
+                clipBehavior: Clip.antiAlias,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: ExpansionTile(
+                  initiallyExpanded: true,
+                  tilePadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
+                  childrenPadding:
+                      const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                  leading: const Icon(Icons.add_photo_alternate_outlined,
+                      size: 22),
+                  title: const Text(
+                    'Import Sources',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                  ),
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _compactButton(
+                          icon: Icons.photo_library_outlined,
+                          label: 'Phone',
+                          onPressed: _uploading ? null : _pickPhoneImages,
+                        ),
+                        _compactButton(
+                          icon: Icons.camera_alt_outlined,
+                          label: 'Camera',
+                          onPressed: _uploading ? null : _pickCameraImage,
+                        ),
+                        _compactButton(
+                          icon: _otgImporting ? Icons.sync : Icons.usb_outlined,
+                          label: _otgImporting ? 'OTG on' : 'OTG',
+                          onPressed: _uploading || _otgBusy
                               ? null
-                              : _wirelessImporting
-                                  ? _stopWirelessImport
-                                  : () => _handleWirelessAction(activeEvent),
-                      icon: Icon(
-                        _wirelessImporting
-                            ? Icons.pause_circle_outline
-                            : Icons.wifi_tethering,
-                      ),
-                      label: Text(
-                        _wirelessImporting
-                            ? 'Stop wireless import'
-                            : 'Wireless import',
+                              : () => _handleOtgAction(activeEvent),
+                        ),
+                        if (activeEvent != null)
+                          _compactButton(
+                            icon: Icons.image_outlined,
+                            label: 'Uploads',
+                            onPressed: () => context.router.root
+                                .push(const EventImagesRoute()),
+                          ),
+                      ],
+                    ),
+                    if (_otgStatus != null) ...[
+                      const SizedBox(height: 8),
+                      _statusText(_otgStatus!),
+                    ],
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 8),
+
+              // ── Section 2: Auto Upload ──
+              Card(
+                margin: EdgeInsets.zero,
+                clipBehavior: Clip.antiAlias,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: ExpansionTile(
+                  initiallyExpanded: true,
+                  tilePadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
+                  childrenPadding:
+                      const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                  leading: const Icon(Icons.autorenew, size: 22),
+                  title: Text(
+                    _galleryImporting || _wirelessImporting
+                        ? 'Auto Upload (active)'
+                        : 'Auto Upload',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 14),
+                  ),
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed:
+                            activeEvent == null || _uploading || _galleryBusy
+                                ? null
+                                : _galleryImporting
+                                    ? _stopGalleryAutoImport
+                                    : () =>
+                                        _startGalleryAutoImport(activeEvent),
+                        icon: Icon(
+                          _galleryImporting
+                              ? Icons.pause_circle_outline
+                              : Icons.autorenew,
+                          size: 18,
+                        ),
+                        label: Text(
+                          _galleryImporting
+                              ? 'Stop phone auto-upload'
+                              : 'Auto upload phone photos',
+                          style: const TextStyle(fontSize: 13),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: _openWifiSettings,
-                    icon: const Icon(Icons.wifi_outlined),
-                    label: const Text('Wi-Fi'),
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: activeEvent == null ||
+                                    _uploading ||
+                                    _wirelessBusy
+                                ? null
+                                : _wirelessImporting
+                                    ? _stopWirelessImport
+                                    : () =>
+                                        _handleWirelessAction(activeEvent),
+                            icon: Icon(
+                              _wirelessImporting
+                                  ? Icons.pause_circle_outline
+                                  : Icons.wifi_tethering,
+                              size: 18,
+                            ),
+                            label: Text(
+                              _wirelessImporting
+                                  ? 'Stop wireless'
+                                  : 'Wireless import',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          height: 38,
+                          child: OutlinedButton.icon(
+                            onPressed: _openWifiSettings,
+                            icon: const Icon(Icons.wifi_outlined, size: 18),
+                            label: const Text('Wi-Fi',
+                                style: TextStyle(fontSize: 13)),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (_galleryStatus != null) ...[
+                      const SizedBox(height: 8),
+                      _statusText(_galleryStatus!),
+                    ],
+                    if (_wirelessStatus != null) ...[
+                      const SizedBox(height: 6),
+                      _statusText(_wirelessStatus!),
+                    ],
+                  ],
+                ),
               ),
+
               const SizedBox(height: 8),
+
+              // ── Section 3: Upload Queue ──
               ValueListenableBuilder(
                 valueListenable: UploadQueueStorage.items,
                 builder: (context, queued, _) {
@@ -1200,86 +1317,121 @@ class _UploadPageState extends State<UploadPage> {
                     valueListenable: UploadQueueService.isProcessing,
                     builder: (context, queueBusy, __) {
                       final count = queued.length;
-                      return SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: count == 0 || queueBusy
-                              ? null
-                              : () async {
-                                  await UploadQueueService.processQueue();
-                                  if (!mounted) return;
-                                  final left = UploadQueueStorage.items.value.length;
-                                  if (left == 0) {
-                                    AppToast.success('Queued uploads complete');
-                                  } else {
-                                    AppToast.error('$left uploads still waiting');
-                                  }
-                                },
-                          icon: Icon(
-                            queueBusy
-                                ? Icons.sync
-                                : Icons.cloud_upload_outlined,
+                      return Card(
+                        margin: EdgeInsets.zero,
+                        clipBehavior: Clip.antiAlias,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: ExpansionTile(
+                          initiallyExpanded: count > 0,
+                          tilePadding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 0),
+                          childrenPadding:
+                              const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                          leading: const Icon(
+                              Icons.cloud_upload_outlined, size: 22),
+                          title: Text(
+                            count == 0
+                                ? 'Upload Queue'
+                                : 'Upload Queue ($count)',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w600, fontSize: 14),
                           ),
-                          label: Text(
-                            queueBusy
-                                ? 'Uploading queued...'
-                                : count == 0
-                                    ? 'No queued uploads'
-                                    : 'Upload queued ($count)',
-                          ),
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: count == 0 || queueBusy
+                                        ? null
+                                        : () async {
+                                            await UploadQueueService
+                                                .processQueue();
+                                            if (!mounted) return;
+                                            final left = UploadQueueStorage
+                                                .items.value.length;
+                                            if (left == 0) {
+                                              AppToast.success(
+                                                  'Queued uploads complete');
+                                            } else {
+                                              AppToast.error(
+                                                  '$left uploads still waiting');
+                                            }
+                                          },
+                                    icon: Icon(
+                                      queueBusy
+                                          ? Icons.sync
+                                          : Icons.cloud_upload_outlined,
+                                      size: 18,
+                                    ),
+                                    label: Text(
+                                      queueBusy
+                                          ? 'Uploading...'
+                                          : count == 0
+                                              ? 'No queued'
+                                              : 'Upload all ($count)',
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                SizedBox(
+                                  height: 38,
+                                  child: OutlinedButton.icon(
+                                    onPressed: _freeingSpace
+                                        ? null
+                                        : _freeUploadedGallerySpace,
+                                    icon: const Icon(
+                                        Icons.cleaning_services_outlined,
+                                        size: 18),
+                                    label: Text(
+                                      _freeingSpace
+                                          ? 'Cleaning...'
+                                          : 'Free space',
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       );
                     },
                   );
                 },
               ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _freeingSpace ? null : _freeUploadedGallerySpace,
-                  icon: const Icon(Icons.cleaning_services_outlined),
-                  label: Text(_freeingSpace ? 'Cleaning...' : 'Free space'),
-                ),
-              ),
-              if (_galleryStatus != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  _galleryStatus!,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-              if (_wirelessStatus != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  _wirelessStatus!,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-              if (_otgStatus != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  _otgStatus!,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
+
+              const SizedBox(height: 4),
+
+              // ── Enhanced toggle ──
               SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Enhanced image'),
+                dense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 4),
+                title: const Text('Enhanced image',
+                    style: TextStyle(fontSize: 14)),
                 value: _isEnhanced,
                 onChanged: _uploading
                     ? null
                     : (value) => setState(() => _isEnhanced = value),
               ),
+
+              // ── Selected files preview ──
               if (_selectedFiles.isNotEmpty) ...[
                 Card(
                   child: ListTile(
-                    title: Text('${_selectedFiles.length} images selected'),
+                    dense: true,
+                    title:
+                        Text('${_selectedFiles.length} images selected'),
                     subtitle: Text(
                       _selectedFiles
                           .take(3)
                           .map((file) => file.name)
                           .join(', '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     trailing: TextButton(
                       onPressed: _uploading
@@ -1292,25 +1444,26 @@ class _UploadPageState extends State<UploadPage> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 10),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Image.file(
                     File(_selectedFiles.first.path),
-                    height: 220,
+                    height: 180,
                     width: double.infinity,
                     fit: BoxFit.cover,
                   ),
                 ),
               ],
+
               if (_uploadStatus != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  _uploadStatus!,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+                const SizedBox(height: 6),
+                _statusText(_uploadStatus!),
               ],
-              const SizedBox(height: 24),
+
+              const SizedBox(height: 14),
+
+              // ── Upload button ──
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
@@ -1323,10 +1476,39 @@ class _UploadPageState extends State<UploadPage> {
                       : const Text('Upload to active event'),
                 ),
               ),
+              const SizedBox(height: 8),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _compactButton({
+    required IconData icon,
+    required String label,
+    VoidCallback? onPressed,
+  }) {
+    return SizedBox(
+      height: 36,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        label: Text(label, style: const TextStyle(fontSize: 13)),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+        ),
+      ),
+    );
+  }
+
+  Widget _statusText(String text) {
+    return Text(
+      text,
+      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color:
+                Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+          ),
     );
   }
 }
