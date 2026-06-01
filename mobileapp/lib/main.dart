@@ -13,6 +13,8 @@ import 'package:mobileapp/core/router/auth_guard.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
+import 'package:mobileapp/core/upload/upload_queue_service.dart';
+import 'package:mobileapp/core/upload/upload_queue_storage.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
 late final AppRouter appRouter;
@@ -24,7 +26,9 @@ Future<void> setupDependencies() async {
   getIt.registerSingleton<SharedPreferences>(prefs);
   await UserStorage.init();
   await ActiveEventStorage.init();
+  await UploadQueueStorage.init();
   DioHelper.init();
+  UploadQueueService.start();
 }
 
 Future<void> main() async {

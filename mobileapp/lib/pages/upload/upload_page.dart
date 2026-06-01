@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -14,6 +15,8 @@ import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/uploaded_gallery_storage.dart';
+import 'package:mobileapp/core/upload/upload_queue_service.dart';
+import 'package:mobileapp/core/upload/upload_queue_storage.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
@@ -21,12 +24,16 @@ import 'package:permission_handler/permission_handler.dart';
 
 class _CameraProbe {
   const _CameraProbe({
-    required this.url,
+    required this.sourceUrl,
+    required this.imageUrl,
     required this.signature,
+    required this.usesListing,
   });
 
-  final String url;
+  final String sourceUrl;
+  final String imageUrl;
   final String signature;
+  final bool usesListing;
 }
 
 class _SelectedUploadFile {
@@ -37,6 +44,11 @@ class _SelectedUploadFile {
 
   final String path;
   final String name;
+}
+
+enum _WirelessImportMode {
+  sharedNetwork,
+  cameraHotspot,
 }
 
 @RoutePage()
@@ -70,9 +82,12 @@ class _UploadPageState extends State<UploadPage> {
   String? _otgStatus;
   String? _uploadStatus;
   String? _wirelessStatus;
+  _WirelessImportMode? _wirelessMode;
   String? _otgSourceName;
+  String? _wirelessSourceUrl;
   String? _wirelessImageUrl;
   String? _lastWirelessSignature;
+  bool _wirelessUsesListing = false;
   String? _loadedAlbumEventId;
   String? _selectedAlbumId;
   List<AlbumModel> _albums = [];
@@ -259,6 +274,56 @@ class _UploadPageState extends State<UploadPage> {
     return response.data['url']?.toString() ?? '';
   }
 
+  Future<bool> _uploadOrQueueFile({
+    required EventSummary event,
+    required String path,
+    required String filename,
+    required String source,
+  }) async {
+    return UploadQueueService.uploadNowOrQueueFile(
+      event: event,
+      path: path,
+      filename: filename,
+      isEnhanced: _isEnhanced,
+      albumId: _selectedAlbumId,
+      source: source,
+    );
+  }
+
+  Future<bool> _uploadOrQueueBytes({
+    required EventSummary event,
+    required Uint8List bytes,
+    required String filename,
+    required String source,
+  }) async {
+    return UploadQueueService.uploadNowOrQueueBytes(
+      event: event,
+      bytes: bytes,
+      filename: filename,
+      isEnhanced: _isEnhanced,
+      albumId: _selectedAlbumId,
+      source: source,
+    );
+  }
+
+  Future<void> _queueBytesOnly({
+    required EventSummary event,
+    required Uint8List bytes,
+    required String filename,
+    required String source,
+    String? lastError,
+  }) async {
+    await UploadQueueService.queueBytesOnly(
+      event: event,
+      bytes: bytes,
+      filename: filename,
+      isEnhanced: _isEnhanced,
+      albumId: _selectedAlbumId,
+      source: source,
+      lastError: lastError,
+    );
+  }
+
   Future<void> _createEventImage(EventSummary event, String imageUrl) async {
     await DioHelper.post(
       '/eventImage',
@@ -352,13 +417,31 @@ class _UploadPageState extends State<UploadPage> {
     const hosts = [
       'http://192.168.0.1',
       'http://192.168.1.1',
+      'http://192.168.1.2',
+      'http://192.168.1.10',
       'http://192.168.4.1',
       'http://192.168.42.1',
       'http://192.168.49.1',
       'http://10.0.0.1',
+      'http://10.0.0.10',
       'http://172.20.10.1',
     ];
     const paths = [
+      '/',
+      '/index.html',
+      '/DCIM/',
+      '/DCIM/100CANON/',
+      '/DCIM/101CANON/',
+      '/DCIM/100NIKON/',
+      '/DCIM/101NIKON/',
+      '/DCIM/100MSDCF/',
+      '/DCIM/101MSDCF/',
+      '/DCIM/100_FUJI/',
+      '/DCIM/101_FUJI/',
+      '/DCIM/100_PANA/',
+      '/DCIM/101_PANA/',
+      '/DCIM/100PENTX/',
+      '/DCIM/101PENTX/',
       '/latest.jpg',
       '/latest.jpeg',
       '/image.jpg',
@@ -372,6 +455,42 @@ class _UploadPageState extends State<UploadPage> {
       for (final host in hosts)
         for (final path in paths) '$host$path',
     ];
+  }
+
+  List<String> _extractImageLinks(String body, String sourceUrl) {
+    final matches = RegExp(
+      r'''(?:href|src)\s*=\s*["']([^"']+\.(?:jpe?g|png|gif|webp|heic))(?:\?[^"']*)?["']''',
+      caseSensitive: false,
+    ).allMatches(body);
+
+    final results = <String>[];
+    for (final match in matches) {
+      final raw = match.group(1);
+      if (raw == null || raw.isEmpty) continue;
+      final resolved = Uri.parse(sourceUrl).resolve(raw).toString();
+      if (!results.contains(resolved)) {
+        results.add(resolved);
+      }
+    }
+    return results;
+  }
+
+  Future<Uint8List?> _downloadImageBytes(String url) async {
+    final response = await DioHelper.dio.get<List<int>>(
+      url,
+      options: Options(
+        responseType: ResponseType.bytes,
+        receiveTimeout: const Duration(seconds: 3),
+        sendTimeout: const Duration(seconds: 3),
+        validateStatus: (status) => status != null && status < 500,
+      ),
+    );
+    final contentType = response.headers.value(Headers.contentTypeHeader) ?? '';
+    final bytes = Uint8List.fromList(response.data ?? []);
+    final returnsImage = contentType.toLowerCase().startsWith('image/') ||
+        (contentType.isEmpty && _looksLikeImage(bytes));
+    if (bytes.isEmpty || !returnsImage) return null;
+    return bytes;
   }
 
   Future<_CameraProbe?> _probeCameraUrl(String url) async {
@@ -391,8 +510,30 @@ class _UploadPageState extends State<UploadPage> {
       final returnsImage = contentType.toLowerCase().startsWith('image/') ||
           (contentType.isEmpty && _looksLikeImage(bytes));
 
-      if (bytes.isEmpty || !returnsImage) return null;
-      return _CameraProbe(url: url, signature: _signatureForBytes(bytes));
+      if (bytes.isNotEmpty && returnsImage) {
+        return _CameraProbe(
+          sourceUrl: url,
+          imageUrl: url,
+          signature: _signatureForBytes(bytes),
+          usesListing: false,
+        );
+      }
+
+      final body = utf8.decode(bytes, allowMalformed: true);
+      if (body.isEmpty) return null;
+      final imageLinks = _extractImageLinks(body, url);
+      if (imageLinks.isEmpty) return null;
+
+      final latestImageUrl = imageLinks.last;
+      final imageBytes = await _downloadImageBytes(latestImageUrl);
+      if (imageBytes == null) return null;
+
+      return _CameraProbe(
+        sourceUrl: url,
+        imageUrl: latestImageUrl,
+        signature: _signatureForBytes(imageBytes),
+        usesListing: true,
+      );
     } catch (_) {
       return null;
     }
@@ -423,13 +564,21 @@ class _UploadPageState extends State<UploadPage> {
     );
   }
 
-  Future<void> _findAndStartWirelessImport(EventSummary event) async {
+  Future<void> _findAndStartWirelessImport(
+    EventSummary event,
+    _WirelessImportMode mode,
+  ) async {
     _wirelessTimer?.cancel();
     setState(() {
       _wirelessScanning = true;
       _autoImporting = false;
+      _wirelessSourceUrl = null;
+      _wirelessMode = mode;
       _wirelessImageUrl = null;
-      _wirelessStatus = 'Searching for wireless camera...';
+      _wirelessUsesListing = false;
+      _wirelessStatus = mode == _WirelessImportMode.cameraHotspot
+          ? 'Searching for camera hotspot image feed...'
+          : 'Searching for shared-network camera...';
     });
 
     final probe = await _discoverWirelessCamera();
@@ -439,17 +588,23 @@ class _UploadPageState extends State<UploadPage> {
       setState(() {
         _wirelessScanning = false;
         _wirelessStatus =
-            'No camera found. Connect phone to camera Wi-Fi and try again.';
+            mode == _WirelessImportMode.cameraHotspot
+                ? 'No camera hotspot feed found. Connect phone to camera Wi-Fi and try again.'
+                : 'No shared-network camera found. Put phone and camera on same network.';
       });
       return;
     }
 
     setState(() {
       _wirelessScanning = false;
-      _wirelessImageUrl = probe.url;
+      _wirelessSourceUrl = probe.sourceUrl;
+      _wirelessImageUrl = probe.imageUrl;
+      _wirelessUsesListing = probe.usesListing;
       _lastWirelessSignature = probe.signature;
       _autoImporting = true;
-      _wirelessStatus = 'Camera connected. Waiting for new photos...';
+      _wirelessStatus = mode == _WirelessImportMode.cameraHotspot
+          ? 'Camera hotspot connected. New photos will save to queue.'
+          : 'Camera connected. Waiting for new photos...';
     });
 
     _wirelessTimer = Timer.periodic(
@@ -461,8 +616,8 @@ class _UploadPageState extends State<UploadPage> {
   Future<void> _pollWirelessCamera(EventSummary event) async {
     if (_wirelessBusy) return;
 
-    final url = _wirelessImageUrl;
-    if (url == null) {
+    final sourceUrl = _wirelessSourceUrl;
+    if (sourceUrl == null) {
       setState(() => _wirelessStatus = 'Connect a wireless camera first');
       return;
     }
@@ -473,23 +628,33 @@ class _UploadPageState extends State<UploadPage> {
     });
 
     try {
-      final response = await DioHelper.dio.get<List<int>>(
-        url,
-        options: Options(responseType: ResponseType.bytes),
-      );
-      final contentType =
-          response.headers.value(Headers.contentTypeHeader) ?? '';
-      final bytes = Uint8List.fromList(response.data ?? []);
-      final returnsImage = contentType.toLowerCase().startsWith('image/') ||
-          (contentType.isEmpty && _looksLikeImage(bytes));
+      var imageUrl = _wirelessImageUrl ?? sourceUrl;
+      Uint8List? bytes;
 
-      if (bytes.isEmpty || !returnsImage) {
-        setState(() {
-          _wirelessStatus = 'Camera URL did not return an image';
-        });
+      if (_wirelessUsesListing) {
+        final listingResponse = await DioHelper.dio.get<List<int>>(
+          sourceUrl,
+          options: Options(responseType: ResponseType.bytes),
+        );
+        final listingBytes = Uint8List.fromList(listingResponse.data ?? []);
+        final body = utf8.decode(listingBytes, allowMalformed: true);
+        final imageLinks = _extractImageLinks(body, sourceUrl);
+        if (imageLinks.isEmpty) {
+          setState(() => _wirelessStatus = 'Camera folder page has no image links');
+          return;
+        }
+        imageUrl = imageLinks.last;
+        bytes = await _downloadImageBytes(imageUrl);
+      } else {
+        bytes = await _downloadImageBytes(imageUrl);
+      }
+
+      if (bytes == null) {
+        setState(() => _wirelessStatus = 'Camera source did not return an image');
         return;
       }
 
+      _wirelessImageUrl = imageUrl;
       final signature = _signatureForBytes(bytes);
       if (signature == _lastWirelessSignature) {
         setState(() => _wirelessStatus = 'No new image yet');
@@ -497,18 +662,33 @@ class _UploadPageState extends State<UploadPage> {
       }
 
       _lastWirelessSignature = signature;
-      setState(() => _wirelessStatus = 'New image found. Uploading...');
+      setState(() => _wirelessStatus = 'New image found. Importing...');
 
-      final imageUrl = await _uploadBytes(
-        bytes: bytes,
-        filename: _filenameFromUrl(url),
-      );
-      if (imageUrl.isEmpty) {
-        throw Exception('Image upload returned no URL');
+      final filename = _filenameFromUrl(imageUrl);
+      if (_wirelessMode == _WirelessImportMode.cameraHotspot) {
+        await _queueBytesOnly(
+          event: event,
+          bytes: bytes,
+          filename: filename,
+          source: 'wireless-hotspot',
+          lastError: 'Waiting for internet connection',
+        );
+        setState(() {
+          _wirelessStatus = 'Saved latest camera image. Upload queued.';
+        });
+      } else {
+        final uploaded = await _uploadOrQueueBytes(
+          event: event,
+          bytes: bytes,
+          filename: filename,
+          source: 'wireless-shared-network',
+        );
+        setState(() {
+          _wirelessStatus = uploaded
+              ? 'Uploaded latest camera image'
+              : 'Saved latest camera image. Waiting for internet upload.';
+        });
       }
-
-      await _createEventImage(event, imageUrl);
-      setState(() => _wirelessStatus = 'Uploaded latest camera image');
     } catch (_) {
       setState(() {
         _wirelessStatus =
@@ -546,16 +726,13 @@ class _UploadPageState extends State<UploadPage> {
       for (final image in images.reversed) {
         if (_processedGalleryIds.contains(image.id)) continue;
 
-        setState(() => _galleryStatus = 'Uploading ${image.name}...');
-        final imageUrl = await _uploadFile(
+        setState(() => _galleryStatus = 'Importing ${image.name}...');
+        final uploaded = await _uploadOrQueueFile(
+          event: event,
           path: image.path,
           filename: image.name,
+          source: 'gallery',
         );
-        if (imageUrl.isEmpty) {
-          throw Exception('Image upload returned no URL');
-        }
-
-        await _createEventImage(event, imageUrl);
         _processedGalleryIds.add(image.id);
         await UploadedGalleryStorage.add(id: image.id, name: image.name);
 
@@ -565,7 +742,9 @@ class _UploadPageState extends State<UploadPage> {
 
         if (!mounted) return;
         setState(() {
-          _galleryStatus = 'Uploaded ${image.name}';
+          _galleryStatus = uploaded
+              ? 'Uploaded ${image.name}'
+              : 'Saved ${image.name}. Upload queued for internet.';
         });
       }
     } on MissingPluginException {
@@ -629,20 +808,21 @@ class _UploadPageState extends State<UploadPage> {
       for (final image in images.reversed) {
         if (_processedOtgIds.contains(image.id)) continue;
 
-        setState(() => _otgStatus = 'Uploading ${image.name} from OTG...');
-        final imageUrl = await _uploadFile(
+        setState(() => _otgStatus = 'Importing ${image.name} from OTG...');
+        final uploaded = await _uploadOrQueueFile(
+          event: event,
           path: image.path,
           filename: image.name,
+          source: 'otg',
         );
-        if (imageUrl.isEmpty) {
-          throw Exception('Image upload returned no URL');
-        }
-
-        await _createEventImage(event, imageUrl);
         _processedOtgIds.add(image.id);
 
         if (!mounted) return;
-        setState(() => _otgStatus = 'Uploaded ${image.name} from OTG');
+        setState(() {
+          _otgStatus = uploaded
+              ? 'Uploaded ${image.name} from OTG'
+              : 'Saved ${image.name} from OTG. Upload queued.';
+        });
       }
     } on MissingPluginException {
       setState(() => _otgStatus = 'Restart app once to enable OTG auto-upload');
@@ -759,10 +939,62 @@ class _UploadPageState extends State<UploadPage> {
     setState(() {
       _autoImporting = false;
       _wirelessScanning = false;
+      _wirelessMode = null;
+      _wirelessSourceUrl = null;
       _wirelessImageUrl = null;
+      _wirelessUsesListing = false;
       _lastWirelessSignature = null;
       _wirelessStatus = 'Wireless camera disconnected';
     });
+  }
+
+  Future<void> _handleWirelessAction(EventSummary? event) async {
+    if (_wirelessImporting) {
+      _stopWirelessImport();
+      return;
+    }
+
+    if (event == null) {
+      AppToast.error('Select active event first');
+      return;
+    }
+
+    final choice = await showModalBottomSheet<_WirelessImportMode>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.router_outlined),
+                title: const Text('Shared network live upload'),
+                subtitle: const Text(
+                  'Phone and camera on same internet network',
+                ),
+                onTap: () => Navigator.of(context).pop(
+                  _WirelessImportMode.sharedNetwork,
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.wifi_tethering_outlined),
+                title: const Text('Camera hotspot import'),
+                subtitle: const Text(
+                  'Phone joins camera Wi-Fi, save now and upload later',
+                ),
+                onTap: () => Navigator.of(context).pop(
+                  _WirelessImportMode.cameraHotspot,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted || choice == null) return;
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await _findAndStartWirelessImport(event, choice);
   }
 
   Future<void> _submit(EventSummary event) async {
@@ -939,8 +1171,7 @@ class _UploadPageState extends State<UploadPage> {
                               ? null
                               : _wirelessImporting
                                   ? _stopWirelessImport
-                                  : () =>
-                                      _findAndStartWirelessImport(activeEvent),
+                                  : () => _handleWirelessAction(activeEvent),
                       icon: Icon(
                         _wirelessImporting
                             ? Icons.pause_circle_outline
@@ -949,7 +1180,7 @@ class _UploadPageState extends State<UploadPage> {
                       label: Text(
                         _wirelessImporting
                             ? 'Stop wireless import'
-                            : 'Start wireless import',
+                            : 'Wireless import',
                       ),
                     ),
                   ),
@@ -960,6 +1191,47 @@ class _UploadPageState extends State<UploadPage> {
                     label: const Text('Wi-Fi'),
                   ),
                 ],
+              ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder(
+                valueListenable: UploadQueueStorage.items,
+                builder: (context, queued, _) {
+                  return ValueListenableBuilder(
+                    valueListenable: UploadQueueService.isProcessing,
+                    builder: (context, queueBusy, __) {
+                      final count = queued.length;
+                      return SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: count == 0 || queueBusy
+                              ? null
+                              : () async {
+                                  await UploadQueueService.processQueue();
+                                  if (!mounted) return;
+                                  final left = UploadQueueStorage.items.value.length;
+                                  if (left == 0) {
+                                    AppToast.success('Queued uploads complete');
+                                  } else {
+                                    AppToast.error('$left uploads still waiting');
+                                  }
+                                },
+                          icon: Icon(
+                            queueBusy
+                                ? Icons.sync
+                                : Icons.cloud_upload_outlined,
+                          ),
+                          label: Text(
+                            queueBusy
+                                ? 'Uploading queued...'
+                                : count == 0
+                                    ? 'No queued uploads'
+                                    : 'Upload queued ($count)',
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
               ),
               const SizedBox(height: 8),
               SizedBox(
