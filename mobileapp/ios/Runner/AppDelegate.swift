@@ -294,7 +294,7 @@ import UniformTypeIdentifiers
       do {
         let url = try URL(
           resolvingBookmarkData: bookmark,
-          options: [.withoutUI, .withSecurityScope],
+          options: [.withoutUI],
           relativeTo: nil,
           bookmarkDataIsStale: &stale
         )
@@ -327,14 +327,16 @@ import UniformTypeIdentifiers
     url: URL,
     excludeIds: Set<String>
   ) -> [[String: String]] {
-    let keys: [URLResourceKey] = [
+    var keys: [URLResourceKey] = [
       .isRegularFileKey,
       .isDirectoryKey,
       .nameKey,
-      .contentTypeKey,
       .fileSizeKey,
       .contentModificationDateKey,
     ]
+    if #available(iOS 14.0, *) {
+      keys.append(.contentTypeKey)
+    }
     guard let enumerator = FileManager.default.enumerator(
       at: url,
       includingPropertiesForKeys: keys,
