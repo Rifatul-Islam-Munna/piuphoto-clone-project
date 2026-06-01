@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/platform/device_settings.dart';
 import 'package:mobileapp/core/platform/gallery_auto_import.dart';
+import 'package:mobileapp/core/platform/network_camera_discovery.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
@@ -488,6 +489,33 @@ class _UploadPageState extends State<UploadPage> {
     ];
   }
 
+  List<String> _candidateUrlsForDiscovery(DiscoveredCameraService service) {
+    final parsed = Uri.tryParse(service.url);
+    if (parsed == null) return [service.url];
+
+    final base = parsed.removeFragment().replace(query: '').toString();
+    final origin = parsed.replace(path: '/', query: '', fragment: '').toString();
+    final urls = <String>{base, origin};
+
+    const extraPaths = [
+      '/latest.jpg',
+      '/latest.jpeg',
+      '/image.jpg',
+      '/photo.jpg',
+      '/capture',
+      '/snapshot',
+      '/shot.jpg',
+      '/DCIM/',
+    ];
+
+    for (final path in extraPaths) {
+      urls.add(parsed.replace(path: path, query: '', fragment: '').toString());
+      urls.add(Uri.parse(origin).resolve(path).toString());
+    }
+
+    return urls.toList(growable: false);
+  }
+
   List<String> _extractImageLinks(String body, String sourceUrl) {
     final matches = RegExp(
       r'''(?:href|src)\s*=\s*["']([^"']+\.(?:jpe?g|png|gif|webp|heic))(?:\?[^"']*)?["']''',
@@ -571,9 +599,19 @@ class _UploadPageState extends State<UploadPage> {
   }
 
   Future<_CameraProbe?> _discoverWirelessCamera() async {
-    final candidates = _wirelessCameraCandidates();
+    final discovered = await NetworkCameraDiscovery.discover(
+      timeout: const Duration(seconds: 3),
+    );
+    final candidates = <String>[
+      for (final service in discovered) ..._candidateUrlsForDiscovery(service),
+      ..._wirelessCameraCandidates(),
+    ].toSet().toList(growable: false);
     final completer = Completer<_CameraProbe?>();
     var pending = candidates.length;
+
+    if (pending == 0) {
+      return null;
+    }
 
     for (final url in candidates) {
       _probeCameraUrl(url).then((probe) {

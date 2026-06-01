@@ -32,6 +32,15 @@
 	<string>PiuPhoto needs camera access to capture event photos.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>PiuPhoto needs local network access to discover and import photos from wireless cameras.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_services._dns-sd._udp</string>
+		<string>_http._tcp</string>
+		<string>_https._tcp</string>
+		<string>_device-info._tcp</string>
+		<string>_ptp._tcp</string>
+		<string>_companion-link._tcp</string>
+	</array>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>PiuPhoto needs photo library add access to save downloaded event photos.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
