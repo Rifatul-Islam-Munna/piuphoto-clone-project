@@ -1,6 +1,7 @@
 import Flutter
 import Photos
 import UIKit
+import UniformTypeIdentifiers
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate {
   private enum PhotoAccessMode {
@@ -13,7 +14,9 @@ import UIKit
   private let galleryChannelName = "piuphoto/gallery_import"
   private let downloadsChannelName = "piuphoto/image_downloads"
   private var otgResult: FlutterResult?
+  private var otgSourceResult: FlutterResult?
   private var otgAllowsMultipleSelection = false
+  private var otgSourceBookmark: Data?
 
   override func application(
     _ application: UIApplication,
@@ -28,7 +31,15 @@ import UIKit
       )
       otgChannel.setMethodCallHandler { [weak self] call, result in
         guard call.method == "pickImage" || call.method == "pickImages" else {
-          result(FlutterMethodNotImplemented)
+          if call.method == "pickSource" {
+            self?.pickExternalSource(result: result)
+          } else if call.method == "recentSourceImages" {
+            let arguments = call.arguments as? [String: Any]
+            let excludeIds = Set(arguments?["excludeIds"] as? [String] ?? [])
+            self?.fetchRecentSourceImages(excludeIds: excludeIds, result: result)
+          } else {
+            result(FlutterMethodNotImplemented)
+          }
           return
         }
 
@@ -165,16 +176,66 @@ import UIKit
     window?.rootViewController?.present(picker, animated: true)
   }
 
+  private func pickExternalSource(result: @escaping FlutterResult) {
+    if otgSourceResult != nil {
+      result(
+        FlutterError(
+          code: "PICK_IN_PROGRESS",
+          message: "A source picker is already open",
+          details: nil
+        )
+      )
+      return
+    }
+
+    otgSourceResult = result
+    let picker: UIDocumentPickerViewController
+    if #available(iOS 14.0, *) {
+      picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.folder], asCopy: false)
+    } else {
+      picker = UIDocumentPickerViewController(documentTypes: ["public.folder"], in: .open)
+    }
+    picker.delegate = self
+    picker.allowsMultipleSelection = false
+    window?.rootViewController?.present(picker, animated: true)
+  }
+
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+    guard !urls.isEmpty else {
+      otgResult?(nil)
+      otgResult = nil
+      otgAllowsMultipleSelection = false
+      otgSourceResult?(nil)
+      otgSourceResult = nil
+      return
+    }
+
+    if let sourceResult = otgSourceResult {
+      otgSourceResult = nil
+      let url = urls[0]
+      do {
+        let bookmark = try url.bookmarkData(
+          options: .minimalBookmark,
+          includingResourceValuesForKeys: nil,
+          relativeTo: nil
+        )
+        otgSourceBookmark = bookmark
+        sourceResult([
+          "id": url.absoluteString,
+          "name": url.lastPathComponent.isEmpty ? "OTG source" : url.lastPathComponent,
+        ])
+      } catch {
+        sourceResult(
+          FlutterError(code: "PICK_FAILED", message: error.localizedDescription, details: nil)
+        )
+      }
+      return
+    }
+
     guard let result = otgResult else { return }
     otgResult = nil
     let allowsMultipleSelection = otgAllowsMultipleSelection
     otgAllowsMultipleSelection = false
-
-    guard !urls.isEmpty else {
-      result(nil)
-      return
-    }
 
     do {
       let payloads = try urls.map { url in
@@ -214,6 +275,130 @@ import UIKit
     otgResult?(nil)
     otgResult = nil
     otgAllowsMultipleSelection = false
+    otgSourceResult?(nil)
+    otgSourceResult = nil
+  }
+
+  private func fetchRecentSourceImages(
+    excludeIds: Set<String>,
+    result: @escaping FlutterResult
+  ) {
+    guard let bookmark = otgSourceBookmark else {
+      result([])
+      return
+    }
+
+    DispatchQueue.global(qos: .userInitiated).async {
+      var stale = false
+
+      do {
+        let url = try URL(
+          resolvingBookmarkData: bookmark,
+          options: [.withoutUI, .withSecurityScope],
+          relativeTo: nil,
+          bookmarkDataIsStale: &stale
+        )
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+          if didAccess {
+            url.stopAccessingSecurityScopedResource()
+          }
+        }
+
+        let files = self.copyRecentImagesFromFolder(url: url, excludeIds: excludeIds)
+        DispatchQueue.main.async {
+          result(files)
+        }
+      } catch {
+        DispatchQueue.main.async {
+          result(
+            FlutterError(
+              code: "SOURCE_READ_FAILED",
+              message: error.localizedDescription,
+              details: nil
+            )
+          )
+        }
+      }
+    }
+  }
+
+  private func copyRecentImagesFromFolder(
+    url: URL,
+    excludeIds: Set<String>
+  ) -> [[String: String]] {
+    let keys: [URLResourceKey] = [
+      .isRegularFileKey,
+      .isDirectoryKey,
+      .nameKey,
+      .contentTypeKey,
+      .fileSizeKey,
+      .contentModificationDateKey,
+    ]
+    guard let enumerator = FileManager.default.enumerator(
+      at: url,
+      includingPropertiesForKeys: keys,
+      options: [.skipsHiddenFiles]
+    ) else {
+      return []
+    }
+
+    var copied: [[String: String]] = []
+    for case let fileURL as URL in enumerator {
+      if copied.count >= 10 {
+        break
+      }
+
+      guard
+        let values = try? fileURL.resourceValues(forKeys: Set(keys)),
+        values.isDirectory != true,
+        values.isRegularFile == true
+      else {
+        continue
+      }
+
+      let isImage: Bool
+      if #available(iOS 14.0, *) {
+        isImage = values.contentType?.conforms(to: .image) == true
+      } else {
+        let ext = fileURL.pathExtension.lowercased()
+        isImage = ["jpg", "jpeg", "png", "gif", "webp", "heic"].contains(ext)
+      }
+      if !isImage {
+        continue
+      }
+
+      let modified = Int((values.contentModificationDate ?? .distantPast).timeIntervalSince1970)
+      let size = values.fileSize ?? 0
+      let id = "\(fileURL.absoluteString)|\(modified)|\(size)"
+      if excludeIds.contains(id) {
+        continue
+      }
+
+      let rawName = values.name ?? fileURL.lastPathComponent
+      let safeName = sanitizeFilename(rawName)
+      let target = FileManager.default.temporaryDirectory
+        .appendingPathComponent("otg_auto_\(Int(Date().timeIntervalSince1970 * 1000))_\(safeName)")
+
+      do {
+        if FileManager.default.fileExists(atPath: target.path) {
+          try FileManager.default.removeItem(at: target)
+        }
+        try FileManager.default.copyItem(at: fileURL, to: target)
+        copied.append([
+          "id": id,
+          "path": target.path,
+          "name": safeName,
+          "modifiedMs": "\(modified)",
+        ])
+      } catch {
+        continue
+      }
+    }
+
+    return copied.sorted {
+      (Int($0["modifiedMs"] ?? "0") ?? 0) > (Int($1["modifiedMs"] ?? "0") ?? 0)
+    }
   }
 
   private func fetchRecentImages(

@@ -52,19 +52,25 @@ class _UploadPageState extends State<UploadPage> {
   final List<_SelectedUploadFile> _selectedFiles = [];
   Timer? _wirelessTimer;
   Timer? _galleryTimer;
+  Timer? _otgTimer;
   bool _isEnhanced = false;
   bool _uploading = false;
   bool _galleryImporting = false;
   bool _galleryBusy = false;
+  bool _otgImporting = false;
+  bool _otgBusy = false;
   bool _freeingSpace = false;
   bool _autoImporting = false;
   bool _wirelessScanning = false;
   bool _wirelessBusy = false;
   int? _gallerySinceMs;
   final Set<String> _processedGalleryIds = {};
+  final Set<String> _processedOtgIds = {};
   String? _galleryStatus;
+  String? _otgStatus;
   String? _uploadStatus;
   String? _wirelessStatus;
+  String? _otgSourceName;
   String? _wirelessImageUrl;
   String? _lastWirelessSignature;
   String? _loadedAlbumEventId;
@@ -77,6 +83,7 @@ class _UploadPageState extends State<UploadPage> {
   void dispose() {
     _wirelessTimer?.cancel();
     _galleryTimer?.cancel();
+    _otgTimer?.cancel();
     super.dispose();
   }
 
@@ -131,6 +138,64 @@ class _UploadPageState extends State<UploadPage> {
     } catch (_) {
       AppToast.error('Failed to open OTG file picker');
     }
+  }
+
+  Future<void> _handleOtgAction(EventSummary? event) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.usb_outlined),
+                title: const Text('Pick OTG images'),
+                subtitle: const Text('Choose images one time'),
+                onTap: () => Navigator.of(context).pop('pick'),
+              ),
+              ListTile(
+                leading: Icon(
+                  _otgImporting ? Icons.pause_circle_outline : Icons.folder_open,
+                ),
+                title: Text(
+                  _otgImporting ? 'Stop source auto-upload' : 'Select source folder',
+                ),
+                subtitle: Text(
+                  _otgImporting
+                      ? (_otgSourceName == null
+                          ? 'Stop current OTG source'
+                          : 'Stop watching $_otgSourceName')
+                      : 'Choose camera folder, then new images upload automatically',
+                ),
+                onTap: () => Navigator.of(context).pop('source'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted || choice == null) return;
+
+    if (choice == 'pick') {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await _pickOtgFiles();
+      return;
+    }
+
+    if (_otgImporting) {
+      _stopOtgAutoImport();
+      return;
+    }
+
+    if (event == null) {
+      AppToast.error('Select active event first');
+      return;
+    }
+
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await _startOtgAutoImport(event);
   }
 
   Future<void> _openWifiSettings() async {
@@ -539,6 +604,111 @@ class _UploadPageState extends State<UploadPage> {
     );
   }
 
+  Future<void> _pollOtgSource(EventSummary event) async {
+    if (_otgBusy) return;
+
+    setState(() {
+      _otgBusy = true;
+      _otgStatus = 'Checking OTG source...';
+    });
+
+    try {
+      final images = await OtgFilePicker.recentSourceImages(
+        excludeIds: _processedOtgIds.toList(),
+      );
+
+      if (images.isEmpty) {
+        setState(() {
+          _otgStatus = _otgSourceName == null
+              ? 'Waiting for OTG source...'
+              : 'Waiting for new images in $_otgSourceName...';
+        });
+        return;
+      }
+
+      for (final image in images.reversed) {
+        if (_processedOtgIds.contains(image.id)) continue;
+
+        setState(() => _otgStatus = 'Uploading ${image.name} from OTG...');
+        final imageUrl = await _uploadFile(
+          path: image.path,
+          filename: image.name,
+        );
+        if (imageUrl.isEmpty) {
+          throw Exception('Image upload returned no URL');
+        }
+
+        await _createEventImage(event, imageUrl);
+        _processedOtgIds.add(image.id);
+
+        if (!mounted) return;
+        setState(() => _otgStatus = 'Uploaded ${image.name} from OTG');
+      }
+    } on MissingPluginException {
+      setState(() => _otgStatus = 'Restart app once to enable OTG auto-upload');
+    } catch (_) {
+      setState(() {
+        _otgStatus = 'OTG auto-upload failed. Reconnect source, keep app open.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _otgBusy = false);
+      }
+    }
+  }
+
+  Future<void> _startOtgAutoImport(EventSummary event) async {
+    try {
+      final source = await OtgFilePicker.pickSource();
+      if (source == null) {
+        setState(() => _otgStatus = 'OTG source selection cancelled');
+        return;
+      }
+
+      _otgTimer?.cancel();
+      _processedOtgIds.clear();
+      setState(() {
+        _otgImporting = true;
+        _otgSourceName = source.name;
+        _otgStatus = 'OTG source ${source.name} connected. Waiting for images...';
+      });
+
+      _otgTimer = Timer.periodic(
+        const Duration(seconds: 4),
+        (_) => _pollOtgSource(event),
+      );
+      await _pollOtgSource(event);
+    } on MissingPluginException {
+      setState(() => _otgStatus = 'Restart app once to enable OTG auto-upload');
+      AppToast.error('Restart app once to enable OTG auto-upload');
+    } on PlatformException catch (error) {
+      final message = error.message?.trim();
+      final readable = switch (error.code) {
+        'NO_FOLDER_PICKER' =>
+          'Phone file picker cannot open folder selection on this device',
+        'NO_OTG_SOURCE' =>
+          'No OTG source found. Connect camera/storage in file transfer mode',
+        _ => message?.isNotEmpty == true ? message! : 'Failed to open source folder picker',
+      };
+      setState(() => _otgStatus = readable);
+      AppToast.error(readable);
+    } catch (_) {
+      setState(() => _otgStatus = 'Failed to start OTG auto-upload');
+      AppToast.error('Failed to start OTG auto-upload');
+    }
+  }
+
+  void _stopOtgAutoImport() {
+    _otgTimer?.cancel();
+    _otgTimer = null;
+    setState(() {
+      _otgImporting = false;
+      _otgBusy = false;
+      _otgSourceName = null;
+      _otgStatus = 'OTG auto-upload stopped';
+    });
+  }
+
   void _stopGalleryAutoImport() {
     _galleryTimer?.cancel();
     _galleryTimer = null;
@@ -721,9 +891,13 @@ class _UploadPageState extends State<UploadPage> {
                     label: const Text('Camera'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: _uploading ? null : _pickOtgFiles,
-                    icon: const Icon(Icons.usb_outlined),
-                    label: const Text('OTG'),
+                    onPressed: _uploading || _otgBusy
+                        ? null
+                        : () => _handleOtgAction(activeEvent),
+                    icon: Icon(
+                      _otgImporting ? Icons.sync : Icons.usb_outlined,
+                    ),
+                    label: Text(_otgImporting ? 'OTG on' : 'OTG'),
                   ),
                   if (activeEvent != null)
                     OutlinedButton.icon(
@@ -750,8 +924,8 @@ class _UploadPageState extends State<UploadPage> {
                   ),
                   label: Text(
                     _galleryImporting
-                        ? 'Stop phone auto-upload'
-                        : 'Auto upload from phone gallery',
+                        ? 'Stop phone photos auto-upload'
+                        : 'Auto upload from phone photos',
                   ),
                 ),
               ),
@@ -807,6 +981,13 @@ class _UploadPageState extends State<UploadPage> {
                 const SizedBox(height: 6),
                 Text(
                   _wirelessStatus!,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+              if (_otgStatus != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  _otgStatus!,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],

@@ -10,11 +10,13 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
+import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
+import java.util.ArrayDeque
 
 class MainActivity : FlutterFragmentActivity() {
     private val otgChannel = "piuphoto/otg_picker"
@@ -23,9 +25,12 @@ class MainActivity : FlutterFragmentActivity() {
     private val downloadsChannel = "piuphoto/image_downloads"
     private val pickOtgRequest = 4817
     private val deleteImageRequest = 4818
+    private val pickOtgSourceRequest = 4819
     private var pendingResult: MethodChannel.Result? = null
     private var pendingDeleteResult: MethodChannel.Result? = null
+    private var pendingSourceResult: MethodChannel.Result? = null
     private var pendingMultiPick = false
+    private var otgSourceUri: Uri? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -35,6 +40,11 @@ class MainActivity : FlutterFragmentActivity() {
                 when (call.method) {
                     "pickImage" -> pickOtgImage(result)
                     "pickImages" -> pickOtgImages(result)
+                    "pickSource" -> pickOtgSource(result)
+                    "recentSourceImages" -> {
+                        val excludeIds = call.argument<List<String>>("excludeIds") ?: emptyList()
+                        result.success(copyRecentOtgSourceImages(excludeIds.toSet()))
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -133,6 +143,26 @@ class MainActivity : FlutterFragmentActivity() {
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple)
         }
         startActivityForResult(intent, pickOtgRequest)
+    }
+
+    private fun pickOtgSource(result: MethodChannel.Result) {
+        if (pendingSourceResult != null) {
+            result.error("PICK_IN_PROGRESS", "A source picker is already open", null)
+            return
+        }
+
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+        }
+        if (intent.resolveActivity(packageManager) == null) {
+            result.error("NO_FOLDER_PICKER", "No folder picker available on this device", null)
+            return
+        }
+
+        pendingSourceResult = result
+        startActivityForResult(intent, pickOtgSourceRequest)
     }
 
     private fun imageUri(id: Long): Uri {
@@ -244,6 +274,65 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
+    private fun copyRecentOtgSourceImages(excludeIds: Set<String>): List<Map<String, String>> {
+        val sourceUri = otgSourceUri ?: return emptyList()
+        val root = DocumentFile.fromTreeUri(this, sourceUri) ?: return emptyList()
+        val copied = mutableListOf<Map<String, String>>()
+        val stack = ArrayDeque<DocumentFile>()
+        stack.add(root)
+
+        while (stack.isNotEmpty() && copied.size < 10) {
+            val current = stack.removeFirst()
+            val children: Array<DocumentFile> = try {
+                current.listFiles()
+            } catch (_: Exception) {
+                emptyArray<DocumentFile>()
+            }
+
+            for (child in children) {
+                if (copied.size >= 10) break
+
+                if (child.isDirectory) {
+                    stack.addLast(child)
+                    continue
+                }
+
+                val mimeType = child.type ?: ""
+                if (!mimeType.startsWith("image/")) continue
+
+                val uriText = child.uri.toString()
+                val lastModified = child.lastModified()
+                val length = child.length()
+                val id = "$uriText|$lastModified|$length"
+                if (excludeIds.contains(id)) continue
+
+                val name = child.name ?: "otg-image-${System.currentTimeMillis()}.jpg"
+                val safeName = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val target = File(cacheDir, "otg_auto_${System.currentTimeMillis()}_$safeName")
+
+                try {
+                    val inputStream = contentResolver.openInputStream(child.uri) ?: continue
+                    inputStream.use { input ->
+                        FileOutputStream(target).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    copied.add(
+                        mapOf(
+                            "id" to id,
+                            "path" to target.absolutePath,
+                            "name" to name,
+                            "modifiedMs" to lastModified.toString()
+                        )
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        return copied.sortedByDescending { it["modifiedMs"]?.toLongOrNull() ?: 0L }
+    }
+
     private fun saveImageToPictures(bytes: ByteArray, filename: String): Boolean {
         return try {
             val values = android.content.ContentValues().apply {
@@ -284,6 +373,43 @@ class MainActivity : FlutterFragmentActivity() {
             val result = pendingDeleteResult
             pendingDeleteResult = null
             result?.success(resultCode == Activity.RESULT_OK)
+            return
+        }
+
+        if (requestCode == pickOtgSourceRequest) {
+            val result = pendingSourceResult
+            pendingSourceResult = null
+
+            if (result == null) return
+            if (resultCode != Activity.RESULT_OK) {
+                result.success(null)
+                return
+            }
+
+            val uri = data?.data
+            if (uri == null) {
+                result.error("NO_OTG_SOURCE", "No source folder was selected", null)
+                return
+            }
+
+            try {
+                val flags = data.flags and
+                    (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    flags or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+
+            otgSourceUri = uri
+            val document = DocumentFile.fromTreeUri(this, uri)
+            result.success(
+                mapOf(
+                    "id" to uri.toString(),
+                    "name" to (document?.name ?: "OTG source")
+                )
+            )
             return
         }
 

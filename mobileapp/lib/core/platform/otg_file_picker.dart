@@ -10,6 +10,43 @@ class OtgPickedFile {
   final String name;
 }
 
+class OtgSourceImage {
+  const OtgSourceImage({
+    required this.id,
+    required this.path,
+    required this.name,
+  });
+
+  final String id;
+  final String path;
+  final String name;
+
+  factory OtgSourceImage.fromMap(Map<Object?, Object?> map) {
+    return OtgSourceImage(
+      id: map['id']?.toString() ?? '',
+      path: map['path']?.toString() ?? '',
+      name: map['name']?.toString() ?? '',
+    );
+  }
+}
+
+class OtgSourceSelection {
+  const OtgSourceSelection({
+    required this.id,
+    required this.name,
+  });
+
+  final String id;
+  final String name;
+
+  factory OtgSourceSelection.fromMap(Map<Object?, Object?> map) {
+    return OtgSourceSelection(
+      id: map['id']?.toString() ?? '',
+      name: map['name']?.toString() ?? '',
+    );
+  }
+}
+
 class OtgFilePicker {
   OtgFilePicker._();
 
@@ -39,6 +76,30 @@ class OtgFilePicker {
           ),
         )
         .where((file) => file.path.isNotEmpty && file.name.isNotEmpty)
+        .toList();
+  }
+
+  static Future<OtgSourceSelection?> pickSource() async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>('pickSource');
+    if (result == null) return null;
+
+    final source = OtgSourceSelection.fromMap(result);
+    if (source.id.isEmpty || source.name.isEmpty) return null;
+    return source;
+  }
+
+  static Future<List<OtgSourceImage>> recentSourceImages({
+    required List<String> excludeIds,
+  }) async {
+    final result = await _channel.invokeListMethod<Object?>(
+      'recentSourceImages',
+      {'excludeIds': excludeIds},
+    );
+
+    return (result ?? [])
+        .whereType<Map<Object?, Object?>>()
+        .map(OtgSourceImage.fromMap)
+        .where((image) => image.id.isNotEmpty && image.path.isNotEmpty)
         .toList();
   }
 }
