@@ -121,3 +121,20 @@ export class EnhanceEventImageDto {
   @IsOptional()
   prompt?: string;
 }
+
+export class MyPictureDto {
+  @ApiPropertyOptional({ example: '507f1f77bcf86cd799439011' })
+  @IsMongoId()
+  @IsOptional()
+  eventId?: string;
+
+  @ApiPropertyOptional({ example: 100 })
+  @IsNumberString()
+  @IsOptional()
+  limit?: string;
+
+  @ApiPropertyOptional({ example: 0.45 })
+  @IsNumberString()
+  @IsOptional()
+  scoreThreshold?: string;
+}

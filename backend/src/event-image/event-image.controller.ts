@@ -1,5 +1,6 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   Delete,
   Get,
@@ -7,9 +8,14 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { ApiConsumes } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { EventImageService } from './event-image.service';
 import {
   CreateEventImageDto,
@@ -17,10 +23,28 @@ import {
   EnhanceEventImageDto,
   EventImageFilterDto,
   EventImageQueryDto,
+  MyPictureDto,
 } from './dto/create-event-image.dto';
 import { UpdateEventImageDto } from './dto/update-event-image.dto';
 import { AuthGuard } from '../lib/auth.guard';
 import type { ExpressRequest } from '../lib/auth.guard';
+
+const faceSearchUploadOptions = {
+  storage: memoryStorage(),
+  limits: { fileSize: 1024 * 1024 * 10 },
+  fileFilter: (req, file, callback) => {
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      return callback(
+        new BadRequestException('Only image files are allowed'),
+        false,
+      );
+    }
+
+    callback(null, true);
+  },
+};
 
 @Controller('eventImage')
 export class EventImageController {
@@ -101,6 +125,24 @@ export class EventImageController {
       req.user?.id,
       req.user?.role,
       body.prompt,
+    );
+  }
+
+  @Post('my-picture')
+  @UseGuards(AuthGuard, ThrottlerGuard)
+  @Throttle({ default: { limit: 100, ttl: 3600000 } })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file', faceSearchUploadOptions))
+  myPicture(
+    @UploadedFile() file: Express.Multer.File,
+    @Query() query: MyPictureDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.eventImageService.findMyPictures(
+      file,
+      query,
+      req.user?.id,
+      req.user?.role,
     );
   }
 

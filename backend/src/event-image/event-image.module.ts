@@ -14,6 +14,8 @@ import {
   SubscriptionPlan,
   SubscriptionPlanSchema,
 } from '../subscription/entities/subscription-plan.entity';
+import { FaceVectorService } from '../face-search/face-vector.service';
+import { QdrantFaceService } from '../face-search/qdrant-face.service';
 
 @Module({
   imports: [
@@ -27,7 +29,7 @@ import {
     ]),
   ],
   controllers: [EventImageController],
-  providers: [EventImageService],
+  providers: [EventImageService, FaceVectorService, QdrantFaceService],
   exports: [EventImageService],
 })
 export class EventImageModule {}

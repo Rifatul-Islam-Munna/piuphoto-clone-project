@@ -7,6 +7,7 @@ import {
   CreateEventImageDto,
   CreateEventImagesBatchDto,
   EventImageFilterDto,
+  MyPictureDto,
 } from './dto/create-event-image.dto';
 import { UpdateEventImageDto } from './dto/update-event-image.dto';
 import { EventImage, EventImageDocument } from './entities/event-image.entity';
@@ -22,10 +23,14 @@ import {
   SubscriptionPlan,
   SubscriptionPlanDocument,
 } from '../subscription/entities/subscription-plan.entity';
+import { FaceVectorService } from '../face-search/face-vector.service';
+import { QdrantFaceService } from '../face-search/qdrant-face.service';
 
 @Injectable()
 export class EventImageService {
   private readonly logger = new Logger(EventImageService.name);
+  private activeFaceJobs = 0;
+  private readonly faceJobQueue: EventImageDocument[] = [];
 
   constructor(
     @InjectModel(EventImage.name)
@@ -41,6 +46,8 @@ export class EventImageService {
     @InjectModel(SubscriptionPlan.name)
     private subscriptionPlanModel: Model<SubscriptionPlanDocument>,
     private readonly configService: ConfigService,
+    private readonly faceVectorService: FaceVectorService,
+    private readonly qdrantFaceService: QdrantFaceService,
   ) {}
 
   private toObjectId(id: string) {
@@ -344,6 +351,52 @@ export class EventImageService {
     }
   }
 
+  private queueFaceIndex(eventImage: EventImageDocument) {
+    this.faceJobQueue.push(eventImage);
+    this.drainFaceJobQueue();
+  }
+
+  private faceIndexConcurrency() {
+    return Math.max(
+      Number(this.configService.get<string>('FACE_INDEX_CONCURRENCY')) || 1,
+      1,
+    );
+  }
+
+  private drainFaceJobQueue() {
+    while (
+      this.activeFaceJobs < this.faceIndexConcurrency() &&
+      this.faceJobQueue.length
+    ) {
+      const eventImage = this.faceJobQueue.shift();
+      if (!eventImage) return;
+
+      this.activeFaceJobs += 1;
+      void this.indexEventImageFaces(eventImage)
+        .catch((error) => {
+          this.logger.error('face-index-failed', error);
+        })
+        .finally(() => {
+          this.activeFaceJobs -= 1;
+          this.drainFaceJobQueue();
+        });
+    }
+  }
+
+  private async indexEventImageFaces(eventImage: EventImageDocument) {
+    const vectors = await this.faceVectorService.vectorsFromUrl(eventImage.imageUrl);
+
+    await this.qdrantFaceService.upsertFaces(vectors, {
+      eventId: String(eventImage.eventId),
+      eventImageId: String(eventImage._id),
+      imageUrl: eventImage.imageUrl,
+      isEnhanced: Boolean(eventImage.isEnhanced),
+      albumId: eventImage.albumId ? String(eventImage.albumId) : undefined,
+    });
+
+    this.logger.log(`face-indexed image=${eventImage._id} faces=${vectors.length}`);
+  }
+
   async create(
     createEventImageDto: CreateEventImageDto,
     userId?: string,
@@ -376,6 +429,7 @@ export class EventImageService {
         : undefined,
       isEnhanced: createEventImageDto.isEnhanced ?? false,
     });
+    this.queueFaceIndex(eventImage);
 
     let enhancedImage: EventImageDocument | null = null;
     if (event.autoEnhanceImages && !createEventImageDto.isEnhanced) {
@@ -388,6 +442,7 @@ export class EventImageService {
           createEventImageDto.albumId,
           createEventImageDto.enhancePrompt,
         );
+        if (enhancedImage) this.queueFaceIndex(enhancedImage);
       } catch (error) {
         this.logger.error('image-enhance-failed', error);
       }
@@ -435,6 +490,7 @@ export class EventImageService {
     }));
 
     const eventImages = await this.eventImageModel.insertMany(docs);
+    eventImages.forEach((eventImage) => this.queueFaceIndex(eventImage));
 
     let enhancedImages: EventImageDocument[] = [];
     if (event.autoEnhanceImages && !createEventImagesBatchDto.isEnhanced) {
@@ -460,6 +516,8 @@ export class EventImageService {
           return result.value;
         })
         .filter((image): image is NonNullable<typeof image> => image !== null);
+
+      enhancedImages.forEach((eventImage) => this.queueFaceIndex(eventImage));
     }
 
     return {
@@ -467,6 +525,86 @@ export class EventImageService {
       data: eventImages,
       enhancedData: enhancedImages,
       uploadedCount: eventImages.length,
+    };
+  }
+
+  async findMyPictures(
+    file: Express.Multer.File,
+    query: MyPictureDto,
+    userId?: string,
+    role?: string,
+  ) {
+    if (!file?.buffer) {
+      throw new HttpException('Face image file is required', 400);
+    }
+
+    if (query.eventId) {
+      await this.assertCanUseEvent(query.eventId, userId, role);
+    }
+
+    const vectors = await this.faceVectorService.vectorsFromBuffer(file.buffer);
+    if (!vectors.length) {
+      throw new HttpException('No face found in uploaded image', 400);
+    }
+
+    const limit = Math.min(Math.max(Number(query.limit) || 100, 1), 200);
+    const scoreThreshold = Number(query.scoreThreshold) || 0.45;
+    const results = (
+      await Promise.all(
+        vectors.map((vector) =>
+          this.qdrantFaceService.search(
+            vector,
+            query.eventId,
+            limit,
+            scoreThreshold,
+          ),
+        ),
+      )
+    ).flat();
+
+    const byImageId = new Map<string, { score: number; faceCount: number }>();
+    for (const result of results) {
+      const imageId = result.payload?.eventImageId;
+      if (!imageId || !Types.ObjectId.isValid(imageId)) continue;
+
+      const existing = byImageId.get(imageId);
+      byImageId.set(imageId, {
+        score: Math.max(existing?.score || 0, result.score),
+        faceCount: (existing?.faceCount || 0) + 1,
+      });
+    }
+
+    const ids = [...byImageId.keys()]
+      .sort((a, b) => (byImageId.get(b)?.score || 0) - (byImageId.get(a)?.score || 0))
+      .slice(0, limit);
+
+    const data = await this.eventImageModel
+      .find({
+        _id: { $in: ids.map((id) => this.toObjectId(id)) },
+        ...(query.eventId ? { eventId: this.toObjectId(query.eventId) } : {}),
+      })
+      .populate('eventId', 'title description image')
+      .populate('albumId', 'title description')
+      .populate('userTakenBy', 'name email phone userId role')
+      .lean()
+      .exec();
+
+    const dataById = new Map(data.map((image) => [String(image._id), image]));
+    const sortedData = ids
+      .map((id) => {
+        const image = dataById.get(id);
+        if (!image) return null;
+
+        return {
+          ...image,
+          faceMatch: byImageId.get(id),
+        };
+      })
+      .filter(Boolean);
+
+    return {
+      data: sortedData,
+      totalItems: sortedData.length,
     };
   }
 
