@@ -9,8 +9,6 @@ workflows:
       app_store_connect: nikofly
 
     environment:
-      groups:
-        - appstore_credentials
       flutter: stable
       xcode: latest
       ios_signing:
@@ -18,6 +16,13 @@ workflows:
         bundle_identifier: com.nikofly.app
       vars:
         APP_NAME: Runner
+
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+        - $HOME/Library/Caches/org.swift.swiftpm
+        - $HOME/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
 
     scripts:
       - name: Flutter pub get
@@ -47,9 +52,6 @@ workflows:
           echo "Expected bundle ID: com.nikofly.app"
           echo "Codemagic integration: nikofly"
           echo "Build number: $BUILD_NUMBER"
-          echo "ASC Key ID loaded: $([ -n "$APP_STORE_CONNECT_KEY_IDENTIFIER" ] && echo YES || echo NO)"
-          echo "ASC Issuer ID loaded: $([ -n "$APP_STORE_CONNECT_ISSUER_ID" ] && echo YES || echo NO)"
-          echo "ASC private key Base64 loaded: $([ -n "$APP_STORE_CONNECT_PRIVATE_KEY_BASE64" ] && echo YES || echo NO)"
 
           echo "Available signing identities:"
           security find-identity -v -p codesigning
@@ -85,35 +87,15 @@ workflows:
           echo "the App Store Connect API key behind integration 'nikofly' belongs to another team"
           echo "or lacks App Manager/access to this app."
 
-      - name: Publish to TestFlight
-        script: |
-          set -e
-
-          if [ -z "$APP_STORE_CONNECT_PRIVATE_KEY_BASE64" ]; then
-            echo "ERROR: APP_STORE_CONNECT_PRIVATE_KEY_BASE64 is missing"
-            exit 1
-          fi
-
-          KEY_FILE="$PWD/AuthKey.p8"
-          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY_BASE64" | base64 --decode > "$KEY_FILE"
-          chmod 600 "$KEY_FILE"
-
-          if ! grep -q -- '-----BEGIN PRIVATE KEY-----' "$KEY_FILE"; then
-            echo "ERROR: Decoded App Store key is not valid PEM"
-            exit 1
-          fi
-
-          IPA_PATH="$(find build/ios/ipa -name '*.ipa' -print -quit)"
-          app-store-connect publish \
-            --path "$IPA_PATH" \
-            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --private-key "$(cat "$KEY_FILE")" \
-            --testflight
-
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/iphoneos/*.app
       - /tmp/xcodebuild_logs/*.log
       - flutter_drive.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false
 
