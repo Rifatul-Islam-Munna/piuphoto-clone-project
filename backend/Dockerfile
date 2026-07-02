@@ -58,25 +58,12 @@ RUN apk add --no-cache \
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
-ARG FACE_API_MODEL_VERSION=1.7.15
-
-ENV FACE_API_MODEL_PATH=/app/models/face-api
-
-
 # Create a non-root user for security
 RUN addgroup -g 1001 -S nodejs && adduser -S nestjs -u 1001
 
-# Create runtime directories and download face-api models
-RUN mkdir -p /app/uploads /app/models/face-api \
-    && wget -q -O /app/models/face-api/tiny_face_detector_model-weights_manifest.json https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACE_API_MODEL_VERSION}/model/tiny_face_detector_model-weights_manifest.json \
-    && wget -q -O /app/models/face-api/tiny_face_detector_model.bin https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACE_API_MODEL_VERSION}/model/tiny_face_detector_model.bin \
-    && wget -q -O /app/models/face-api/ssd_mobilenetv1_model-weights_manifest.json https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACE_API_MODEL_VERSION}/model/ssd_mobilenetv1_model-weights_manifest.json \
-    && wget -q -O /app/models/face-api/ssd_mobilenetv1_model.bin https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACE_API_MODEL_VERSION}/model/ssd_mobilenetv1_model.bin \
-    && wget -q -O /app/models/face-api/face_landmark_68_model-weights_manifest.json https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACE_API_MODEL_VERSION}/model/face_landmark_68_model-weights_manifest.json \
-    && wget -q -O /app/models/face-api/face_landmark_68_model.bin https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACE_API_MODEL_VERSION}/model/face_landmark_68_model.bin \
-    && wget -q -O /app/models/face-api/face_recognition_model-weights_manifest.json https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACE_API_MODEL_VERSION}/model/face_recognition_model-weights_manifest.json \
-    && wget -q -O /app/models/face-api/face_recognition_model.bin https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACE_API_MODEL_VERSION}/model/face_recognition_model.bin \
-    && chown -R nestjs:nodejs /app/uploads /app/models
+# Create writable runtime directory
+RUN mkdir -p /app/uploads \
+    && chown -R nestjs:nodejs /app/uploads
 
 # Copy production dependencies from build stage
 COPY --from=build --chown=nestjs:nodejs /app/node_modules ./node_modules
