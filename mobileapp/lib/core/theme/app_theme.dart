@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
-  static const Color primary = Color(0xFF8B5CF6);
-  static const Color primaryLight = Color(0xFFA78BFA);
-  static const Color primaryDark = Color(0xFF7C3AED);
-  static const Color secondary = Color(0xFFF97316);
-  static const Color secondaryLight = Color(0xFFFB923C);
-  static const Color background = Color(0xFFF0F9FF);
+  static const Color gradientStart = Color(0xFFFF9A2F);
+  static const Color gradientMiddle = Color(0xFFFF6A2A);
+  static const Color gradientEnd = Color(0xFFF33434);
+  static const Color primary = gradientMiddle;
+  static const Color primaryLight = gradientStart;
+  static const Color primaryDark = gradientEnd;
+  static const Color secondary = gradientStart;
+  static const Color secondaryLight = Color(0xFFFFB25F);
+  static const Color background = Color(0xFFFFF7F1);
   static const Color foreground = Color(0xFF1A1A1A);
   static const Color card = Colors.white;
   static const Color cardForeground = Color(0xFF1A1A1A);
@@ -16,8 +19,20 @@ class AppColors {
   static const Color input = Color(0xFFE5E7EB);
   static const Color destructive = Color(0xFFEF4444);
   static const Color destructiveForeground = Colors.white;
-  static const Color darkSection = Color(0xFF1E1B4B);
-  static const Color cream = Color(0xFFFAF3E7);
+  static const Color darkSection = Color(0xFF2B1010);
+  static const Color cream = Color(0xFFFFEFE3);
+}
+
+class AppGradients {
+  static const LinearGradient brand = LinearGradient(
+    colors: [
+      AppColors.gradientStart,
+      AppColors.gradientMiddle,
+      AppColors.gradientEnd,
+    ],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
 }
 
 class AppTextStyles {
@@ -50,6 +65,10 @@ class AppTheme {
         onPrimary: Colors.white,
         secondary: AppColors.secondary,
         onSecondary: Colors.white,
+        primaryContainer: Color(0xFFFFE1CC),
+        onPrimaryContainer: AppColors.gradientEnd,
+        secondaryContainer: Color(0xFFFFE9D6),
+        onSecondaryContainer: AppColors.gradientEnd,
         surface: AppColors.card,
         onSurface: AppColors.foreground,
         error: AppColors.destructive,
@@ -66,8 +85,8 @@ class AppTheme {
         ),
       ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: AppColors.card,
-        foregroundColor: AppColors.foreground,
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
         surfaceTintColor: Colors.transparent,
@@ -83,6 +102,22 @@ class AppTheme {
           ),
           textStyle: AppTextStyles.subtitle.copyWith(color: Colors.white),
         ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: AppColors.primary,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          textStyle: AppTextStyles.subtitle.copyWith(color: Colors.white),
+        ),
+      ),
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(

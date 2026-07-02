@@ -85,14 +85,14 @@ class _LoginPageState extends State<LoginPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    height: 72,
-                    width: 72,
-                    decoration: BoxDecoration(
-                      color: color.primary,
-                      borderRadius: BorderRadius.circular(20),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: Image.asset(
+                      'assets/logo.jpeg',
+                      height: 78,
+                      width: 180,
+                      fit: BoxFit.cover,
                     ),
-                    child: const Icon(Icons.camera_alt, color: Colors.white, size: 34),
                   ),
                   const SizedBox(height: 24),
                   Text(

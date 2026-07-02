@@ -6,6 +6,7 @@ import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/pages/event_gallery/event_qr_scan_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
@@ -204,11 +205,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       flexibleSpace: FlexibleSpaceBar(
         background: Container(
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [primaryColor, primaryColor.withValues(alpha: 0.8)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+            gradient: AppGradients.brand,
           ),
           child: SafeArea(
             child: Padding(
@@ -216,10 +213,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               child: Row(
                 children: [
                   if (isLoggedIn) ...[
-                    CircleAvatar(
-                      radius: 18,
-                      backgroundColor: Colors.white.withValues(alpha: 0.25),
-                      child: const Icon(Icons.person, color: Colors.white, size: 20),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(9),
+                      child: Image.asset(
+                        'assets/logo.jpeg',
+                        width: 36,
+                        height: 36,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(

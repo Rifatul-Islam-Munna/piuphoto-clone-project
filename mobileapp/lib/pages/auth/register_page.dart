@@ -78,6 +78,16 @@ class _RegisterPageState extends State<RegisterPage> {
                     icon: const Icon(Icons.arrow_back),
                   ),
                   const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: Image.asset(
+                      'assets/logo.jpeg',
+                      height: 70,
+                      width: 170,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
                   Text(
                     'Create account',
                     style: Theme.of(context)
