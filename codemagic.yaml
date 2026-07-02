@@ -9,6 +9,8 @@ workflows:
       app_store_connect: nikofly
 
     environment:
+      groups:
+        - appstore_credentials
       flutter: stable
       xcode: latest
       ios_signing:
@@ -45,6 +47,9 @@ workflows:
           echo "Expected bundle ID: com.nikofly.app"
           echo "Codemagic integration: nikofly"
           echo "Build number: $BUILD_NUMBER"
+          echo "ASC Key ID loaded: $([ -n "$APP_STORE_CONNECT_KEY_IDENTIFIER" ] && echo YES || echo NO)"
+          echo "ASC Issuer ID loaded: $([ -n "$APP_STORE_CONNECT_ISSUER_ID" ] && echo YES || echo NO)"
+          echo "ASC private key loaded: $([ -n "$APP_STORE_CONNECT_PRIVATE_KEY" ] && echo YES || echo NO)"
 
           echo "Available signing identities:"
           security find-identity -v -p codesigning
@@ -88,6 +93,8 @@ workflows:
 
     publishing:
       app_store_connect:
-        auth: integration
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
         submit_to_app_store: false
