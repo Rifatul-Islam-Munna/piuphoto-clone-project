@@ -30,7 +30,7 @@ COPY . .
 RUN npm run build
 
 # Install only production dependencies in a clean state
-ENV NODE_ENV production
+ENV NODE_ENV=production
 RUN rm -rf node_modules && npm ci --only=production && npm cache clean --force
 
 # Production stage
