@@ -17,14 +17,6 @@ workflows:
       vars:
         APP_NAME: Runner
 
-    triggering:
-      events:
-        - push
-      branch_patterns:
-        - pattern: main
-          include: true
-          source: true
-
     scripts:
       - name: Flutter pub get
         script: |
@@ -43,6 +35,50 @@ workflows:
           flutter build ipa --release \
             --build-number=$BUILD_NUMBER \
             --export-options-plist=/Users/builder/export_options.plist
+
+      - name: Diagnose App Store identity
+        script: |
+          set +e
+
+          IPA_PATH="$(find build/ios/ipa -name '*.ipa' -print -quit)"
+          echo "IPA: ${IPA_PATH:-NOT_FOUND}"
+          echo "Expected bundle ID: com.nikofly.app"
+          echo "Codemagic integration: nikofly"
+          echo "Build number: $BUILD_NUMBER"
+
+          echo "Available signing identities:"
+          security find-identity -v -p codesigning
+
+          if [ -z "$IPA_PATH" ]; then
+            echo "ERROR: IPA not found"
+            exit 1
+          fi
+
+          DIAG_DIR="$PWD/ipa_diagnostics"
+          rm -rf "$DIAG_DIR"
+          mkdir -p "$DIAG_DIR"
+          unzip -q "$IPA_PATH" -d "$DIAG_DIR"
+          APP_PATH="$(find "$DIAG_DIR/Payload" -maxdepth 1 -name '*.app' -print -quit)"
+
+          echo "App bundle: $APP_PATH"
+          echo "Bundle ID: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")"
+          echo "Display name: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")"
+          echo "Version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")"
+          echo "Build: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")"
+
+          PROFILE_PLIST="$DIAG_DIR/profile.plist"
+          security cms -D -i "$APP_PATH/embedded.mobileprovision" > "$PROFILE_PLIST"
+          echo "Profile name: $(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST")"
+          echo "Profile team ID: $(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$PROFILE_PLIST")"
+          echo "Profile app ID: $(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST")"
+          echo "Profile expires: $(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "$PROFILE_PLIST")"
+
+          echo "Code signature:"
+          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E 'Identifier=|TeamIdentifier=|Authority='
+
+          echo "NOTE: If bundle ID is com.nikofly.app but publishing still says Apple ID cannot be determined,"
+          echo "the App Store Connect API key behind integration 'nikofly' belongs to another team"
+          echo "or lacks App Manager/access to this app."
 
     artifacts:
       - build/ios/ipa/*.ipa
