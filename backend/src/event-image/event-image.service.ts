@@ -25,12 +25,22 @@ import {
 } from '../subscription/entities/subscription-plan.entity';
 import { FaceVectorService } from '../face-search/face-vector.service';
 import { QdrantFaceService } from '../face-search/qdrant-face.service';
+import { createHash, createPublicKey, verify } from 'crypto';
+import type { IncomingHttpHeaders } from 'http';
+import { FalWebhookDto } from './dto/fal-webhook.dto';
+import {
+  FalEnhancementJob,
+  FalEnhancementJobDocument,
+  FalEnhancementJobStatus,
+} from './entities/fal-enhancement-job.entity';
 
 @Injectable()
 export class EventImageService {
   private readonly logger = new Logger(EventImageService.name);
   private activeFaceJobs = 0;
   private readonly faceJobQueue: EventImageDocument[] = [];
+  private falJwksCache: { keys: Array<{ x?: string }>; fetchedAt: number } | null =
+    null;
 
   constructor(
     @InjectModel(EventImage.name)
@@ -45,6 +55,8 @@ export class EventImageService {
     private userModel: Model<UserDocument>,
     @InjectModel(SubscriptionPlan.name)
     private subscriptionPlanModel: Model<SubscriptionPlanDocument>,
+    @InjectModel(FalEnhancementJob.name)
+    private falEnhancementJobModel: Model<FalEnhancementJobDocument>,
     private readonly configService: ConfigService,
     private readonly faceVectorService: FaceVectorService,
     private readonly qdrantFaceService: QdrantFaceService,
@@ -218,6 +230,158 @@ export class EventImageService {
     return enhancedUrl;
   }
 
+  private useFalWebhook() {
+    return this.configService.get<string>('IS_WEBHOOK')?.toLowerCase() === 'true';
+  }
+
+  private falWebhookUrl() {
+    const configuredUrl = this.configService.get<string>('FAL_WEBHOOK_URL');
+    if (!configuredUrl) {
+      throw new HttpException('FAL webhook URL is not configured', 500);
+    }
+
+    let webhookUrl: URL;
+    try {
+      webhookUrl = new URL(configuredUrl);
+    } catch {
+      throw new HttpException('FAL webhook URL is invalid', 500);
+    }
+
+    webhookUrl.searchParams.set('type', 'puiphoto');
+    return webhookUrl.toString();
+  }
+
+  async verifyFalWebhookSignature(
+    headers: IncomingHttpHeaders,
+    rawBody?: Buffer,
+  ) {
+    const requestId = headers['x-fal-webhook-request-id'];
+    const userId = headers['x-fal-webhook-user-id'];
+    const timestamp = headers['x-fal-webhook-timestamp'];
+    const signature = headers['x-fal-webhook-signature'];
+
+    if (
+      typeof requestId !== 'string' ||
+      typeof userId !== 'string' ||
+      typeof timestamp !== 'string' ||
+      typeof signature !== 'string' ||
+      !rawBody
+    ) {
+      throw new HttpException('Invalid FAL webhook signature headers', 401);
+    }
+
+    const timestampNumber = Number(timestamp);
+    if (
+      !Number.isFinite(timestampNumber) ||
+      Math.abs(Math.floor(Date.now() / 1000) - timestampNumber) > 300
+    ) {
+      throw new HttpException('Expired FAL webhook signature', 401);
+    }
+
+    const now = Date.now();
+    if (!this.falJwksCache || now - this.falJwksCache.fetchedAt > 86_400_000) {
+      const response = await axios.get<{ keys?: Array<{ x?: string }> }>(
+        'https://rest.fal.ai/.well-known/jwks.json',
+        { timeout: 10000 },
+      );
+      this.falJwksCache = {
+        keys: response.data.keys || [],
+        fetchedAt: now,
+      };
+    }
+
+    const bodyHash = createHash('sha256').update(rawBody).digest('hex');
+    const message = Buffer.from(
+      [requestId, userId, timestamp, bodyHash].join('\n'),
+      'utf8',
+    );
+    const signatureBytes = Buffer.from(signature, 'hex');
+    const ed25519SpkiPrefix = Buffer.from('302a300506032b6570032100', 'hex');
+    const valid = this.falJwksCache.keys.some((key) => {
+      if (!key.x) return false;
+      try {
+        const publicKey = createPublicKey({
+          key: Buffer.concat([
+            ed25519SpkiPrefix,
+            Buffer.from(key.x, 'base64url'),
+          ]),
+          format: 'der',
+          type: 'spki',
+        });
+        return verify(null, message, publicKey, signatureBytes);
+      } catch {
+        return false;
+      }
+    });
+
+    if (!valid) {
+      throw new HttpException('Invalid FAL webhook signature', 401);
+    }
+  }
+
+  private async submitEnhancementWebhook(
+    imageUrl: string,
+    prompt: string | undefined,
+    context: {
+      eventId: string;
+      uploaderId: string;
+      ownerId: string;
+      albumId?: string;
+    },
+  ) {
+    const falKey =
+      this.configService.get<string>('FAL_KEY') ||
+      this.configService.get<string>('FAL_API_KEY');
+
+    if (!falKey) {
+      throw new HttpException('FAL key is not configured', 500);
+    }
+
+    const endpoint = new URL(
+      'https://queue.fal.run/fal-ai/bytedance/seedream/v4/edit',
+    );
+    endpoint.searchParams.set('fal_webhook', this.falWebhookUrl());
+
+    const response = await axios.post<{ request_id?: string }>(
+      endpoint.toString(),
+      {
+        prompt: this.buildEnhancePrompt(prompt),
+        image_urls: [imageUrl],
+        image_size: 'auto_4K',
+        num_images: 1,
+        max_images: 1,
+        enable_safety_checker: true,
+        enhance_prompt_mode: 'standard',
+      },
+      {
+        headers: {
+          Authorization: `Key ${falKey}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      },
+    );
+
+    const requestId = response.data.request_id;
+    if (!requestId) {
+      throw new HttpException('FAL returned no request id', 502);
+    }
+
+    await this.falEnhancementJobModel.create({
+      requestId,
+      type: 'puiphoto',
+      eventId: this.toObjectId(context.eventId),
+      uploaderId: this.toObjectId(context.uploaderId),
+      ownerId: this.toObjectId(context.ownerId),
+      albumId: context.albumId ? this.toObjectId(context.albumId) : undefined,
+      sourceImageUrl: imageUrl,
+      creditsCharged: 3,
+      status: FalEnhancementJobStatus.PENDING,
+    });
+
+    return { requestId, status: FalEnhancementJobStatus.PENDING };
+  }
+
   private extractPermissionLimit(
     permissions: Record<string, unknown>[] = [],
     key: string,
@@ -299,7 +463,7 @@ export class EventImageService {
     ownerId: string,
     albumId?: string,
     prompt?: string,
-  ): Promise<EventImageDocument | null> {
+  ): Promise<EventImageDocument | { requestId: string; status: string } | null> {
     const meta = await this.getOwnerPlanMeta(ownerId);
     const customPrompt = prompt?.trim();
     const finalPrompt = meta.hasCustomEnhancer ? customPrompt : undefined;
@@ -318,6 +482,15 @@ export class EventImageService {
     if (!chargedUser) return null;
 
     try {
+      if (this.useFalWebhook()) {
+        return await this.submitEnhancementWebhook(imageUrl, finalPrompt, {
+          eventId,
+          uploaderId,
+          ownerId,
+          albumId,
+        });
+      }
+
       const enhancedUrl = await this.enhanceImage(imageUrl, finalPrompt);
       return await this.eventImageModel.create({
         eventId: this.toObjectId(eventId),
@@ -330,6 +503,95 @@ export class EventImageService {
       await this.userModel.findByIdAndUpdate(ownerId, { $inc: { credits: 3 } });
       throw error;
     }
+  }
+
+  private isEnhancementJobResult(
+    value: EventImageDocument | { requestId: string; status: string },
+  ): value is { requestId: string; status: string } {
+    return (
+      !('_id' in value) &&
+      typeof (value as { requestId?: unknown }).requestId === 'string'
+    );
+  }
+
+  async handleFalWebhook(type: string, webhook: FalWebhookDto) {
+    if (type !== 'puiphoto') {
+      this.logger.log(
+        `fal-webhook-ignored type=${type} requestId=${webhook.request_id}`,
+      );
+      return { received: true, ignored: true };
+    }
+
+    const job = await this.falEnhancementJobModel
+      .findOne({ requestId: webhook.request_id, type: 'puiphoto' })
+      .exec();
+
+    if (!job) {
+      this.logger.warn(`fal-webhook-job-not-found requestId=${webhook.request_id}`);
+      return { received: true, ignored: true };
+    }
+
+    if (job.status === FalEnhancementJobStatus.COMPLETED) {
+      return { received: true, duplicate: true };
+    }
+
+    if (webhook.status === 'ERROR') {
+      const failedJob = await this.falEnhancementJobModel.findOneAndUpdate(
+        {
+          _id: job._id,
+          status: FalEnhancementJobStatus.PENDING,
+        },
+        {
+          $set: {
+            status: FalEnhancementJobStatus.FAILED,
+            error: webhook.error || webhook.payload_error || 'FAL request failed',
+          },
+        },
+        { new: true },
+      );
+
+      if (failedJob) {
+        await this.userModel.findByIdAndUpdate(job.ownerId, {
+          $inc: { credits: job.creditsCharged },
+        });
+      }
+
+      return { received: true, failed: true };
+    }
+
+    const enhancedUrl = webhook.payload?.images?.[0]?.url;
+    if (!enhancedUrl) {
+      throw new HttpException('FAL webhook returned no enhanced image', 400);
+    }
+    try {
+      const imageUrl = new URL(enhancedUrl);
+      if (!['http:', 'https:'].includes(imageUrl.protocol)) throw new Error();
+    } catch {
+      throw new HttpException('FAL webhook returned an invalid image URL', 400);
+    }
+
+    let eventImage = await this.eventImageModel.findOne({
+      falRequestId: webhook.request_id,
+    });
+
+    if (!eventImage) {
+      eventImage = await this.eventImageModel.create({
+        eventId: job.eventId,
+        imageUrl: enhancedUrl,
+        userTakenBy: job.uploaderId,
+        albumId: job.albumId,
+        isEnhanced: true,
+        falRequestId: webhook.request_id,
+      });
+      this.queueFaceIndex(eventImage);
+    }
+
+    await this.falEnhancementJobModel.updateOne(
+      { _id: job._id },
+      { $set: { status: FalEnhancementJobStatus.COMPLETED }, $unset: { error: '' } },
+    );
+
+    return { received: true, saved: true, eventImageId: String(eventImage._id) };
   }
 
   private async assertAlbumBelongsToEvent(albumId: string, eventId: string) {
@@ -432,9 +694,10 @@ export class EventImageService {
     this.queueFaceIndex(eventImage);
 
     let enhancedImage: EventImageDocument | null = null;
+    let enhancementJob: { requestId: string; status: string } | null = null;
     if (event.autoEnhanceImages && !createEventImageDto.isEnhanced) {
       try {
-        enhancedImage = await this.tryEnhanceForOwner(
+        const enhancement = await this.tryEnhanceForOwner(
           createEventImageDto.imageUrl,
           createEventImageDto.eventId,
           String(userId),
@@ -442,7 +705,12 @@ export class EventImageService {
           createEventImageDto.albumId,
           createEventImageDto.enhancePrompt,
         );
-        if (enhancedImage) this.queueFaceIndex(enhancedImage);
+        if (enhancement && this.isEnhancementJobResult(enhancement)) {
+          enhancementJob = enhancement;
+        } else if (enhancement) {
+          enhancedImage = enhancement as EventImageDocument;
+          this.queueFaceIndex(enhancedImage);
+        }
       } catch (error) {
         this.logger.error('image-enhance-failed', error);
       }
@@ -452,6 +720,7 @@ export class EventImageService {
       message: 'Event image created successfully',
       data: eventImage,
       enhancedData: enhancedImage,
+      enhancementJob,
     };
   }
 
@@ -493,6 +762,7 @@ export class EventImageService {
     eventImages.forEach((eventImage) => this.queueFaceIndex(eventImage));
 
     let enhancedImages: EventImageDocument[] = [];
+    let enhancementJobs: Array<{ requestId: string; status: string }> = [];
     if (event.autoEnhanceImages && !createEventImagesBatchDto.isEnhanced) {
       const results = await Promise.allSettled(
         createEventImagesBatchDto.imageUrls.map((imageUrl) =>
@@ -507,7 +777,7 @@ export class EventImageService {
         ),
       );
 
-      enhancedImages = results
+      const enhancements = results
         .map((result) => {
           if (result.status === 'rejected') {
             this.logger.error('image-enhance-failed', result.reason);
@@ -517,6 +787,15 @@ export class EventImageService {
         })
         .filter((image): image is NonNullable<typeof image> => image !== null);
 
+      enhancementJobs = enhancements.filter(
+        (enhancement): enhancement is { requestId: string; status: string } =>
+          this.isEnhancementJobResult(enhancement),
+      );
+      enhancedImages = enhancements.filter(
+        (enhancement): enhancement is EventImageDocument =>
+          !this.isEnhancementJobResult(enhancement),
+      );
+
       enhancedImages.forEach((eventImage) => this.queueFaceIndex(eventImage));
     }
 
@@ -524,6 +803,7 @@ export class EventImageService {
       message: 'Event images created successfully',
       data: eventImages,
       enhancedData: enhancedImages,
+      enhancementJobs,
       uploadedCount: eventImages.length,
     };
   }
@@ -533,21 +813,55 @@ export class EventImageService {
     query: MyPictureDto,
     userId?: string,
     role?: string,
+    publicAccess = false,
   ) {
     if (!file?.buffer) {
       throw new HttpException('Face image file is required', 400);
     }
 
-    if (query.eventId) {
+    if (publicAccess) {
+      if (!query.eventId || !Types.ObjectId.isValid(query.eventId)) {
+        throw new HttpException('Invalid event id', 400);
+      }
+
+      const event = await this.eventModel
+        .findOne({
+          _id: this.toObjectId(query.eventId),
+          isActive: true,
+          isPublished: true,
+        })
+        .select('_id')
+        .lean();
+
+      if (!event) {
+        throw new HttpException('Event not found', 404);
+      }
+    } else if (query.eventId) {
       await this.assertCanUseEvent(query.eventId, userId, role);
     }
 
-    const vectors = await this.faceVectorService.vectorsFromBuffer(file.buffer);
+    const { faces, vectors } = await this.faceVectorService.detectAndVectorFromBuffer(
+      file.buffer,
+      file.originalname || 'image.jpg',
+      file.mimetype || 'image/jpeg',
+    );
+    if (!faces.length) {
+      throw new HttpException('No usable face found in uploaded image', 400);
+    }
     if (!vectors.length) {
-      throw new HttpException('No face found in uploaded image', 400);
+      return {
+        data: [],
+        totalItems: 0,
+        faces,
+        message:
+          'Face boxes detected, but matching needs vector, embedding, or descriptor data',
+      };
     }
 
-    const limit = Math.min(Math.max(Number(query.limit) || 100, 1), 200);
+    const limit = Math.min(
+      Math.max(Number(query.limit) || 10000, 1),
+      10000,
+    );
     const scoreThreshold = Number(query.scoreThreshold) || 0.45;
     const results = (
       await Promise.all(
@@ -564,14 +878,20 @@ export class EventImageService {
 
     const byImageId = new Map<string, { score: number; faceCount: number }>();
     for (const result of results) {
-      const imageId = result.payload?.eventImageId;
-      if (!imageId || !Types.ObjectId.isValid(imageId)) continue;
+      const imageIds = [
+        ...(result.payload?.eventImageIds || []),
+        result.payload?.eventImageId,
+      ].filter((imageId): imageId is string => Boolean(imageId));
 
-      const existing = byImageId.get(imageId);
-      byImageId.set(imageId, {
-        score: Math.max(existing?.score || 0, result.score),
-        faceCount: (existing?.faceCount || 0) + 1,
-      });
+      for (const imageId of imageIds) {
+        if (!Types.ObjectId.isValid(imageId)) continue;
+
+        const existing = byImageId.get(imageId);
+        byImageId.set(imageId, {
+          score: Math.max(existing?.score || 0, result.score),
+          faceCount: (existing?.faceCount || 0) + 1,
+        });
+      }
     }
 
     const ids = [...byImageId.keys()]
@@ -605,6 +925,7 @@ export class EventImageService {
     return {
       data: sortedData,
       totalItems: sortedData.length,
+      faces,
     };
   }
 

@@ -1,73 +1,50 @@
-import '@tensorflow/tfjs-node';
 import { HttpException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
-import * as faceapi from '@vladmandic/face-api';
-import { Canvas, createCanvas, Image, ImageData, loadImage } from 'canvas';
-import { existsSync } from 'fs';
-import { join } from 'path';
+import FormData from 'form-data';
 
-faceapi.env.monkeyPatch({ Canvas, Image, ImageData } as any);
+export type DetectedFace = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence?: number;
+  vector?: number[];
+};
+
+type FaceApiResponse = {
+  faces?: Array<
+    DetectedFace & {
+      box?: { x?: number; y?: number; width?: number; height?: number };
+      boxPercent?: { x?: number; y?: number; width?: number; height?: number };
+      embedding?: number[];
+      descriptor?: number[];
+    }
+  >;
+  embeddingDimension?: number;
+};
 
 @Injectable()
 export class FaceVectorService {
   private readonly logger = new Logger(FaceVectorService.name);
-  private modelsReady?: Promise<void>;
 
   constructor(private readonly configService: ConfigService) {}
 
-  private async ensureModels() {
-    if (!this.modelsReady) {
-      this.modelsReady = this.loadModels();
-    }
+  private endpointUrl() {
+    const direct = this.configService
+      .get<string>('FACE_DETECTION_ENDPOINT_URL')
+      ?.trim();
 
-    await this.modelsReady;
+    if (!direct || direct === 'PASTE_MY_ENDPOINT_HERE') return undefined;
+    return direct;
   }
 
-  private async loadModels() {
-    const modelPath =
-      this.configService.get<string>('FACE_API_MODEL_PATH') ||
-      join(process.cwd(), 'models', 'face-api');
-
-    if (!existsSync(modelPath)) {
-      throw new HttpException(`Face model path not found: ${modelPath}`, 500);
-    }
-
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromDisk(modelPath),
-      faceapi.nets.ssdMobilenetv1.loadFromDisk(modelPath),
-      faceapi.nets.faceLandmark68Net.loadFromDisk(modelPath),
-      faceapi.nets.faceRecognitionNet.loadFromDisk(modelPath),
-    ]);
-
-    this.logger.log(`face-models-loaded ${modelPath}`);
+  private apiKey() {
+    return undefined;
   }
 
-  private minConfidence() {
-    return Number(this.configService.get<string>('FACE_DETECT_MIN_CONFIDENCE')) || 0.5;
-  }
-
-  private detector() {
-    return this.configService.get<string>('FACE_DETECTOR') || 'tiny';
-  }
-
-  private maxWidth() {
-    return Number(this.configService.get<string>('FACE_IMAGE_MAX_WIDTH')) || 1280;
-  }
-
-  private async loadResizedImage(buffer: Buffer) {
-    const image = await loadImage(buffer);
-    const maxWidth = this.maxWidth();
-
-    if (!maxWidth || image.width <= maxWidth) {
-      return image;
-    }
-
-    const scale = maxWidth / image.width;
-    const canvas = createCanvas(maxWidth, Math.round(image.height * scale));
-    const context = canvas.getContext('2d');
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return canvas;
+  private vectorSize() {
+    return 512;
   }
 
   async downloadImage(url: string) {
@@ -79,29 +56,100 @@ export class FaceVectorService {
     return Buffer.from(response.data);
   }
 
-  async vectorsFromBuffer(buffer: Buffer) {
-    await this.ensureModels();
-    const image = await this.loadResizedImage(buffer);
-    const useTiny = this.detector() === 'tiny';
-    const options = useTiny
-      ? new faceapi.TinyFaceDetectorOptions({
-          scoreThreshold: this.minConfidence(),
-          inputSize: 416,
-        })
-      : new faceapi.SsdMobilenetv1Options({
-          minConfidence: this.minConfidence(),
-        });
+  async detectFromBuffer(
+    buffer: Buffer,
+    filename = 'image.jpg',
+    mimeType = 'image/jpeg',
+  ) {
+    const endpointUrl = this.endpointUrl();
+    if (!endpointUrl) {
+      throw new HttpException(
+        'Face detection endpoint is not configured. Set FACE_DETECTION_ENDPOINT_URL.',
+        503,
+      );
+    }
 
-    const detections = await faceapi
-      .detectAllFaces(image as any, options)
-      .withFaceLandmarks()
-      .withFaceDescriptors();
+    const formData = new FormData();
+    formData.append('image', buffer, { filename, contentType: mimeType });
 
-    return detections.map((detection) => Array.from(detection.descriptor));
+    try {
+      const response = await axios.post<FaceApiResponse>(endpointUrl, formData, {
+        headers: {
+          ...formData.getHeaders(),
+          ...(this.apiKey() ? { 'x-api-key': this.apiKey() } : {}),
+        },
+        timeout: 60000,
+      });
+
+      const faces = Array.isArray(response.data.faces) ? response.data.faces : [];
+      this.logger.log(
+        `face-endpoint-ok faces=${faces.length} embeddingDim=${response.data.embeddingDimension || 'unknown'}`,
+      );
+      return faces.map((face) => ({
+        x: Number(face.x ?? face.box?.x ?? face.boxPercent?.x) || 0,
+        y: Number(face.y ?? face.box?.y ?? face.boxPercent?.y) || 0,
+        width: Number(face.width ?? face.box?.width ?? face.boxPercent?.width) || 0,
+        height:
+          Number(face.height ?? face.box?.height ?? face.boxPercent?.height) ||
+          0,
+        confidence:
+          face.confidence === undefined ? undefined : Number(face.confidence),
+        vector: face.vector || face.embedding || face.descriptor,
+      }));
+    } catch (error) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      this.logger.warn(
+        `face-endpoint-failed ${status ? `status=${status}` : ''}`,
+      );
+      throw new HttpException(
+        'Face detection service is not reachable. Check FACE_DETECTION_ENDPOINT_URL.',
+        503,
+      );
+    }
+  }
+
+  async vectorsFromBuffer(
+    buffer: Buffer,
+    filename = 'image.jpg',
+    mimeType = 'image/jpeg',
+  ) {
+    const faces = await this.detectFromBuffer(buffer, filename, mimeType);
+    const vectors = faces
+      .map((face) => face.vector)
+      .filter(
+        (vector): vector is number[] =>
+          Array.isArray(vector) && vector.length === this.vectorSize(),
+      );
+
+    if (faces.length && !vectors.length) {
+      throw new HttpException(
+        'Face endpoint must return vector, embedding, or descriptor for matching',
+        500,
+      );
+    }
+
+    return vectors;
   }
 
   async vectorsFromUrl(url: string) {
     const buffer = await this.downloadImage(url);
     return this.vectorsFromBuffer(buffer);
+  }
+
+  async detectAndVectorFromBuffer(
+    buffer: Buffer,
+    filename = 'image.jpg',
+    mimeType = 'image/jpeg',
+  ) {
+    const faces = await this.detectFromBuffer(buffer, filename, mimeType);
+    return {
+      faces: faces.map(({ vector, ...face }) => face),
+      vectors: faces
+        .map((face) => face.vector)
+        .filter(
+          (vector): vector is number[] =>
+            Array.isArray(vector) && vector.length === this.vectorSize(),
+        ),
+    };
   }
 }

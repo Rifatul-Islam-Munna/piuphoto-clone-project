@@ -1,21 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Check,
   Copy,
+  Camera,
   Download,
   Folder,
   Image as ImageIcon,
   Images,
   Loader2,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { GetRequestAxios } from "@/api-hooks/api-hooks";
+import { GetRequestAxios, PostRequestAxios } from "@/api-hooks/api-hooks";
 
 type EventImage = {
   _id?: string;
@@ -35,6 +37,8 @@ type EventImage = {
 
 type EventImageResponse = {
   data?: EventImage[];
+  totalItems?: number;
+  message?: string;
 };
 
 type PublicAlbum = {
@@ -50,6 +54,7 @@ type PublicAlbumResponse = {
 };
 
 const pageSize = 18;
+const imageAccept = "image/jpeg,image/png,image/webp";
 
 const getImageId = (image: EventImage) =>
   image._id || image.id || image.imageUrl || "";
@@ -102,12 +107,16 @@ async function downloadImage(url: string, filename: string) {
 
 export default function EventPublicGallery() {
   const { eventId, albumId, imageId } = useParams();
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [images, setImages] = useState<EventImage[]>([]);
   const [albums, setAlbums] = useState<PublicAlbum[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [visibleCount, setVisibleCount] = useState(pageSize);
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isFaceSearching, setIsFaceSearching] = useState(false);
+  const [showingFaceMatches, setShowingFaceMatches] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -147,6 +156,7 @@ export default function EventPublicGallery() {
       } else {
         setImages(imageResponse?.data || []);
       }
+      setShowingFaceMatches(false);
       setAlbums(albumResponse?.data || []);
 
       setIsLoading(false);
@@ -157,7 +167,7 @@ export default function EventPublicGallery() {
     return () => {
       isMounted = false;
     };
-  }, [albumId, eventId]);
+  }, [albumId, eventId, reloadKey]);
 
   useEffect(() => {
     const onScroll = () => {
@@ -230,6 +240,50 @@ export default function EventPublicGallery() {
         ? "Image download started"
         : "Image downloads started",
     );
+  };
+
+  const findMyPictures = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !eventId) return;
+
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      toast.error("Use JPG, PNG, or WEBP");
+      return;
+    }
+
+    setIsFaceSearching(true);
+    const formData = new FormData();
+    formData.append("image", file);
+
+    const [response, error] = await PostRequestAxios<EventImageResponse>(
+      `/eventImage/public/my-picture?eventId=${eventId}&limit=10000`,
+      formData,
+      {
+        withToken: false,
+        withCredentials: false,
+        redirectOnUnauthorized: false,
+        headers: { "Content-Type": "multipart/form-data" },
+      },
+    );
+
+    setIsFaceSearching(false);
+
+    if (error) {
+      toast.error(error.message || "Face search failed");
+      return;
+    }
+
+    setImages(response?.data || []);
+    setSelectedIds(new Set());
+    setVisibleCount(pageSize);
+    setShowingFaceMatches(true);
+
+    if (response?.message) {
+      toast.error(response.message);
+    } else {
+      toast.success(`${response?.totalItems || 0} matching images found`);
+    }
   };
 
   if (imageId) {
@@ -310,6 +364,28 @@ export default function EventPublicGallery() {
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
+              onClick={() => cameraInputRef.current?.click()}
+              disabled={isFaceSearching || isLoading || !eventId}
+            >
+              {isFaceSearching ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Camera className="mr-2 h-4 w-4" />
+              )}
+              Find My Photos
+            </Button>
+            {showingFaceMatches && (
+              <Button
+                variant="outline"
+                onClick={() => setReloadKey((key) => key + 1)}
+                disabled={isFaceSearching || isLoading}
+              >
+                <Search className="mr-2 h-4 w-4" />
+                Show All
+              </Button>
+            )}
+            <Button
+              variant="outline"
               onClick={() => setSelectedIds(new Set(images.map(getImageId)))}
               disabled={!images.length}
             >
@@ -342,23 +418,35 @@ export default function EventPublicGallery() {
               Download All
             </Button>
           </div>
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept={imageAccept}
+            capture="user"
+            className="hidden"
+            onChange={findMyPictures}
+          />
         </section>
 
         {isLoading ? (
           <div className="flex min-h-96 items-center justify-center">
             <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
           </div>
-        ) : images.length === 0 && (albumId || albums.length === 0) ? (
+        ) : images.length === 0 && (showingFaceMatches || albumId || albums.length === 0) ? (
           <div className="flex min-h-96 flex-col items-center justify-center rounded-lg border border-dashed text-center">
             <ImageIcon className="mb-3 h-12 w-12 text-muted-foreground" />
-            <h2 className="text-xl font-semibold">No images uploaded yet</h2>
+            <h2 className="text-xl font-semibold">
+              {showingFaceMatches ? "No matching photos found" : "No images uploaded yet"}
+            </h2>
             <p className="text-muted-foreground">
-              Event images will appear here after photographers upload them.
+              {showingFaceMatches
+                ? "Try another face photo from the same event."
+                : "Event images will appear here after photographers upload them."}
             </p>
           </div>
         ) : (
           <>
-            {!albumId && albums.length > 0 && (
+            {!showingFaceMatches && !albumId && albums.length > 0 && (
               <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {albums.map((album) => {
                   const id = album._id || album.id || "";

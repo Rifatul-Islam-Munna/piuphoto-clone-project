@@ -12,6 +12,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { RawBodyRequest } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { ApiConsumes } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -28,10 +29,12 @@ import {
 import { UpdateEventImageDto } from './dto/update-event-image.dto';
 import { AuthGuard } from '../lib/auth.guard';
 import type { ExpressRequest } from '../lib/auth.guard';
+import type { Request } from 'express';
+import { FalWebhookDto, FalWebhookQueryDto } from './dto/fal-webhook.dto';
 
 const faceSearchUploadOptions = {
   storage: memoryStorage(),
-  limits: { fileSize: 1024 * 1024 * 10 },
+  limits: { fileSize: 1024 * 1024 * 50 },
   fileFilter: (req, file, callback) => {
     const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
 
@@ -62,6 +65,19 @@ export class EventImageController {
       req.user?.id,
       req.user?.role,
     );
+  }
+
+  @Post('fal-webhook')
+  async falWebhook(
+    @Query() query: FalWebhookQueryDto,
+    @Body() body: FalWebhookDto,
+    @Req() req: RawBodyRequest<Request>,
+  ) {
+    await this.eventImageService.verifyFalWebhookSignature(
+      req.headers,
+      req.rawBody,
+    );
+    return this.eventImageService.handleFalWebhook(query.type, body);
   }
 
   @Post('batch')
@@ -132,7 +148,7 @@ export class EventImageController {
   @UseGuards(AuthGuard, ThrottlerGuard)
   @Throttle({ default: { limit: 100, ttl: 3600000 } })
   @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('file', faceSearchUploadOptions))
+  @UseInterceptors(FileInterceptor('image', faceSearchUploadOptions))
   myPicture(
     @UploadedFile() file: Express.Multer.File,
     @Query() query: MyPictureDto,
@@ -143,6 +159,24 @@ export class EventImageController {
       query,
       req.user?.id,
       req.user?.role,
+    );
+  }
+
+  @Post('public/my-picture')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 100, ttl: 3600000 } })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('image', faceSearchUploadOptions))
+  publicMyPicture(
+    @UploadedFile() file: Express.Multer.File,
+    @Query() query: MyPictureDto,
+  ) {
+    return this.eventImageService.findMyPictures(
+      file,
+      query,
+      undefined,
+      undefined,
+      true,
     );
   }
 

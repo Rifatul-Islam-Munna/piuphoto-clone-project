@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/platform/image_downloads.dart';
 import 'package:mobileapp/core/utils/image_loader.dart';
@@ -32,11 +33,14 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
 
   final _scrollController = ScrollController();
   final List<EventImageModel> _allImages = [];
+  final ImagePicker _imagePicker = ImagePicker();
   final List<AlbumModel> _albums = [];
   final Set<String> _selectedIds = {};
   int _visibleCount = _pageSize;
   bool _loading = true;
   bool _saving = false;
+  bool _faceSearching = false;
+  bool _showingFaceMatches = false;
   String? _error;
 
   @override
@@ -83,12 +87,67 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
           ..clear()
           ..addAll(images);
         _visibleCount = images.length < _pageSize ? images.length : _pageSize;
+        _showingFaceMatches = false;
       });
     } catch (error) {
       setState(() => _error = 'Failed to load event images');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _findMyPictures() async {
+    final picked = await _imagePicker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 90,
+    );
+    if (picked == null) return;
+
+    setState(() {
+      _faceSearching = true;
+      _error = null;
+    });
+
+    try {
+      final formData = FormData.fromMap({
+        'image': await MultipartFile.fromFile(
+          picked.path,
+          filename: picked.name,
+        ),
+      });
+      final response = await DioHelper.post(
+        widget.publicAccess
+            ? '/eventImage/public/my-picture'
+            : '/eventImage/my-picture',
+        data: formData,
+        queryParameters: {'eventId': widget.eventId, 'limit': 10000},
+        options: Options(contentType: Headers.multipartFormDataContentType),
+      );
+      final data = response.data['data'] as List? ?? [];
+      final images = data
+          .map(
+            (item) => EventImageModel.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList();
+
+      setState(() {
+        _allImages
+          ..clear()
+          ..addAll(images);
+        _visibleCount = images.length < _pageSize ? images.length : _pageSize;
+        _selectedIds.clear();
+        _showingFaceMatches = true;
+      });
+      AppToast.success('Found ${images.length} matching images');
+    } catch (_) {
+      AppToast.error('Face search failed');
+    } finally {
+      if (mounted) {
+        setState(() => _faceSearching = false);
       }
     }
   }
@@ -237,6 +296,23 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
         foregroundColor: Colors.white,
         title: Text(widget.albumTitle ?? 'Event photos'),
         actions: [
+          IconButton(
+            tooltip: 'Find my pictures',
+            onPressed: _faceSearching ? null : _findMyPictures,
+            icon: _faceSearching
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.face_retouching_natural_outlined),
+          ),
+          if (_showingFaceMatches)
+            IconButton(
+              tooltip: 'Show all photos',
+              onPressed: _faceSearching ? null : _load,
+              icon: const Icon(Icons.grid_view_outlined),
+            ),
           if (!widget.publicAccess)
             IconButton(
               tooltip: 'Move to album',

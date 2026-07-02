@@ -18,6 +18,7 @@ import UserDashboard from "./pages/user/UserDashboard";
 import UserInvitations from "./pages/user/UserInvitations";
 import UserSettings from "./pages/user/UserSettings";
 import UserGallery from "./pages/user/UserGallery";
+import UserMyPictures from "./pages/user/UserMyPictures";
 import Pricing from "./pages/Pricing";
 import EventPublicGallery from "./pages/public/EventPublicGallery";
 import { SiteSettingsProvider } from "./components/landing/site-settings-context";
@@ -155,6 +156,14 @@ const App = () => (
             element={
               <ProtectedUserRoute>
                 <UserGallery />
+              </ProtectedUserRoute>
+            }
+          />
+          <Route
+            path="/user/my-pictures"
+            element={
+              <ProtectedUserRoute>
+                <UserMyPictures />
               </ProtectedUserRoute>
             }
           />

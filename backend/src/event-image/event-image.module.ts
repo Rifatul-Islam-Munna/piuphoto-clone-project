@@ -16,6 +16,10 @@ import {
 } from '../subscription/entities/subscription-plan.entity';
 import { FaceVectorService } from '../face-search/face-vector.service';
 import { QdrantFaceService } from '../face-search/qdrant-face.service';
+import {
+  FalEnhancementJob,
+  FalEnhancementJobSchema,
+} from './entities/fal-enhancement-job.entity';
 
 @Module({
   imports: [
@@ -26,6 +30,7 @@ import { QdrantFaceService } from '../face-search/qdrant-face.service';
       { name: EventInvitation.name, schema: EventInvitationSchema },
       { name: User.name, schema: UserSchema },
       { name: SubscriptionPlan.name, schema: SubscriptionPlanSchema },
+      { name: FalEnhancementJob.name, schema: FalEnhancementJobSchema },
     ]),
   ],
   controllers: [EventImageController],

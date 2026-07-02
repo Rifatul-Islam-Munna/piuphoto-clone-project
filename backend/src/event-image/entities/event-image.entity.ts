@@ -19,6 +19,9 @@ export class EventImage {
 
   @Prop({ default: false, index: true })
   isEnhanced: boolean;
+
+  @Prop({ unique: true, sparse: true, trim: true })
+  falRequestId?: string;
 }
 
 export const EventImageSchema = SchemaFactory.createForClass(EventImage);

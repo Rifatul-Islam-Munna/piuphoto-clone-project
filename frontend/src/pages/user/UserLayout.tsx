@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Calendar,
   Image,
+  ScanFace,
   Settings,
   Inbox,
   LogOut,
@@ -22,6 +23,7 @@ const baseNavItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/user/dashboard" },
   { icon: Calendar, label: "My Events", href: "/user/events" },
   { icon: Image, label: "Gallery", href: "/user/gallery" },
+  { icon: ScanFace, label: "My Pictures", href: "/user/my-pictures" },
   { icon: Settings, label: "Settings", href: "/user/settings" },
 ];
 
