@@ -17,9 +17,9 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
         hero: "bg-primary text-primary-foreground hover:brightness-110 hover:scale-[1.02] px-8 py-3 text-base",
         "hero-outline": "border-2 border-foreground/20 bg-card text-foreground hover:border-primary hover:text-primary",
-        cta: "bg-gradient-to-r from-primary to-purple-500 text-primary-foreground hover:brightness-110 hover:scale-[1.02]",
+        cta: "bg-[var(--gradient-cta)] text-primary-foreground hover:brightness-110 hover:scale-[1.02]",
         orange: "bg-secondary text-secondary-foreground hover:brightness-110 hover:scale-[1.02]",
-        blue: "bg-blue-500 text-white hover:brightness-110 hover:scale-[1.02]",
+        blue: "bg-secondary text-secondary-foreground hover:brightness-110 hover:scale-[1.02]",
       },
       size: {
         default: "h-10 px-4 py-2",

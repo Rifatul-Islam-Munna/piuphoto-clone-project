@@ -16,9 +16,9 @@ interface PricingCardProps {
 
 const tierStyles = {
   silver: {
-    accent: "border-l-4 border-l-blue-500",
+    accent: "border-l-4 border-l-secondary",
     button: "blue" as const,
-    badgeBg: "bg-blue-100 text-blue-700",
+    badgeBg: "bg-card-yellow text-primary",
   },
   gold: {
     accent: "border-l-4 border-l-secondary",
@@ -28,7 +28,7 @@ const tierStyles = {
   platinum: {
     accent: "border-l-4 border-l-primary",
     button: "default" as const,
-    badgeBg: "bg-purple-100 text-purple-700",
+    badgeBg: "bg-card-pink text-primary",
   },
 };
 

@@ -9,25 +9,25 @@
 
 @layer base {
   :root {
-    --background: 226 100% 97%;
-    --foreground: 240 10% 10%;
+    --background: 25 100% 97%;
+    --foreground: 0 0% 10%;
 
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 10%;
+    --card-foreground: 0 0% 10%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 10%;
+    --popover-foreground: 0 0% 10%;
 
-    --primary: 262 83% 66%;
+    --primary: 18 100% 58%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 24 95% 53%;
+    --secondary: 33 100% 59%;
     --secondary-foreground: 0 0% 100%;
 
     --muted: 220 14% 96%;
     --muted-foreground: 220 9% 46%;
 
-    --accent: 262 83% 66%;
+    --accent: 24 100% 90%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 60%;
@@ -35,35 +35,35 @@
 
     --border: 220 13% 91%;
     --input: 220 13% 91%;
-    --ring: 262 83% 66%;
+    --ring: 18 100% 58%;
 
     --radius: 0.75rem;
 
     /* Custom colors */
-    --dark-section: 240 33% 14%;
-    --cream: 30 100% 97%;
-    --card-yellow: 48 100% 96%;
-    --card-blue: 210 100% 97%;
-    --card-purple: 262 100% 97%;
-    --card-pink: 340 100% 97%;
+    --dark-section: 0 46% 12%;
+    --cream: 25 100% 95%;
+    --card-yellow: 31 100% 94%;
+    --card-blue: 25 100% 96%;
+    --card-purple: 24 100% 90%;
+    --card-pink: 0 89% 96%;
 
     /* Gradient backgrounds */
-    --gradient-hero: linear-gradient(180deg, hsl(226 100% 97%) 0%, hsl(0 0% 100%) 100%);
-    --gradient-section: linear-gradient(180deg, hsl(262 100% 98%) 0%, hsl(210 100% 98%) 100%);
-    --gradient-cta: linear-gradient(135deg, hsl(262 83% 66%) 0%, hsl(280 83% 60%) 100%);
+    --gradient-hero: linear-gradient(180deg, hsl(25 100% 97%) 0%, hsl(0 0% 100%) 100%);
+    --gradient-section: linear-gradient(180deg, hsl(25 100% 95%) 0%, hsl(24 100% 90%) 100%);
+    --gradient-cta: linear-gradient(135deg, hsl(33 100% 59%) 0%, hsl(18 100% 58%) 52%, hsl(0 89% 58%) 100%);
 
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 262 83% 66%;
+    --sidebar-primary: 18 100% 58%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 240 4.8% 95.9%;
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 262 83% 66%;
+    --sidebar-ring: 18 100% 58%;
   }
 
   .dark {
-    --background: 240 33% 14%;
+    --background: 0 46% 12%;
     --foreground: 0 0% 98%;
 
     --card: 240 20% 18%;
@@ -72,7 +72,7 @@
     --popover: 240 20% 18%;
     --popover-foreground: 0 0% 98%;
 
-    --primary: 262 83% 66%;
+    --primary: 18 100% 58%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 24 95% 53%;
@@ -81,7 +81,7 @@
     --muted: 240 20% 22%;
     --muted-foreground: 220 14% 70%;
 
-    --accent: 262 83% 66%;
+    --accent: 24 100% 90%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 62% 30%;
@@ -89,16 +89,16 @@
 
     --border: 240 20% 25%;
     --input: 240 20% 25%;
-    --ring: 262 83% 66%;
+    --ring: 18 100% 58%;
 
-    --sidebar-background: 240 33% 10%;
+    --sidebar-background: 0 46% 9%;
     --sidebar-foreground: 0 0% 95%;
-    --sidebar-primary: 262 83% 66%;
+    --sidebar-primary: 18 100% 58%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 240 20% 18%;
     --sidebar-accent-foreground: 0 0% 95%;
     --sidebar-border: 240 20% 20%;
-    --sidebar-ring: 262 83% 66%;
+    --sidebar-ring: 18 100% 58%;
   }
 }
 
@@ -125,23 +125,23 @@
 
 @layer utilities {
   .gradient-hero {
-    background: linear-gradient(180deg, hsl(226 100% 97%) 0%, hsl(0 0% 100%) 100%);
+    background: var(--gradient-hero);
   }
 
   .gradient-section {
-    background: linear-gradient(180deg, hsl(262 100% 98%) 0%, hsl(210 100% 98%) 100%);
+    background: var(--gradient-section);
   }
 
   .gradient-cta {
-    background: linear-gradient(135deg, hsl(262 83% 66%) 0%, hsl(280 83% 60%) 100%);
+    background: var(--gradient-cta);
   }
 
   .gradient-cream {
-    background: hsl(30 100% 97%);
+    background: hsl(var(--cream));
   }
 
   .bg-dark-section {
-    background: hsl(240 33% 14%);
+    background: hsl(var(--dark-section));
   }
 
   .container-custom {
