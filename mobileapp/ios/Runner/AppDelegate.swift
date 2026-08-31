@@ -115,7 +115,9 @@ import UniformTypeIdentifiers
     }
 
     cameraBrowser.delegate = self
-    cameraBrowser.browsedDeviceTypeMask = .camera
+    if #available(iOS 15.2, *) {
+      cameraBrowser.browsedDeviceTypeMask = .camera
+    }
     cameraBrowser.start()
 
     return didFinish
@@ -165,7 +167,7 @@ import UniformTypeIdentifiers
   }
 
   private func cameraFileId(_ camera: ICCameraDevice, _ file: ICCameraFile) -> String {
-    let deviceId = camera.uuidString ?? camera.persistentIDString ?? camera.name ?? "camera"
+    let deviceId = camera.uuidString ?? camera.name ?? "camera"
     return "\(deviceId)|\(file.ptpObjectHandle)"
   }
 
@@ -195,7 +197,7 @@ import UniformTypeIdentifiers
 
   private func listConnectedCameraDevices(result: @escaping FlutterResult) {
     result(connectedCameras.enumerated().map { index, camera in
-      let id = camera.uuidString ?? camera.persistentIDString ?? "camera-\(index)"
+      let id = camera.uuidString ?? "camera-\(index)"
       let name = camera.name ?? "Connected camera"
       return [
         "id": id,
