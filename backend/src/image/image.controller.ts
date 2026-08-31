@@ -37,23 +37,41 @@ const buildStorage = () =>
   });
 
 const imageUploadFilter = (req, file, callback) => {
-  const allowedMimeTypes = [
+  const allowedMimeTypes = new Set([
     'image/jpeg',
     'image/png',
     'image/webp',
     'image/avif',
     'image/jpg',
+    'image/heic',
+    'image/heif',
+    'image/tiff',
+    'image/x-adobe-dng',
+    'image/x-sony-arw',
+    'image/x-canon-cr2',
+    'image/x-canon-cr3',
+    'image/x-nikon-nef',
+    'image/x-fuji-raf',
+    'image/x-panasonic-rw2',
+    'image/x-olympus-orf',
     'application/pdf',
     'video/mp4',
     'video/webm',
     'video/ogg',
     'video/quicktime',
     'video/x-matroska',
-  ];
+  ]);
+  const cameraExtensions = new Set([
+    '.jpg', '.jpeg', '.png', '.webp', '.avif', '.heic', '.heif', '.tif', '.tiff',
+    '.dng', '.arw', '.cr2', '.cr3', '.nef', '.nrw', '.raf', '.rw2', '.orf', '.pef',
+  ]);
+  const extension = extname(file.originalname || '').toLowerCase();
+  const genericCameraFile =
+    file.mimetype === 'application/octet-stream' && cameraExtensions.has(extension);
 
-  if (!allowedMimeTypes.includes(file.mimetype)) {
+  if (!allowedMimeTypes.has(file.mimetype) && !genericCameraFile) {
     return callback(
-      new BadRequestException('Only PDF and image files are allowed'),
+      new BadRequestException('Unsupported image, camera RAW, PDF, or video file'),
       false,
     );
   }
@@ -61,21 +79,23 @@ const imageUploadFilter = (req, file, callback) => {
   callback(null, true);
 };
 
+const cameraFileSizeLimit = 1024 * 1024 * 256;
+
 const singleUploadOptions = {
   storage: buildStorage(),
-  limits: { fileSize: 1024 * 1024 * 20 },
+  limits: { fileSize: cameraFileSizeLimit },
   fileFilter: imageUploadFilter,
 };
 
 const adminUploadOptions = {
   storage: buildStorage(),
-  limits: { fileSize: 1024 * 1024 * 50 },
+  limits: { fileSize: cameraFileSizeLimit },
   fileFilter: imageUploadFilter,
 };
 
 const batchUploadOptions = {
   storage: buildStorage(),
-  limits: { fileSize: 1024 * 1024 * 20 },
+  limits: { fileSize: cameraFileSizeLimit },
   fileFilter: imageUploadFilter,
 };
 

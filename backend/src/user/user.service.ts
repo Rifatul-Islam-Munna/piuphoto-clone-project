@@ -230,6 +230,7 @@ export class UserService implements OnModuleInit {
       ...createUserDto,
       password: passwordHash,
       userId: userIdCount,
+      isActive: createUserDto.isActive ?? true,
     };
 
     const create = await this.userModel.create(finalData);

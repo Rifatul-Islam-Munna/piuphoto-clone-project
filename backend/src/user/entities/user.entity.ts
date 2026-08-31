@@ -21,7 +21,7 @@ export class User {
   @Prop({ default: true })
   isPublished: boolean;
 
-  @Prop({ default: false })
+  @Prop({ default: true })
   isActive: boolean;
 
   @Prop({ type: String, enum: UserType, default: UserType.USER })

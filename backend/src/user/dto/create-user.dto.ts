@@ -96,7 +96,7 @@ export class CreateUserDto {
   @Transform(({ value }) => value === true || value === 'true')
   isPublished?: boolean;
 
-  @ApiPropertyOptional({ example: false, default: false })
+  @ApiPropertyOptional({ example: true, default: true })
   @IsBoolean()
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true')

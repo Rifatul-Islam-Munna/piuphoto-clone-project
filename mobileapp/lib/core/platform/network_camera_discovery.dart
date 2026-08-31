@@ -24,7 +24,6 @@ class NetworkCameraDiscovery {
     '_https._tcp.local',
     '_device-info._tcp.local',
     '_ptp._tcp.local',
-    '_companion-link._tcp.local',
   ];
 
   static const List<String> _cameraHints = [
@@ -68,49 +67,65 @@ class NetworkCameraDiscovery {
   static Future<List<DiscoveredCameraService>> _discoverMdns({
     required Duration timeout,
   }) async {
-    final client = MDnsClient();
+    final client = MDnsClient(
+      rawDatagramSocketFactory:
+          (host, port, {reuseAddress = true, reusePort = false, ttl = 255}) =>
+              RawDatagramSocket.bind(
+                host,
+                port,
+                reuseAddress: reuseAddress,
+                reusePort: Platform.isAndroid ? false : reusePort,
+                ttl: ttl,
+              ),
+    );
     final results = <DiscoveredCameraService>[];
 
     try {
       await client.start();
       final serviceTypes = <String>{..._knownMdnsServices};
 
-      try {
-        await for (final PtrResourceRecord ptr in client
-            .lookup<PtrResourceRecord>(
-              ResourceRecordQuery.serverPointer('_services._dns-sd._udp.local'),
-              timeout: timeout,
-            )
-            ) {
-          serviceTypes.add(ptr.domainName);
-        }
-      } catch (_) {}
+      // iOS local-network privacy is stricter for arbitrary Bonjour browsing.
+      // Browse only the declared camera-relevant service types on iOS.
+      if (!Platform.isIOS) {
+        try {
+          await for (final PtrResourceRecord ptr
+              in client.lookup<PtrResourceRecord>(
+                ResourceRecordQuery.serverPointer(
+                  '_services._dns-sd._udp.local',
+                ),
+                timeout: timeout,
+              )) {
+            serviceTypes.add(ptr.domainName);
+          }
+        } catch (_) {}
+      }
 
-      final filteredTypes = serviceTypes.where((type) {
-        final lower = type.toLowerCase();
-        return lower.contains('_http') ||
-            lower.contains('camera') ||
-            lower.contains('canon') ||
-            lower.contains('nikon') ||
-            lower.contains('sony') ||
-            lower.contains('fuji') ||
-            lower.contains('lumix') ||
-            lower.contains('panasonic') ||
-            lower.contains('pentax') ||
-            lower.contains('ricoh') ||
-            lower.contains('ptp') ||
-            lower.contains('device');
-      }).toList(growable: false);
+      final filteredTypes = serviceTypes
+          .where((type) {
+            final lower = type.toLowerCase();
+            return lower.contains('_http') ||
+                lower.contains('camera') ||
+                lower.contains('canon') ||
+                lower.contains('nikon') ||
+                lower.contains('sony') ||
+                lower.contains('fuji') ||
+                lower.contains('lumix') ||
+                lower.contains('panasonic') ||
+                lower.contains('pentax') ||
+                lower.contains('ricoh') ||
+                lower.contains('ptp') ||
+                lower.contains('device');
+          })
+          .toList(growable: false);
 
       for (final serviceType in filteredTypes) {
         final instances = <PtrResourceRecord>[];
         try {
-          await for (final PtrResourceRecord ptr in client
-              .lookup<PtrResourceRecord>(
+          await for (final PtrResourceRecord ptr
+              in client.lookup<PtrResourceRecord>(
                 ResourceRecordQuery.serverPointer(serviceType),
                 timeout: timeout,
-              )
-              ) {
+              )) {
             instances.add(ptr);
           }
         } catch (_) {}
@@ -123,39 +138,37 @@ class NetworkCameraDiscovery {
           }
 
           try {
-            await for (final SrvResourceRecord srv in client
-                .lookup<SrvResourceRecord>(
+            await for (final SrvResourceRecord srv
+                in client.lookup<SrvResourceRecord>(
                   ResourceRecordQuery.service(ptr.domainName),
                   timeout: timeout,
-                )
-                ) {
+                )) {
               final addresses = <String>{};
 
               try {
-                await for (final IPAddressResourceRecord record in client
-                    .lookup<IPAddressResourceRecord>(
+                await for (final IPAddressResourceRecord record
+                    in client.lookup<IPAddressResourceRecord>(
                       ResourceRecordQuery.addressIPv4(srv.target),
                       timeout: timeout,
-                    )
-                    ) {
+                    )) {
                   addresses.add(record.address.address);
                 }
               } catch (_) {}
 
               try {
-                await for (final IPAddressResourceRecord record in client
-                    .lookup<IPAddressResourceRecord>(
+                await for (final IPAddressResourceRecord record
+                    in client.lookup<IPAddressResourceRecord>(
                       ResourceRecordQuery.addressIPv6(srv.target),
                       timeout: timeout,
-                    )
-                    ) {
+                    )) {
                   addresses.add(record.address.address);
                 }
               } catch (_) {}
 
               for (final address in addresses) {
-                final scheme =
-                    serviceType.toLowerCase().contains('_https') ? 'https' : 'http';
+                final scheme = serviceType.toLowerCase().contains('_https')
+                    ? 'https'
+                    : 'http';
                 final host = address.contains(':') ? '[$address]' : address;
                 results.add(
                   DiscoveredCameraService(
@@ -172,7 +185,9 @@ class NetworkCameraDiscovery {
     } catch (_) {
       return const [];
     } finally {
-      client.stop();
+      try {
+        client.stop();
+      } catch (_) {}
     }
 
     return results;
@@ -211,7 +226,8 @@ class NetworkCameraDiscovery {
 
         final body = utf8.decode(datagram.data, allowMalformed: true);
         final lower = body.toLowerCase();
-        final useful = _cameraHints.any(lower.contains) ||
+        final useful =
+            _cameraHints.any(lower.contains) ||
             lower.contains('upnp') ||
             lower.contains('dlna');
         if (!useful) return;
@@ -229,7 +245,9 @@ class NetworkCameraDiscovery {
 
         results.add(
           DiscoveredCameraService(
-            url: uri.replace(path: uri.path.isEmpty ? '/' : uri.path).toString(),
+            url: uri
+                .replace(path: uri.path.isEmpty ? '/' : uri.path)
+                .toString(),
             source: 'ssdp',
             description: '${datagram.address.address}:${datagram.port}',
           ),

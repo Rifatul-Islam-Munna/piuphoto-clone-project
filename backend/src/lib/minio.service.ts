@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createReadStream } from 'fs';
+import { extname } from 'path';
 
 @Injectable()
 export class MinioService implements OnModuleInit {
@@ -85,6 +86,33 @@ export class MinioService implements OnModuleInit {
     }
   }
 
+  private resolveContentType(file: any): string {
+    const supplied = file?.mimetype?.toString()?.toLowerCase();
+    if (supplied && supplied !== 'application/octet-stream') return supplied;
+
+    const extension = extname(file?.originalname || file?.filename || '').toLowerCase();
+    const known: Record<string, string> = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp',
+      '.avif': 'image/avif',
+      '.heic': 'image/heic',
+      '.heif': 'image/heif',
+      '.tif': 'image/tiff',
+      '.tiff': 'image/tiff',
+      '.dng': 'image/x-adobe-dng',
+      '.arw': 'image/x-sony-arw',
+      '.cr2': 'image/x-canon-cr2',
+      '.cr3': 'image/x-canon-cr3',
+      '.nef': 'image/x-nikon-nef',
+      '.raf': 'image/x-fuji-raf',
+      '.rw2': 'image/x-panasonic-rw2',
+      '.orf': 'image/x-olympus-orf',
+    };
+    return known[extension] || supplied || 'application/octet-stream';
+  }
+
   async uploadFile(filePath: any) {
     try {
       const fileContent = createReadStream(filePath.path);
@@ -95,7 +123,7 @@ export class MinioService implements OnModuleInit {
         Bucket: bucketName,
         Key: filePath.filename,
         Body: fileContent,
-        ContentType: filePath.mimetype,
+        ContentType: this.resolveContentType(filePath),
       });
 
       const s = await this.s3.send(command);

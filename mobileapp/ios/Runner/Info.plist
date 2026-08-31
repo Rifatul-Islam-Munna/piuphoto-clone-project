@@ -29,22 +29,22 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
    <string>Nikofly needs location access to provide location-based features while you are using the app.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>PiuPhoto needs camera access to capture event photos.</string>
+	<string>Nikofly uses camera access to capture photos and communicate with supported external USB/PTP cameras.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>PiuPhoto needs local network access to discover and import photos from wireless cameras.</string>
+	<string>Nikofly connects directly to cameras on your local Wi-Fi to discover, import, and auto-upload new photos.</string>
 	<key>NSBonjourServices</key>
 	<array>
-		<string>_services._dns-sd._udp</string>
+
 		<string>_http._tcp</string>
 		<string>_https._tcp</string>
 		<string>_device-info._tcp</string>
 		<string>_ptp._tcp</string>
-		<string>_companion-link._tcp</string>
+
 	</array>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>PiuPhoto needs photo library add access to save downloaded event photos.</string>
+	<string>Nikofly needs photo library add access to save downloaded event photos.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>PiuPhoto needs photo library access to upload event photos.</string>
+	<string>Nikofly needs photo library access to select and upload event photos.</string>
 	<key>NSAppTransportSecurity</key>
 
 	<dict>

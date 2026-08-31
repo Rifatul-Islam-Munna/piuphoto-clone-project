@@ -1,9 +1,10 @@
 import Flutter
+import ImageCaptureCore
 import Photos
 import UIKit
 import UniformTypeIdentifiers
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate, ICDeviceBrowserDelegate, ICCameraDeviceDelegate {
   private enum PhotoAccessMode {
     case addOnly
     case readWrite
@@ -17,6 +18,8 @@ import UniformTypeIdentifiers
   private var otgSourceResult: FlutterResult?
   private var otgAllowsMultipleSelection = false
   private var otgSourceBookmark: Data?
+  private let cameraBrowser = ICDeviceBrowser()
+  private var connectedCameras: [ICCameraDevice] = []
 
   override func application(
     _ application: UIApplication,
@@ -30,23 +33,32 @@ import UniformTypeIdentifiers
         binaryMessenger: controller.binaryMessenger
       )
       otgChannel.setMethodCallHandler { [weak self] call, result in
-        guard call.method == "pickImage" || call.method == "pickImages" else {
-          if call.method == "pickSource" {
-            self?.pickExternalSource(result: result)
-          } else if call.method == "recentSourceImages" {
-            let arguments = call.arguments as? [String: Any]
-            let excludeIds = Set(arguments?["excludeIds"] as? [String] ?? [])
-            self?.fetchRecentSourceImages(excludeIds: excludeIds, result: result)
-          } else {
-            result(FlutterMethodNotImplemented)
-          }
-          return
+        guard let self else { return }
+        switch call.method {
+        case "pickImage", "pickImages":
+          self.pickExternalImage(
+            allowsMultipleSelection: call.method == "pickImages",
+            result: result
+          )
+        case "connectedCameraDevices":
+          self.listConnectedCameraDevices(result: result)
+        case "connectedCameraImages":
+          let arguments = call.arguments as? [String: Any]
+          let limit = (arguments?["limit"] as? NSNumber)?.intValue
+          self.listConnectedCameraImages(limit: limit, result: result)
+        case "importConnectedCameraImages":
+          let arguments = call.arguments as? [String: Any]
+          let ids = arguments?["ids"] as? [String] ?? []
+          self.importConnectedCameraImages(ids: ids, result: result)
+        case "pickSource":
+          self.pickExternalSource(result: result)
+        case "recentSourceImages":
+          let arguments = call.arguments as? [String: Any]
+          let excludeIds = Set(arguments?["excludeIds"] as? [String] ?? [])
+          self.fetchRecentSourceImages(excludeIds: excludeIds, result: result)
+        default:
+          result(FlutterMethodNotImplemented)
         }
-
-        self?.pickExternalImage(
-          allowsMultipleSelection: call.method == "pickImages",
-          result: result
-        )
       }
 
       let settingsChannel = FlutterMethodChannel(
@@ -102,6 +114,10 @@ import UniformTypeIdentifiers
       }
     }
 
+    cameraBrowser.delegate = self
+    cameraBrowser.browsedDeviceTypeMask = .camera
+    cameraBrowser.start()
+
     return didFinish
   }
 
@@ -146,6 +162,98 @@ import UniformTypeIdentifiers
 
     let filename = arguments?["filename"] as? String ?? "event-image.jpg"
     saveImageToLibrary(bytes: typedBytes.data, filename: filename, result: result)
+  }
+
+  private func cameraFileId(_ camera: ICCameraDevice, _ file: ICCameraFile) -> String {
+    let deviceId = camera.uuidString ?? camera.persistentIDString ?? camera.name ?? "camera"
+    return "\(deviceId)|\(file.ptpObjectHandle)"
+  }
+
+  private func isCameraImageFile(_ file: ICCameraFile) -> Bool {
+    let filename = (file.originalFilename ?? file.name ?? "").lowercased()
+    let extensions: Set<String> = [
+      "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "tif", "tiff",
+      "dng", "arw", "cr2", "cr3", "nef", "nrw", "raf", "rw2", "orf", "pef",
+    ]
+    guard let ext = filename.split(separator: ".").last else { return false }
+    return extensions.contains(String(ext))
+  }
+
+  private func allCameraFiles() -> [(ICCameraDevice, ICCameraFile)] {
+    var files: [(ICCameraDevice, ICCameraFile)] = []
+    for camera in connectedCameras {
+      for item in camera.mediaFiles ?? [] {
+        if let file = item as? ICCameraFile, isCameraImageFile(file) {
+          files.append((camera, file))
+        }
+      }
+    }
+    return files.sorted {
+      ($0.1.fileCreationDate ?? .distantPast) > ($1.1.fileCreationDate ?? .distantPast)
+    }
+  }
+
+  private func listConnectedCameraDevices(result: @escaping FlutterResult) {
+    result(connectedCameras.enumerated().map { index, camera in
+      let id = camera.uuidString ?? camera.persistentIDString ?? "camera-\(index)"
+      let name = camera.name ?? "Connected camera"
+      return [
+        "id": id,
+        "name": name,
+        "hasPermission": true,
+        "directSupported": true,
+      ] as [String: Any]
+    })
+  }
+
+  private func listConnectedCameraImages(limit: Int?, result: @escaping FlutterResult) {
+    let allFiles = allCameraFiles()
+    let files: ArraySlice<(ICCameraDevice, ICCameraFile)>
+    if let limit, limit > 0 {
+      files = allFiles.prefix(limit)
+    } else {
+      files = allFiles[allFiles.startIndex..<allFiles.endIndex]
+    }
+    result(files.map { camera, file in
+      [
+        "id": cameraFileId(camera, file),
+        "name": file.originalFilename ?? file.name ?? "camera-image.jpg",
+        "size": String(file.fileSize),
+      ]
+    })
+  }
+
+  private func importConnectedCameraImages(ids: [String], result: @escaping FlutterResult) {
+    let wanted = Set(ids)
+    let files = allCameraFiles().filter { wanted.contains(cameraFileId($0.0, $0.1)) }
+    if files.isEmpty {
+      result([])
+      return
+    }
+
+    let group = DispatchGroup()
+    let lock = NSLock()
+    var imported: [[String: String]] = []
+    for (camera, file) in files {
+      group.enter()
+      let imageId = cameraFileId(camera, file)
+      let filename = sanitizeFilename(file.originalFilename ?? file.name ?? "camera-image.jpg")
+      let directory = FileManager.default.temporaryDirectory
+      let options: [ICDownloadOption: Any] = [
+        .downloadsDirectoryURL: directory,
+        .saveAsFilename: filename,
+        .overwrite: true,
+      ]
+      file.requestDownload(options: options) { path, error in
+        defer { group.leave() }
+        guard error == nil, let path, !path.isEmpty else { return }
+        let finalPath = path.hasPrefix("/") ? path : directory.appendingPathComponent(path).path
+        lock.lock()
+        imported.append(["id": imageId, "path": finalPath, "name": filename])
+        lock.unlock()
+      }
+    }
+    group.notify(queue: .main) { result(imported) }
   }
 
   private func pickExternalImage(
@@ -618,4 +726,53 @@ import UniformTypeIdentifiers
     let cleaned = parts.joined(separator: "-").trimmingCharacters(in: .whitespacesAndNewlines)
     return cleaned.isEmpty ? "event-image.jpg" : cleaned
   }
+
+  func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
+    guard let camera = device as? ICCameraDevice else { return }
+    if !connectedCameras.contains(where: { $0 === camera }) {
+      connectedCameras.append(camera)
+    }
+    camera.delegate = self
+    camera.requestOpenSession()
+  }
+
+  func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
+    connectedCameras.removeAll { $0 === device }
+  }
+
+  func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {}
+  func device(_ device: ICDevice, didCloseSessionWithError error: Error?) {}
+  func didRemove(_ device: ICDevice) {
+    connectedCameras.removeAll { $0 === device }
+  }
+
+  func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {}
+
+  func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}
+
+  func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
+
+  func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
+
+  func cameraDevice(
+    _ camera: ICCameraDevice,
+    didReceiveMetadata metadata: [AnyHashable: Any]?,
+    for item: ICCameraItem,
+    error: Error?
+  ) {}
+
+  func cameraDevice(
+    _ camera: ICCameraDevice,
+    didReceiveThumbnail thumbnail: CGImage?,
+    for item: ICCameraItem,
+    error: Error?
+  ) {}
+
+  func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}
+
+  func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {}
+
+  func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {}
+
+  func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
 }

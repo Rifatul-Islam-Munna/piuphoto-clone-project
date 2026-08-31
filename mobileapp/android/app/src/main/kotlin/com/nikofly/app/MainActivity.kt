@@ -1,15 +1,26 @@
 package com.nikofly.app
 
 import android.app.Activity
+import android.app.PendingIntent
 import android.app.RecoverableSecurityException
+import android.content.BroadcastReceiver
 import android.content.ContentUris
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.IntentSender
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
+import android.mtp.MtpDevice
+import android.mtp.MtpObjectInfo
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.net.Uri
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterFragmentActivity
@@ -26,20 +37,74 @@ class MainActivity : FlutterFragmentActivity() {
     private val pickOtgRequest = 4817
     private val deleteImageRequest = 4818
     private val pickOtgSourceRequest = 4819
+    private val usbPermissionAction = "com.nikofly.app.USB_CAMERA_PERMISSION"
     private var pendingResult: MethodChannel.Result? = null
     private var pendingDeleteResult: MethodChannel.Result? = null
     private var pendingSourceResult: MethodChannel.Result? = null
+    private var pendingCameraListResult: MethodChannel.Result? = null
+    private var pendingCameraListLimit: Int? = null
     private var pendingMultiPick = false
     private var otgSourceUri: Uri? = null
+    private var usbReceiverRegistered = false
+    private val cameraUsbHints = setOf(
+        "canon", "nikon", "sony", "fujifilm", "fuji", "panasonic", "lumix",
+        "olympus", "om digital", "pentax", "ricoh", "leica", "hasselblad",
+        "gopro", "dji", "sigma", "kodak", "phase one", "camera"
+    )
+    private val cameraUsbVendorIds = setOf(
+        0x04A9, // Canon
+        0x04B0, // Nikon
+        0x054C, // Sony
+        0x04CB, // Fujifilm
+        0x04DA, // Panasonic / Lumix
+        0x07B4, // Olympus / OM System legacy USB vendor
+        0x05CA, // Ricoh
+    )
+
+    private val usbPermissionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != usbPermissionAction) return
+            val result = pendingCameraListResult ?: return
+            val limit = pendingCameraListLimit
+            pendingCameraListResult = null
+            pendingCameraListLimit = null
+            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+            if (!granted) {
+                result.error("USB_PERMISSION_DENIED", "Camera USB permission was denied", null)
+                return
+            }
+            listConnectedCameraImages(limit, result)
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        if (!usbReceiverRegistered) {
+            val filter = IntentFilter(usbPermissionAction)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(usbPermissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                registerReceiver(usbPermissionReceiver, filter)
+            }
+            usbReceiverRegistered = true
+        }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, otgChannel)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "pickImage" -> pickOtgImage(result)
                     "pickImages" -> pickOtgImages(result)
+                    "connectedCameraDevices" -> listConnectedCameraDevices(result)
+                    "connectedCameraImages" -> {
+                        val limit = call.argument<Number>("limit")?.toInt()
+                        listConnectedCameraImages(limit, result)
+                    }
+                    "importConnectedCameraImages" -> {
+                        val ids = call.argument<List<String>>("ids") ?: emptyList()
+                        importConnectedCameraImages(ids, result)
+                    }
                     "pickSource" -> pickOtgSource(result)
                     "recentSourceImages" -> {
                         val excludeIds = call.argument<List<String>>("excludeIds") ?: emptyList()
@@ -94,6 +159,263 @@ class MainActivity : FlutterFragmentActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun hasStillImageInterface(device: UsbDevice): Boolean {
+        return device.deviceClass == UsbConstants.USB_CLASS_STILL_IMAGE ||
+            (0 until device.interfaceCount).any { index ->
+                device.getInterface(index).interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE
+            }
+    }
+
+    private fun usbDeviceLabel(device: UsbDevice): String {
+        val manufacturer = try { device.manufacturerName } catch (_: Exception) { null }
+        val product = try { device.productName } catch (_: Exception) { null }
+        return listOfNotNull(manufacturer, product)
+            .joinToString(" ")
+            .ifBlank { "USB ${device.vendorId}:${device.productId}" }
+    }
+
+    private fun looksLikeCameraUsbDevice(device: UsbDevice): Boolean {
+        if (hasStillImageInterface(device)) return true
+        if (device.vendorId in cameraUsbVendorIds) return true
+        val label = usbDeviceLabel(device).lowercase()
+        return cameraUsbHints.any { hint -> label.contains(hint) }
+    }
+
+    private fun cameraUsbDevices(): List<UsbDevice> {
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        // The user explicitly opened the camera/OTG flow, so do not reject an
+        // otherwise valid PTP/MTP camera just because it reports a vendor-specific
+        // USB class or an unknown vendor ID. Known camera devices stay first; any
+        // other attached non-hub USB device is probed as a safe fallback.
+        return manager.deviceList.values
+            .filter { device -> device.deviceClass != UsbConstants.USB_CLASS_HUB }
+            .sortedWith(
+                compareByDescending<UsbDevice> { looksLikeCameraUsbDevice(it) }
+                    .thenByDescending { hasStillImageInterface(it) }
+            )
+    }
+
+    private fun supportsDirectMtp(device: UsbDevice): Boolean {
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        if (!manager.hasPermission(device)) return hasStillImageInterface(device)
+        val mtp = openMtpDevice(device) ?: return false
+        return try {
+            mtp.deviceInfo != null || mtp.storageIds != null
+        } catch (_: Exception) {
+            false
+        } finally {
+            mtp.close()
+        }
+    }
+
+    private fun requestCameraUsbPermission(
+        device: UsbDevice,
+        limit: Int?,
+        result: MethodChannel.Result,
+    ) {
+        if (pendingCameraListResult != null) {
+            result.error("USB_PERMISSION_IN_PROGRESS", "Camera permission request is already open", null)
+            return
+        }
+        pendingCameraListResult = result
+        pendingCameraListLimit = limit
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+        val intent = PendingIntent.getBroadcast(
+            this,
+            0,
+            Intent(usbPermissionAction).setPackage(packageName),
+            flags,
+        )
+        manager.requestPermission(device, intent)
+    }
+
+    private fun listConnectedCameraDevices(result: MethodChannel.Result) {
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val devices = cameraUsbDevices()
+        Thread {
+            val payload = devices.map { device ->
+                val hasPermission = manager.hasPermission(device)
+                val directSupported = supportsDirectMtp(device)
+                val name = usbDeviceLabel(device)
+                Log.i(
+                    "PiuPhotoCamera",
+                    "USB candidate name=$name id=${device.deviceId} permission=$hasPermission directMtp=$directSupported",
+                )
+                mapOf(
+                    "id" to device.deviceId.toString(),
+                    "name" to name,
+                    "hasPermission" to hasPermission,
+                    "directSupported" to directSupported,
+                    "standardPtpClass" to hasStillImageInterface(device),
+                )
+            }
+            runOnUiThread { result.success(payload) }
+        }.start()
+    }
+
+    private fun listConnectedCameraImages(limit: Int?, result: MethodChannel.Result) {
+        val devices = cameraUsbDevices()
+        if (devices.isEmpty()) {
+            result.success(emptyList<Map<String, String>>())
+            return
+        }
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val denied = devices.firstOrNull { !manager.hasPermission(it) }
+        if (denied != null) {
+            requestCameraUsbPermission(denied, limit, result)
+            return
+        }
+        Thread {
+            try {
+                val sorted = devices.flatMap { enumerateMtpImages(it) }
+                    .sortedWith(
+                        compareByDescending<Map<String, String>> {
+                            it["modifiedMs"]?.toLongOrNull() ?: 0L
+                        }.thenByDescending {
+                            it["id"]?.substringAfter('|')?.toLongOrNull() ?: 0L
+                        }
+                    )
+                val images = if (limit != null && limit > 0) sorted.take(limit) else sorted
+                Log.i("PiuPhotoCamera", "USB/PTP images found=${images.size} total=${sorted.size} devices=${devices.size} limit=$limit")
+                runOnUiThread { result.success(images) }
+            } catch (error: Exception) {
+                runOnUiThread { result.error("USB_CAMERA_READ_FAILED", error.message, null) }
+            }
+        }.start()
+    }
+
+    private fun openMtpDevice(device: UsbDevice): MtpDevice? {
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val connection = manager.openDevice(device) ?: return null
+        val mtp = MtpDevice(device)
+        if (mtp.open(connection)) return mtp
+        connection.close()
+        return null
+    }
+
+    private fun enumerateMtpImages(device: UsbDevice): List<Map<String, String>> {
+        val mtp = openMtpDevice(device) ?: return emptyList()
+        return try {
+            val result = mutableListOf<Map<String, String>>()
+            val storageIds = mtp.storageIds ?: intArrayOf()
+            for (storageId in storageIds) {
+                val handles = mtp.getObjectHandles(storageId, 0, 0) ?: intArrayOf()
+                for (handle in handles) {
+                    val info = mtp.getObjectInfo(handle) ?: continue
+                    val name = info.name ?: continue
+                    if (!isCameraImageName(name)) continue
+                    result.add(
+                        mapOf(
+                            "id" to "${device.deviceId}|$handle",
+                            "name" to name,
+                            "size" to (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) info.compressedSizeLong else info.compressedSize.toLong()).toString(),
+                            "modifiedMs" to info.dateModified.toString(),
+                        )
+                    )
+                }
+            }
+            result
+        } finally {
+            mtp.close()
+        }
+    }
+
+    private fun isCameraImageName(name: String): Boolean {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return ext in setOf(
+            "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "tif", "tiff",
+            "dng", "arw", "cr2", "cr3", "nef", "nrw", "raf", "rw2", "orf", "pef"
+        )
+    }
+
+    private fun importConnectedCameraImages(ids: List<String>, result: MethodChannel.Result) {
+        if (ids.isEmpty()) {
+            result.success(emptyList<Map<String, String>>())
+            return
+        }
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val devices = cameraUsbDevices().associateBy { it.deviceId }
+        val requestedDeviceIds = ids.mapNotNull { it.substringBefore('|').toIntOrNull() }.toSet()
+        val missingPermission = requestedDeviceIds
+            .mapNotNull { devices[it] }
+            .firstOrNull { !manager.hasPermission(it) }
+        if (missingPermission != null) {
+            result.error("USB_PERMISSION_REQUIRED", "Reconnect or tap OTG again to allow camera access", null)
+            return
+        }
+
+        Thread {
+            try {
+                val imported = mutableListOf<Map<String, String>>()
+                val grouped = ids.mapNotNull { id ->
+                    val parts = id.split('|', limit = 2)
+                    if (parts.size != 2) null
+                    else {
+                        val deviceId = parts[0].toIntOrNull()
+                        val handle = parts[1].toIntOrNull()
+                        if (deviceId == null || handle == null) null else deviceId to handle
+                    }
+                }.groupBy({ it.first }, { it.second })
+
+                for ((deviceId, handles) in grouped) {
+                    val device = devices[deviceId] ?: continue
+                    val mtp = openMtpDevice(device) ?: continue
+                    try {
+                        for (handle in handles) {
+                            val info = mtp.getObjectInfo(handle) ?: continue
+                            importMtpObject(mtp, deviceId, handle, info)?.let(imported::add)
+                        }
+                    } finally {
+                        mtp.close()
+                    }
+                }
+                runOnUiThread { result.success(imported) }
+            } catch (error: Exception) {
+                runOnUiThread { result.error("USB_CAMERA_IMPORT_FAILED", error.message, null) }
+            }
+        }.start()
+    }
+
+    private fun importMtpObject(
+        mtp: MtpDevice,
+        deviceId: Int,
+        handle: Int,
+        info: MtpObjectInfo,
+    ): Map<String, String>? {
+        val name = (info.name ?: "camera-image.jpg").replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val target = File(cacheDir, "camera_${System.nanoTime()}_$name")
+        val copied = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val descriptor = ParcelFileDescriptor.open(
+                target,
+                ParcelFileDescriptor.MODE_CREATE or
+                    ParcelFileDescriptor.MODE_TRUNCATE or
+                    ParcelFileDescriptor.MODE_READ_WRITE,
+            )
+            descriptor.use { mtp.importFile(handle, it) }
+        } else {
+            val size = info.compressedSize
+            if (size <= 0) false
+            else {
+                val bytes = mtp.getObject(handle, size)
+                if (bytes == null) false
+                else {
+                    FileOutputStream(target).use { it.write(bytes) }
+                    true
+                }
+            }
+        }
+        if (!copied) {
+            target.delete()
+            return null
+        }
+        return mapOf(
+            "id" to "$deviceId|$handle",
+            "path" to target.absolutePath,
+            "name" to name,
+        )
     }
 
     private fun openWifiSettings(result: MethodChannel.Result) {
@@ -479,5 +801,16 @@ class MainActivity : FlutterFragmentActivity() {
         }
 
         return "otg-image-${System.currentTimeMillis()}.jpg"
+    }
+
+    override fun onDestroy() {
+        if (usbReceiverRegistered) {
+            try {
+                unregisterReceiver(usbPermissionReceiver)
+            } catch (_: Exception) {
+            }
+            usbReceiverRegistered = false
+        }
+        super.onDestroy()
     }
 }
