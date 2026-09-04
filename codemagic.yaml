@@ -13,7 +13,7 @@ workflows:
       xcode: latest
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: com.airpix.app
+        bundle_identifier: com.nikofly.app
       vars:
         APP_NAME: Runner
 
@@ -49,7 +49,7 @@ workflows:
 
           IPA_PATH="$(find build/ios/ipa -name '*.ipa' -print -quit)"
           echo "IPA: ${IPA_PATH:-NOT_FOUND}"
-          echo "Expected bundle ID: com.airpix.app"
+          echo "Expected bundle ID: com.nikofly.app"
           echo "Codemagic integration: airpix"
           echo "Build number: $BUILD_NUMBER"
 
@@ -83,7 +83,7 @@ workflows:
           echo "Code signature:"
           codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E 'Identifier=|TeamIdentifier=|Authority='
 
-          echo "NOTE: If bundle ID is com.airpix.app but publishing still says Apple ID cannot be determined,"
+          echo "NOTE: If bundle ID is com.nikofly.app but publishing still says Apple ID cannot be determined,"
           echo "the App Store Connect API key behind integration 'airpix' belongs to another team"
           echo "or lacks App Manager/access to this app."
 
