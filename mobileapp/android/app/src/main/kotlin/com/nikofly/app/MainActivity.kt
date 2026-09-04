@@ -1,4 +1,4 @@
-package com.nikofly.app
+package com.airpix.app
 
 import android.app.Activity
 import android.app.PendingIntent
@@ -37,7 +37,7 @@ class MainActivity : FlutterFragmentActivity() {
     private val pickOtgRequest = 4817
     private val deleteImageRequest = 4818
     private val pickOtgSourceRequest = 4819
-    private val usbPermissionAction = "com.nikofly.app.USB_CAMERA_PERMISSION"
+    private val usbPermissionAction = "com.airpix.app.USB_CAMERA_PERMISSION"
     private var pendingResult: MethodChannel.Result? = null
     private var pendingDeleteResult: MethodChannel.Result? = null
     private var pendingSourceResult: MethodChannel.Result? = null

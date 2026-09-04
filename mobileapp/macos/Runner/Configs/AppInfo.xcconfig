@@ -5,10 +5,10 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = Nikofly
+PRODUCT_NAME = AirPix
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.nikofly.app
+PRODUCT_BUNDLE_IDENTIFIER = com.airpix.app
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 Nikofly. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 AirPix. All rights reserved.

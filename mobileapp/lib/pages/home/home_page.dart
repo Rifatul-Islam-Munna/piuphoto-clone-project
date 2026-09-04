@@ -92,7 +92,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await Stripe.instance.initPaymentSheet(
         paymentSheetParameters: SetupPaymentSheetParameters(
           paymentIntentClientSecret: clientSecret,
-          merchantDisplayName: 'Nikofly',
+          merchantDisplayName: 'Airpix',
           style: ThemeMode.light,
         ),
       );
@@ -252,7 +252,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     const Icon(Icons.camera_alt, color: Colors.white, size: 24),
                     const SizedBox(width: 8),
                     const Text(
-                      'Nikofly',
+                      'Airpix',
                       style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                     const Spacer(),
@@ -323,7 +323,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         const SizedBox(height: 24),
         _buildGuestQrCard(context),
         const SizedBox(height: 24),
-        _buildSectionTitle(context, 'Why Nikofly?'),
+        _buildSectionTitle(context, 'Why Airpix?'),
         const SizedBox(height: 12),
         _buildFeaturesList(context),
         const SizedBox(height: 24),

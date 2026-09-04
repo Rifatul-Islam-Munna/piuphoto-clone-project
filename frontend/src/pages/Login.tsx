@@ -59,7 +59,7 @@ const Login = () => {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
               <span className="text-lg font-bold text-primary-foreground">n</span>
             </div>
-            <span className="text-xl font-bold text-foreground">nikofly</span>
+            <span className="text-xl font-bold text-foreground">airpix</span>
           </Link>
 
           <Button variant="hero-outline" size="sm" asChild>
@@ -107,7 +107,7 @@ const Login = () => {
               <span className="text-xl font-bold text-primary-foreground">n</span>
             </div>
             <h2 className="text-3xl font-bold text-foreground">Welcome back</h2>
-            <p className="mt-2 text-sm text-muted-foreground">Login to your nikofly account.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Login to your airpix account.</p>
           </div>
 
           <form className="space-y-5" onSubmit={handleSubmit}>
@@ -170,7 +170,7 @@ const Login = () => {
           </Button>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
-            New to nikofly?{" "}
+            New to airpix?{" "}
             <a href="#" className="font-semibold text-primary hover:text-primary/80">
               Create account
             </a>

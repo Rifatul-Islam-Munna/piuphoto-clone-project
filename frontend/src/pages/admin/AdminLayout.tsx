@@ -52,7 +52,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
             <span className="text-lg font-bold text-primary-foreground">n</span>
           </div>
-          <span>nikofly</span>
+          <span>airpix</span>
         </Link>
         <Button variant="ghost" size="icon" onClick={handleLogout}>
           <LogOut className="h-5 w-5" />
@@ -68,7 +68,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
                   <span className="text-lg font-bold text-primary-foreground">n</span>
                 </div>
-                <span>nikofly</span>
+                <span>airpix</span>
               </Link>
               <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(false)}>
                 <X className="h-5 w-5" />
@@ -112,7 +112,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
               <span className="text-lg font-bold text-primary-foreground">n</span>
             </div>
-            <span>nikofly</span>
+            <span>airpix</span>
           </Link>
         </div>
         <div className="flex flex-1 flex-col overflow-y-auto bg-sidebar p-4">
@@ -144,7 +144,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
               </div>
               <div className="flex-1 overflow-hidden">
                 <p className="truncate text-sm font-medium">Admin</p>
-                <p className="truncate text-xs text-muted-foreground">admin@nikofly.com</p>
+                <p className="truncate text-xs text-muted-foreground">admin@airpix.com</p>
               </div>
             </div>
             <Button variant="ghost" className="w-full justify-start text-red-500 hover:text-red-600 hover:bg-red-50" onClick={handleLogout}>

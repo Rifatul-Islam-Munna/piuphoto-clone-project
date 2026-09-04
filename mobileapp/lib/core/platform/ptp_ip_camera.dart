@@ -54,7 +54,7 @@ class PtpIpCamera {
       );
       final initPayload = _joinBytes([
         guid,
-        _utf16NullTerminated('Nikofly'),
+        _utf16NullTerminated('Airpix'),
         _u32(_protocolVersion),
       ]);
       command.add(_packet(1, initPayload));

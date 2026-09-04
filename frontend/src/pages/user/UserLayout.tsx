@@ -67,7 +67,7 @@ export default function UserLayout({ children }: UserLayoutProps) {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
             <span className="text-lg font-bold text-primary-foreground">n</span>
           </div>
-          <span>nikofly</span>
+          <span>airpix</span>
         </Link>
         <Button variant="ghost" size="icon" onClick={handleLogout}>
           <LogOut className="h-5 w-5" />
@@ -83,7 +83,7 @@ export default function UserLayout({ children }: UserLayoutProps) {
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
                   <span className="text-lg font-bold text-primary-foreground">n</span>
                 </div>
-                <span>nikofly</span>
+                <span>airpix</span>
               </Link>
               <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(false)}>
                 <X className="h-5 w-5" />
@@ -127,7 +127,7 @@ export default function UserLayout({ children }: UserLayoutProps) {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
               <span className="text-lg font-bold text-primary-foreground">n</span>
             </div>
-            <span>nikofly</span>
+            <span>airpix</span>
           </Link>
         </div>
         <div className="flex flex-1 flex-col overflow-y-auto bg-sidebar p-4">

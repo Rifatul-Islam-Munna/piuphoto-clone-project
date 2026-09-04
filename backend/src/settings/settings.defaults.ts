@@ -1,7 +1,7 @@
 export const defaultWebsiteSettings = {
   key: 'website',
   site: {
-    title: 'nikofly',
+    title: 'airpix',
     logoUrl: '',
   },
   navbar: {
@@ -111,12 +111,12 @@ export const defaultWebsiteSettings = {
   apiSection: {
     heading: { en: 'API Integration for Every Company', gr: 'Ενσωματωση API για καθε εταιρεια' },
     description: {
-      en: 'Seamlessly integrate nikofly into your existing workflow',
-      gr: 'Ενσωματωστε το nikofly ομαλα στην υπαρχουσα ροη εργασιας σας',
+      en: 'Seamlessly integrate airpix into your existing workflow',
+      gr: 'Ενσωματωστε το airpix ομαλα στην υπαρχουσα ροη εργασιας σας',
     },
     cardTitle: {
-      en: 'Integrate nikofly in your product or website with ease',
-      gr: 'Ενσωματωστε το nikofly στο προϊον ή στην ιστοσελιδα σας ευκολα',
+      en: 'Integrate airpix in your product or website with ease',
+      gr: 'Ενσωματωστε το airpix στο προϊον ή στην ιστοσελιδα σας ευκολα',
     },
     imageUrl: '',
     features: [
@@ -157,8 +157,8 @@ export const defaultWebsiteSettings = {
   caseStudy: {
     imageUrl: '',
     quote: {
-      en: 'nikofly transformed how we deliver wedding photos. Guests can now see and share their photos in real-time, creating an unforgettable experience. Our client satisfaction has never been higher.',
-      gr: 'Το nikofly μεταμορφωσε τον τροπο που παραδιδουμε φωτογραφιες γαμου. Οι καλεσμενοι μπορουν τωρα να βλεπουν και να μοιραζονται φωτογραφιες σε πραγματικο χρονο, δημιουργωντας αξέχαστη εμπειρια. Η ικανοποιηση των πελατων μας δεν ηταν ποτε υψηλοτερη.',
+      en: 'airpix transformed how we deliver wedding photos. Guests can now see and share their photos in real-time, creating an unforgettable experience. Our client satisfaction has never been higher.',
+      gr: 'Το airpix μεταμορφωσε τον τροπο που παραδιδουμε φωτογραφιες γαμου. Οι καλεσμενοι μπορουν τωρα να βλεπουν και να μοιραζονται φωτογραφιες σε πραγματικο χρονο, δημιουργωντας αξέχαστη εμπειρια. Η ικανοποιηση των πελατων μας δεν ηταν ποτε υψηλοτερη.',
     },
     name: 'Sarah Chen',
     title: { en: 'Lead Photographer', gr: 'Επικεφαλης φωτογραφος' },
@@ -166,15 +166,15 @@ export const defaultWebsiteSettings = {
   },
   newsroom: {
     heading: { en: 'Newsroom', gr: 'Νεα' },
-    description: { en: 'Stay updated with the latest from nikofly', gr: 'Μεινετε ενημερωμενοι με τα νεα του nikofly' },
+    description: { en: 'Stay updated with the latest from airpix', gr: 'Μεινετε ενημερωμενοι με τα νεα του airpix' },
     readMoreLabel: { en: 'Read more', gr: 'Διαβαστε περισσοτερα' },
     items: [
       {
         date: 'Jan 15, 2026',
         imageUrl: '',
         title: {
-          en: 'nikofly Launches AI-Powered Photo Selection Feature',
-          gr: 'Το nikofly λανσαρει δυνατοτητα επιλογης φωτογραφιων με AI',
+          en: 'airpix Launches AI-Powered Photo Selection Feature',
+          gr: 'Το airpix λανσαρει δυνατοτητα επιλογης φωτογραφιων με AI',
         },
         excerpt: {
           en: 'Our new AI technology automatically selects the best photos from your event, saving photographers hours of manual curation work.',
@@ -197,8 +197,8 @@ export const defaultWebsiteSettings = {
         date: 'Dec 10, 2025',
         imageUrl: '',
         title: {
-          en: 'nikofly Partners with Major Camera Manufacturers',
-          gr: 'Το nikofly συνεργαζεται με μεγαλους κατασκευαστες καμερων',
+          en: 'airpix Partners with Major Camera Manufacturers',
+          gr: 'Το airpix συνεργαζεται με μεγαλους κατασκευαστες καμερων',
         },
         excerpt: {
           en: 'New partnerships enable seamless integration with Canon, Nikon, and Sony cameras for enhanced workflow efficiency.',
@@ -221,7 +221,7 @@ export const defaultWebsiteSettings = {
     featuresHeading: { en: 'Features', gr: 'Δυνατοτητες' },
     companyHeading: { en: 'Company', gr: 'Εταιρεια' },
     contactHeading: { en: 'Contact', gr: 'Επικοινωνια' },
-    copyrightText: { en: '© 2026 nikofly. All rights reserved.', gr: '© 2026 nikofly. Ολα τα δικαιωματα διατηρουνται.' },
+    copyrightText: { en: '© 2026 airpix. All rights reserved.', gr: '© 2026 airpix. Ολα τα δικαιωματα διατηρουνται.' },
     featuresLinks: [
       { label: { en: 'Real-Time Transfer', gr: 'Realtime μεταφορα' }, href: '#' },
       { label: { en: 'AI Selection', gr: 'Επιλογη AI' }, href: '#' },
@@ -237,7 +237,7 @@ export const defaultWebsiteSettings = {
       { label: { en: 'Contact', gr: 'Επικοινωνια' }, href: '#' },
     ],
     contactLinks: [
-      { label: { en: 'support@nikofly.app', gr: 'support@nikofly.app' }, href: 'mailto:support@nikofly.app' },
+      { label: { en: 'support@airpix.app', gr: 'support@airpix.app' }, href: 'mailto:support@airpix.app' },
       { label: { en: '+1 (888) 123-4567', gr: '+1 (888) 123-4567' }, href: 'tel:+18881234567' },
       { label: { en: 'San Francisco, CA', gr: 'San Francisco, CA' }, href: '#' },
     ],
@@ -250,8 +250,8 @@ export const defaultWebsiteSettings = {
   policy: {
     privacyPolicy: [
       {
-        en: 'We collect account, usage, and uploaded content data needed to operate nikofly services.',
-        gr: 'Συλλεγουμε στοιχεια λογαριασμου, χρησης και ανεβασμενου περιεχομενου που απαιτουνται για τη λειτουργια του nikofly.',
+        en: 'We collect account, usage, and uploaded content data needed to operate airpix services.',
+        gr: 'Συλλεγουμε στοιχεια λογαριασμου, χρησης και ανεβασμενου περιεχομενου που απαιτουνται για τη λειτουργια του airpix.',
       },
       {
         en: 'We use your data to deliver photo streaming, account access, billing, support, and security.',
@@ -264,8 +264,8 @@ export const defaultWebsiteSettings = {
     ],
     termsAndConditions: [
       {
-        en: 'By using nikofly, you agree to use the service lawfully and only for content you own or are authorized to manage.',
-        gr: 'Χρησιμοποιωντας το nikofly, συμφωνειτε να χρησιμοποιειτε την υπηρεσια νομιμα και μονο για περιεχομενο που κατεχετε ή εχετε αδεια να διαχειριζεστε.',
+        en: 'By using airpix, you agree to use the service lawfully and only for content you own or are authorized to manage.',
+        gr: 'Χρησιμοποιωντας το airpix, συμφωνειτε να χρησιμοποιειτε την υπηρεσια νομιμα και μονο για περιεχομενο που κατεχετε ή εχετε αδεια να διαχειριζεστε.',
       },
       {
         en: 'You are responsible for account security, uploaded content, and activity performed through your account.',

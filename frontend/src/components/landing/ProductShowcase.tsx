@@ -14,7 +14,7 @@ const ProductShowcase = () => {
           <div className="rounded-2xl border border-primary/20 overflow-hidden bg-dark-section">
             <img
               src={settings.productShowcase.imageUrl || heroMockup}
-              alt="nikofly app interface showing photo gallery on tablet and phone"
+              alt="airpix app interface showing photo gallery on tablet and phone"
               className="w-full h-auto"
               loading="eager"
             />

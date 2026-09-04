@@ -239,7 +239,7 @@ class _PlansPageState extends State<PlansPage> {
       await Stripe.instance.initPaymentSheet(
         paymentSheetParameters: SetupPaymentSheetParameters(
           paymentIntentClientSecret: clientSecret,
-          merchantDisplayName: 'Nikofly',
+          merchantDisplayName: 'Airpix',
           style: ThemeMode.light,
         ),
       );
