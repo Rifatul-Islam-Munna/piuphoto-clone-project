@@ -296,74 +296,6 @@ export default function UserSettings() {
                     placeholder="Enter age"
                   />
                 </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="gender">Gender</Label>
-                  <Select
-                    value={formData.gender}
-                    onValueChange={(value) => handleChange('gender', value)}
-                  >
-                    <SelectTrigger id="gender">
-                      <SelectValue placeholder="Select gender" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Male">Male</SelectItem>
-                      <SelectItem value="Female">Female</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="maritalStatus">Marital Status</Label>
-                  <Select
-                    value={formData.maritalStatus}
-                    onValueChange={(value) => handleChange('maritalStatus', value)}
-                  >
-                    <SelectTrigger id="maritalStatus">
-                      <SelectValue placeholder="Select status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Never Married">Never Married</SelectItem>
-                      <SelectItem value="Divorced">Divorced</SelectItem>
-                      <SelectItem value="Widowed">Widowed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="bloodGroup">Blood Group</Label>
-                  <Select
-                    value={formData.bloodGroup}
-                    onValueChange={(value) => handleChange('bloodGroup', value)}
-                  >
-                    <SelectTrigger id="bloodGroup">
-                      <SelectValue placeholder="Select blood group" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="A+">A+</SelectItem>
-                      <SelectItem value="A-">A-</SelectItem>
-                      <SelectItem value="B+">B+</SelectItem>
-                      <SelectItem value="B-">B-</SelectItem>
-                      <SelectItem value="AB+">AB+</SelectItem>
-                      <SelectItem value="AB-">AB-</SelectItem>
-                      <SelectItem value="O+">O+</SelectItem>
-                      <SelectItem value="O-">O-</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="weight">Weight (kg)</Label>
-                  <Input
-                    id="weight"
-                    type="number"
-                    min="20"
-                    max="200"
-                    value={formData.weight}
-                    onChange={(e) => handleChange('weight', e.target.value)}
-                    placeholder="Enter weight in kg"
-                  />
-                </div>
               </div>
 
               <div className="flex justify-end">
@@ -372,6 +304,32 @@ export default function UserSettings() {
                   <Save className="mr-2 h-4 w-4" />
                   Save Changes
                 </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Change Password</CardTitle>
+            <CardDescription>Update your account password.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form className="space-y-4">
+              <div className="space-y-2">
+                <Label>Current Password</Label>
+                <Input type="password" placeholder="Enter current password" />
+              </div>
+              <div className="space-y-2">
+                <Label>New Password</Label>
+                <Input type="password" placeholder="Enter new password" />
+              </div>
+              <div className="space-y-2">
+                <Label>Confirm New Password</Label>
+                <Input type="password" placeholder="Confirm new password" />
+              </div>
+              <div className="flex justify-end">
+                <Button type="button">Change Password</Button>
               </div>
             </form>
           </CardContent>
