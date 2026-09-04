@@ -6,7 +6,7 @@ workflows:
     working_directory: mobileapp
 
     integrations:
-      app_store_connect: airpix
+      app_store_connect: nikofly
 
     environment:
       flutter: stable
@@ -50,7 +50,7 @@ workflows:
           IPA_PATH="$(find build/ios/ipa -name '*.ipa' -print -quit)"
           echo "IPA: ${IPA_PATH:-NOT_FOUND}"
           echo "Expected bundle ID: com.nikofly.app"
-          echo "Codemagic integration: airpix"
+          echo "Codemagic integration: nikofly"
           echo "Build number: $BUILD_NUMBER"
 
           echo "Available signing identities:"
@@ -84,7 +84,7 @@ workflows:
           codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E 'Identifier=|TeamIdentifier=|Authority='
 
           echo "NOTE: If bundle ID is com.nikofly.app but publishing still says Apple ID cannot be determined,"
-          echo "the App Store Connect API key behind integration 'airpix' belongs to another team"
+          echo "the App Store Connect API key behind integration 'nikofly' belongs to another team"
           echo "or lacks App Manager/access to this app."
 
     artifacts:
@@ -98,4 +98,3 @@ workflows:
         auth: integration
         submit_to_testflight: true
         submit_to_app_store: false
-
