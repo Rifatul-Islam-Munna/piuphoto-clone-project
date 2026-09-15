@@ -35,6 +35,8 @@ class FeatureMapping {
     'events.active': 'Max Active Events',
     'albums.categories': 'Categories Per Album',
     'storage.gb': 'PiuCloud Storage (GB)',
+    'notifications.email': 'Email deliveries included',
+    'notifications.whatsapp': 'WhatsApp deliveries included',
   };
 
   static String getFeatureDescription(String key) {

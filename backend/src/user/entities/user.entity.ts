@@ -4,7 +4,8 @@ import { HydratedDocument, Types } from 'mongoose';
 export enum UserType {
   ADMIN = 'admin',
   EDITOR = 'editor',
-  USER = 'user',
+  USER = 'user', // legacy planner accounts
+  EVENT_PLANNER = 'event_planner',
   PHOTOGRAPHER = 'photographer',
 }
 
@@ -24,7 +25,7 @@ export class User {
   @Prop({ default: true })
   isActive: boolean;
 
-  @Prop({ type: String, enum: UserType, default: UserType.USER })
+  @Prop({ type: String, enum: UserType, default: UserType.EVENT_PLANNER })
   role: UserType;
 
   @Prop({ lowercase: true, trim: true })
@@ -107,3 +108,4 @@ UserSchema.index({
   phone: 'text',
   whatsapp: 'text',
 });
+

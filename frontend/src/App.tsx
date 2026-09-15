@@ -6,6 +6,7 @@ import { ReactNode } from "react";
 import QueryClint from "../lib/QueryClint";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
+import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
 import Dashboard from "./pages/admin/Dashboard";
 import Plans from "./pages/admin/Plans";
@@ -21,6 +22,8 @@ import UserGallery from "./pages/user/UserGallery";
 import UserMyPictures from "./pages/user/UserMyPictures";
 import LiveConsole from "./pages/planner/LiveConsole";
 import PhotographerDashboard from "./pages/photographer/PhotographerDashboard";
+import PhotographerSessions from "./pages/photographer/PhotographerSessions";
+import PhotographerPlans from "./pages/photographer/PhotographerPlans";
 import JoinEvent from "./pages/photographer/JoinEvent";
 import Pricing from "./pages/Pricing";
 import EventLiveGallery from "./pages/public/EventLiveGallery";
@@ -126,6 +129,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<DomainRoot />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
             <Route path="/pricing" element={<Pricing />} />
             <Route path="/privacy-policy" element={<PrivacyPolicy />} />
             <Route
@@ -293,6 +297,22 @@ const App = () => (
               element={
                 <WorkspaceRoute workspace="photographer">
                   <PhotographerDashboard />
+                </WorkspaceRoute>
+              }
+            />
+            <Route
+              path="/photographer/sessions"
+              element={
+                <WorkspaceRoute workspace="photographer">
+                  <PhotographerSessions />
+                </WorkspaceRoute>
+              }
+            />
+            <Route
+              path="/photographer/plans"
+              element={
+                <WorkspaceRoute workspace="photographer">
+                  <PhotographerPlans />
                 </WorkspaceRoute>
               }
             />

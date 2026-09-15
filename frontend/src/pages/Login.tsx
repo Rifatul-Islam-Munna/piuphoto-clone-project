@@ -199,12 +199,12 @@ const Login = () => {
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
             New to airpix?{" "}
-            <a
-              href="#"
+            <Link
+              to="/register"
               className="font-semibold text-primary hover:text-primary/80"
             >
               Create account
-            </a>
+            </Link>
           </p>
         </section>
       </main>

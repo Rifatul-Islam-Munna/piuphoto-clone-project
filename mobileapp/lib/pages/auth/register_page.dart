@@ -17,7 +17,7 @@ class _RegisterPageState extends State<RegisterPage> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  String _role = 'user';
+  String _role = 'event_planner';
   bool _loading = false;
 
   Future<void> _register() async {
@@ -105,7 +105,7 @@ class _RegisterPageState extends State<RegisterPage> {
                   SegmentedButton<String>(
                     segments: const [
                       ButtonSegment(
-                        value: 'user',
+                        value: 'event_planner',
                         label: Text('Event Planner'),
                         icon: Icon(Icons.event_available_outlined),
                       ),

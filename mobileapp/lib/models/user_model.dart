@@ -154,7 +154,9 @@ class UserModel {
   bool get isUser => normalizedRole == 'user';
 
   bool get isEventPlanner =>
-      normalizedRole == 'user' || normalizedRole == 'editor';
+      normalizedRole == 'event_planner' ||
+      normalizedRole == 'user' ||
+      normalizedRole == 'editor';
 
   List<String> get subscriptionFeatures {
     final plan = subscriptionPlan;

@@ -26,7 +26,7 @@ export class CreateUserDto {
   @ApiPropertyOptional({
     type: String,
     enum: UserType,
-    default: UserType.USER,
+    default: UserType.EVENT_PLANNER,
   })
   @IsString()
   @IsOptional()
@@ -103,3 +103,4 @@ export class CreateUserDto {
   isActive?: boolean;
 
   }
+

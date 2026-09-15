@@ -82,6 +82,7 @@ export class EventMemberService {
     if (
       user.role === UserType.ADMIN ||
       user.role === UserType.USER ||
+      user.role === UserType.EVENT_PLANNER ||
       user.role === UserType.EDITOR
     ) {
       return true;
@@ -116,6 +117,7 @@ export class EventMemberService {
     if (
       globalRole === UserType.ADMIN ||
       globalRole === UserType.USER ||
+      globalRole === UserType.EVENT_PLANNER ||
       globalRole === UserType.EDITOR
     ) {
       return true;
@@ -146,6 +148,7 @@ export class EventMemberService {
         : false;
     const planner =
       globalRole === UserType.USER ||
+      globalRole === UserType.EVENT_PLANNER ||
       globalRole === UserType.EDITOR ||
       plannerSubscription ||
       roleSet.has(EventMemberRole.OWNER) ||
@@ -762,3 +765,4 @@ export class EventMemberService {
     );
   }
 }
+

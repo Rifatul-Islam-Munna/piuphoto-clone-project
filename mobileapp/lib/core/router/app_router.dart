@@ -20,6 +20,7 @@ import 'package:mobileapp/pages/shell/main_shell.dart';
 import 'package:mobileapp/pages/splash/splash_page.dart';
 import 'package:mobileapp/pages/templates/templates_page.dart';
 import 'package:mobileapp/pages/upload/upload_page.dart';
+import 'package:mobileapp/pages/upload/transfer_list_page.dart';
 
 part 'app_router.gr.dart';
 
@@ -54,6 +55,11 @@ class AppRouter extends RootStackRouter {
       guards: [authGuard],
     ),
     AutoRoute(page: UploadRoute.page, path: '/upload', guards: [authGuard]),
+    AutoRoute(
+      page: TransferListRoute.page,
+      path: '/transfers',
+      guards: [authGuard],
+    ),
     AutoRoute(page: EventsRoute.page, path: '/events', guards: [authGuard]),
     AutoRoute(
       page: MainShellRoute.page,

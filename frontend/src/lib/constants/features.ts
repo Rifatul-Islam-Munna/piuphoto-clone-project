@@ -17,6 +17,8 @@ export const limitMapping = {
   "events.active": "Max Active Events",
   "albums.categories": "Categories Per Album",
   "storage.gb": "PiuCloud Storage (GB)",
+  "notifications.email": "Email deliveries included",
+  "notifications.whatsapp": "WhatsApp deliveries included",
 };
 
 export function getFeatureDescription(key: string): string {
@@ -29,3 +31,4 @@ export function getLimitDescription(key: string): string {
 
 export type FeatureKey = keyof typeof featureMapping;
 export type LimitKey = keyof typeof limitMapping;
+

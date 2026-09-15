@@ -235,6 +235,78 @@ class TemplatesRoute extends PageRouteInfo<void> {
 }
 
 /// generated route for
+/// [TransferListPage]
+class TransferListRoute extends PageRouteInfo<TransferListRouteArgs> {
+  TransferListRoute({
+    Key? key,
+    required String eventId,
+    required String eventTitle,
+    required TransferListFilter filter,
+    List<PageRouteInfo>? children,
+  }) : super(
+         TransferListRoute.name,
+         args: TransferListRouteArgs(
+           key: key,
+           eventId: eventId,
+           eventTitle: eventTitle,
+           filter: filter,
+         ),
+         initialChildren: children,
+       );
+
+  static const String name = 'TransferListRoute';
+
+  static PageInfo page = PageInfo(
+    name,
+    builder: (data) {
+      final args = data.argsAs<TransferListRouteArgs>();
+      return TransferListPage(
+        key: args.key,
+        eventId: args.eventId,
+        eventTitle: args.eventTitle,
+        filter: args.filter,
+      );
+    },
+  );
+}
+
+class TransferListRouteArgs {
+  const TransferListRouteArgs({
+    this.key,
+    required this.eventId,
+    required this.eventTitle,
+    required this.filter,
+  });
+
+  final Key? key;
+
+  final String eventId;
+
+  final String eventTitle;
+
+  final TransferListFilter filter;
+
+  @override
+  String toString() {
+    return 'TransferListRouteArgs{key: $key, eventId: $eventId, eventTitle: $eventTitle, filter: $filter}';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! TransferListRouteArgs) return false;
+    return key == other.key &&
+        eventId == other.eventId &&
+        eventTitle == other.eventTitle &&
+        filter == other.filter;
+  }
+
+  @override
+  int get hashCode =>
+      key.hashCode ^ eventId.hashCode ^ eventTitle.hashCode ^ filter.hashCode;
+}
+
+/// generated route for
 /// [UploadPage]
 class UploadRoute extends PageRouteInfo<void> {
   const UploadRoute({List<PageRouteInfo>? children})

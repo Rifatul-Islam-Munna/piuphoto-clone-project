@@ -24,6 +24,7 @@ import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
+import 'package:mobileapp/pages/upload/transfer_list_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -58,8 +59,6 @@ class _PtpProbe {
 }
 
 enum _WirelessImportMode { sharedNetwork, cameraHotspot }
-
-enum _TransferFilter { all, uploaded, notUploaded }
 
 @RoutePage()
 class UploadPage extends StatefulWidget {
@@ -114,7 +113,6 @@ class _UploadPageState extends State<UploadPage> {
   String? _loadedAlbumEventId;
   String? _selectedAlbumId;
   List<AlbumModel> _albums = [];
-  _TransferFilter _transferFilter = _TransferFilter.all;
 
   bool get _wirelessImporting => _wirelessScanning || _autoImporting;
 
@@ -2484,25 +2482,14 @@ class _UploadPageState extends State<UploadPage> {
         final eventItems = allItems
             .where((item) => item.eventId == event.id)
             .toList(growable: false);
-        final filtered = eventItems
-            .where((item) {
-              switch (_transferFilter) {
-                case _TransferFilter.uploaded:
-                  return item.isUploaded;
-                case _TransferFilter.notUploaded:
-                  return !item.isUploaded;
-                case _TransferFilter.all:
-                  return true;
-              }
-            })
-            .toList(growable: false);
+        final recentItems = eventItems.take(3).toList(growable: false);
         final matchingAlbums = _selectedAlbumId == null
             ? <AlbumModel>[]
             : _albums.where((album) => album.id == _selectedAlbumId).toList();
         final selectedAlbum = matchingAlbums.isEmpty
             ? null
             : matchingAlbums.first;
-        final listHeight = (filtered.length * 78.0).clamp(90.0, 520.0);
+        final listHeight = (recentItems.length * 78.0).clamp(90.0, 250.0);
 
         return Container(
           width: double.infinity,
@@ -2592,28 +2579,61 @@ class _UploadPageState extends State<UploadPage> {
                 ],
               ),
               const SizedBox(height: 10),
-              SegmentedButton<_TransferFilter>(
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment(value: _TransferFilter.all, label: Text('All')),
-                  ButtonSegment(
-                    value: _TransferFilter.uploaded,
-                    label: Text('Uploaded'),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => context.router.push(
+                        TransferListRoute(
+                          eventId: event.id,
+                          eventTitle: event.title,
+                          filter: TransferListFilter.all,
+                        ),
+                      ),
+                      child: Text('All ${eventItems.length}'),
+                    ),
                   ),
-                  ButtonSegment(
-                    value: _TransferFilter.notUploaded,
-                    label: Text('Not uploaded'),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => context.router.push(
+                        TransferListRoute(
+                          eventId: event.id,
+                          eventTitle: event.title,
+                          filter: TransferListFilter.uploaded,
+                        ),
+                      ),
+                      child: Text(
+                        'Uploaded ${eventItems.where((item) => item.isUploaded).length}',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => context.router.push(
+                        TransferListRoute(
+                          eventId: event.id,
+                          eventTitle: event.title,
+                          filter: TransferListFilter.notUploaded,
+                        ),
+                      ),
+                      child: Text(
+                        'Pending ${eventItems.where((item) => !item.isUploaded).length}',
+                      ),
+                    ),
                   ),
                 ],
-                selected: {_transferFilter},
-                onSelectionChanged: (value) {
-                  if (value.isNotEmpty) {
-                    setState(() => _transferFilter = value.first);
-                  }
-                },
               ),
               const SizedBox(height: 12),
-              if (filtered.isEmpty)
+              if (recentItems.isNotEmpty) ...[
+                Text(
+                  'Recent transfers',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+                const SizedBox(height: 6),
+              ],
+              if (recentItems.isEmpty)
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 22),
@@ -2630,11 +2650,11 @@ class _UploadPageState extends State<UploadPage> {
                 SizedBox(
                   height: listHeight.toDouble(),
                   child: ListView.separated(
-                    itemCount: filtered.length,
+                    itemCount: recentItems.length,
                     separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, index) => KeyedSubtree(
-                      key: ValueKey(filtered[index].id),
-                      child: _transferRow(filtered[index]),
+                      key: ValueKey(recentItems[index].id),
+                      child: _transferRow(recentItems[index]),
                     ),
                   ),
                 ),

@@ -77,7 +77,7 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
   }
 
   private mobileLookupHash(value?: string) {
-    const normalized = (value || '').replace(/\\D/g, '');
+    const normalized = (value || '').replace(/\D/g, '');
     return normalized
       ? createHash('sha256').update(normalized).digest('hex')
       : '';
@@ -733,3 +733,4 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
     };
   }
 }
+

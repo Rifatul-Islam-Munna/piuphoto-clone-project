@@ -44,7 +44,7 @@ import {
   PostRequestAxios,
 } from "@/api-hooks/api-hooks";
 
-type UserType = "admin" | "editor" | "user" | "photographer";
+type UserType = "admin" | "editor" | "user" | "event_planner" | "photographer";
 
 type SubscriptionPlan = {
   _id: string;
@@ -94,7 +94,7 @@ const defaultFormData: UserFormData = {
   email: "",
   phone: "",
   password: "",
-  role: "user",
+  role: "event_planner",
   gender: "",
   age: 0,
   isActive: true,
@@ -103,7 +103,8 @@ const defaultFormData: UserFormData = {
 const roleLabels: Record<UserType, string> = {
   admin: "Admin",
   editor: "Editor",
-  user: "Event Planner",
+  user: "Event Planner (legacy)",
+  event_planner: "Event Planner",
   photographer: "Photographer",
 };
 
@@ -111,6 +112,7 @@ const roleColors: Record<UserType, string> = {
   admin: "bg-red-100 text-red-800",
   editor: "bg-blue-100 text-blue-800",
   user: "bg-green-100 text-green-800",
+  event_planner: "bg-emerald-100 text-emerald-800",
   photographer: "bg-card-pink text-primary",
 };
 
@@ -679,4 +681,5 @@ export default function Users() {
     </AdminLayout>
   );
 }
+
 

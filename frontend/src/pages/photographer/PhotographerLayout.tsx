@@ -4,6 +4,7 @@ import {
   BarChart3,
   CalendarDays,
   Camera,
+  CreditCard,
   Images,
   Inbox,
   KeyRound,
@@ -25,6 +26,8 @@ const items = [
     label: "Shooting workspace",
     href: "/photographer/dashboard",
   },
+  { icon: CalendarDays, label: "My sessions", href: "/photographer/sessions" },
+  { icon: CreditCard, label: "Plans & billing", href: "/photographer/plans" },
   { icon: Inbox, label: "Invitations", href: "/photographer/invitations" },
   { icon: Images, label: "Galleries", href: "/planner/gallery" },
   { icon: Scissors, label: "Retouch", href: "/retouch" },
@@ -61,16 +64,14 @@ export default function PhotographerLayout({ children }: Props) {
             <span>airpix photographer</span>
           </Link>
           <div className="flex items-center gap-2">
-            {workspaceAccess.data?.planner ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate("/planner/dashboard")}
-              >
-                <CalendarDays className="mr-2 h-4 w-4" />
-                Solo events
-              </Button>
-            ) : null}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate("/photographer/sessions")}
+            >
+              <CalendarDays className="mr-2 h-4 w-4" />
+              {workspaceAccess.data?.planner ? "Solo sessions" : "Start solo work"}
+            </Button>
             <Button variant="ghost" size="icon" onClick={logout}>
               <LogOut className="h-4 w-4" />
             </Button>
@@ -126,3 +127,5 @@ export default function PhotographerLayout({ children }: Props) {
     </div>
   );
 }
+
+
