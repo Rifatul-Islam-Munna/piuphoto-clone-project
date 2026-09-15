@@ -227,7 +227,7 @@ const App = () => (
             <Route
               path="/planner/event/:eventId/experience"
               element={
-                <WorkspaceRoute workspace="planner">
+                <WorkspaceRoute workspace={["planner", "photographer"]}>
                   <Phase2Settings />
                 </WorkspaceRoute>
               }
@@ -235,7 +235,7 @@ const App = () => (
             <Route
               path="/planner/gallery"
               element={
-                <WorkspaceRoute workspace="planner">
+                <WorkspaceRoute workspace={["planner", "photographer"]}>
                   <Phase2Gallery />
                 </WorkspaceRoute>
               }
@@ -243,7 +243,7 @@ const App = () => (
             <Route
               path="/planner/store"
               element={
-                <WorkspaceRoute workspace="planner">
+                <WorkspaceRoute workspace={["planner", "photographer"]}>
                   <StoreManager />
                 </WorkspaceRoute>
               }
@@ -251,7 +251,7 @@ const App = () => (
             <Route
               path="/planner/analytics"
               element={
-                <WorkspaceRoute workspace="planner">
+                <WorkspaceRoute workspace={["planner", "photographer"]}>
                   <AnalyticsDashboard />
                 </WorkspaceRoute>
               }
@@ -259,7 +259,7 @@ const App = () => (
             <Route
               path="/planner/api"
               element={
-                <WorkspaceRoute workspace="planner">
+                <WorkspaceRoute workspace={["planner", "photographer"]}>
                   <ApiPlatform />
                 </WorkspaceRoute>
               }
@@ -267,14 +267,14 @@ const App = () => (
             <Route
               path="/retouch"
               element={
-                <WorkspaceRoute workspace={["planner", "retoucher", "reviewer"]}>
+                <WorkspaceRoute workspace={["planner", "photographer", "retoucher", "reviewer"]}>
                   <RetouchConsole />
                 </WorkspaceRoute>
               }
             />            <Route
               path="/planner/settings"
               element={
-                <WorkspaceRoute workspace="planner">
+                <WorkspaceRoute workspace={["planner", "photographer"]}>
                   <UserSettings />
                 </WorkspaceRoute>
               }

@@ -32,6 +32,9 @@ class _EventQrScanPageState extends State<EventQrScanPage> {
       AppToast.error('QR code does not include event id');
       return;
     }
+    final lower = raw.toLowerCase();
+    final faceEnrollment =
+        RegExp(r'face\s*:\s*1').hasMatch(lower) || lower.contains('face=1');
 
     _handled = true;
     Navigator.of(context).pushReplacement(
@@ -39,6 +42,7 @@ class _EventQrScanPageState extends State<EventQrScanPage> {
         builder: (_) => EventGalleryPage(
           eventId: eventId,
           publicAccess: true,
+          faceEnrollment: faceEnrollment,
         ),
       ),
     );

@@ -19,6 +19,7 @@ export class RegisterGuestDto {
   @Transform(boolValue) @IsBoolean() consent: boolean;
   @IsOptional() @Transform(boolValue) @IsBoolean() notifyEmail?: boolean;
   @IsOptional() @Transform(boolValue) @IsBoolean() notifyWhatsapp?: boolean;
+  @IsOptional() @Transform(boolValue) @IsBoolean() globalProfile?: boolean;
   @IsOptional() @IsString() @MaxLength(2000) accessToken?: string;
 }
 

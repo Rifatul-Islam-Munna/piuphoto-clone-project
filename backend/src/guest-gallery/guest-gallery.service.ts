@@ -78,7 +78,37 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
 
   private mobileLookupHash(value?: string) {
     const normalized = (value || '').replace(/\\D/g, '');
-    return normalized ? createHash('sha256').update(normalized).digest('hex') : '';
+    return normalized
+      ? createHash('sha256').update(normalized).digest('hex')
+      : '';
+  }
+
+  private emailLookupHash(value?: string) {
+    const normalized = (value || '').trim().toLowerCase();
+    return normalized
+      ? createHash('sha256').update(normalized).digest('hex')
+      : '';
+  }
+
+  private cosine(a: number[], b: number[]) {
+    if (!a.length || a.length !== b.length) return 0;
+    let dot = 0;
+    let aa = 0;
+    let bb = 0;
+    for (let i = 0; i < a.length; i += 1) {
+      dot += a[i] * b[i];
+      aa += a[i] * a[i];
+      bb += b[i] * b[i];
+    }
+    return aa > 0 && bb > 0 ? dot / Math.sqrt(aa * bb) : 0;
+  }
+
+  private vectorsMatch(existing: number[][], incoming: number[][]) {
+    const threshold =
+      Number(this.config.get<string>('GLOBAL_FACE_MERGE_SCORE')) || 0.62;
+    return incoming.some((next) =>
+      existing.some((current) => this.cosine(current, next) >= threshold),
+    );
   }
 
   private cryptoKey() {
@@ -115,71 +145,179 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async registration(eventId: string, token: string) {
+    this.objectId(eventId);
     return this.registrations
       .findOne({
-        eventId: this.objectId(eventId),
         tokenHash: this.galleryAccess.tokenHash(token),
-        expiresAt: { $gt: new Date() },
+        $or: [
+          { globalProfile: true },
+          { eventId: this.objectId(eventId), expiresAt: { $gt: new Date() } },
+        ],
       })
-      .select('+faceVectors +tokenCipher')
+      .select('+faceVectors +tokenCipher +selfieFingerprints')
       .exec();
   }
 
-  async register(file: Express.Multer.File, dto: RegisterGuestDto) {
-    if (!dto.consent)
+  async register(files: Express.Multer.File[], dto: RegisterGuestDto) {
+    if (!dto.consent) {
       throw new HttpException('Face-search consent is required', 400);
-    if (!file?.buffer) throw new HttpException('Selfie image is required', 400);
-    const access = await this.galleryAccess.assertFaceSearchAllowed(
-      dto.eventId,
-      dto.albumId,
-      dto.accessToken,
-    );
-    const { faces, vectors } = await this.faceVectors.detectAndVectorFromBuffer(
-      file.buffer,
-      file.originalname || 'selfie.jpg',
-      file.mimetype || 'image/jpeg',
-    );
-    if (!faces.length || !vectors.length) {
-      throw new HttpException('No usable face found in selfie', 400);
+    }
+    const selfies = (files || [])
+      .filter((file) => Boolean(file?.buffer))
+      .slice(0, 5);
+    const globalProfile = dto.globalProfile === true;
+    if (!selfies.length)
+      throw new HttpException('Selfie image is required', 400);
+    if (globalProfile && selfies.length < 2) {
+      throw new HttpException(
+        'Take at least 2 selfies for a global face profile',
+        400,
+      );
+    }
+    if (globalProfile && (!dto.email?.trim() || !dto.whatsapp?.trim())) {
+      throw new HttpException(
+        'Email and WhatsApp are required for global face delivery',
+        400,
+      );
     }
 
-    const token = randomBytes(32).toString('base64url');
-    const retentionDays = Math.min(
-      Math.max(Number(access.event.faceRetentionDays) || 30, 1),
-      365,
-    );
-    const expiresAt = new Date(Date.now() + retentionDays * 86400000);
-    const event = access.event;
-    const data = await this.registrations.create({
-      eventId: this.objectId(dto.eventId),
-      albumId: dto.albumId ? this.objectId(dto.albumId) : undefined,
-      tokenHash: this.galleryAccess.tokenHash(token),
-      tokenCipher: this.encryptToken(token),
-      faceVectors: vectors,
-      email: dto.email?.trim().toLowerCase() || undefined,
-      whatsapp: dto.whatsapp?.trim() || undefined,
-      mobileLookupHash: this.mobileLookupHash(dto.whatsapp) || undefined,
-      notifyEmail:
-        event.guestNotificationsEnabled === true &&
-        event.emailNotificationsEnabled !== false &&
-        dto.notifyEmail === true &&
-        Boolean(dto.email),
-      notifyWhatsapp:
-        event.guestNotificationsEnabled === true &&
-        event.whatsappNotificationsEnabled === true &&
-        dto.notifyWhatsapp === true &&
-        Boolean(dto.whatsapp),
-      consentAt: new Date(),
-      consentSource: 'public-gallery',
-      expiresAt,
-      selfieFingerprint: createHash('sha256').update(file.buffer).digest('hex'),
-    });
+    const access = globalProfile
+      ? null
+      : await this.galleryAccess.assertFaceSearchAllowed(
+          dto.eventId,
+          dto.albumId,
+          dto.accessToken,
+        );
+    if (globalProfile) {
+      const info = await this.galleryAccess.publicInfo(
+        dto.eventId,
+        dto.albumId,
+        dto.accessToken,
+      );
+      if (!info.faceSearchEnabled) {
+        throw new HttpException('Face search is disabled for this event', 403);
+      }
+    }
+    const vectors: number[][] = [];
+    const fingerprints: string[] = [];
+    let usableSelfies = 0;
+    for (const file of selfies) {
+      const result = await this.faceVectors.detectAndVectorFromBuffer(
+        file.buffer,
+        file.originalname || 'selfie.jpg',
+        file.mimetype || 'image/jpeg',
+      );
+      if (!result.faces.length || !result.vectors.length) continue;
+      usableSelfies += 1;
+      vectors.push(...result.vectors);
+      fingerprints.push(createHash('sha256').update(file.buffer).digest('hex'));
+    }
+    if (!vectors.length || (globalProfile && usableSelfies < 2)) {
+      throw new HttpException(
+        globalProfile
+          ? 'At least 2 selfies must contain a clear usable face'
+          : 'No usable face found in selfie',
+        400,
+      );
+    }
+
+    const email = dto.email?.trim().toLowerCase() || undefined;
+    const whatsapp = dto.whatsapp?.trim() || undefined;
+    const emailLookupHash = this.emailLookupHash(email) || undefined;
+    const mobileLookupHash = this.mobileLookupHash(whatsapp) || undefined;
+    const notifyEmail = dto.notifyEmail === true && Boolean(email);
+    const notifyWhatsapp = dto.notifyWhatsapp === true && Boolean(whatsapp);
+    let token = randomBytes(32).toString('base64url');
+    let updatedGlobalProfile = false;
+    let data: GuestFaceRegistrationDocument;
+
+    if (globalProfile) {
+      let existing = await this.registrations
+        .findOne({ globalProfile: true, emailLookupHash, mobileLookupHash })
+        .select('+faceVectors +tokenCipher +selfieFingerprints')
+        .exec();
+      if (existing && !this.vectorsMatch(existing.faceVectors || [], vectors)) {
+        existing = null;
+      }
+      if (existing) {
+        token = this.decryptToken(existing.tokenCipher);
+        existing.faceVectors = [
+          ...(existing.faceVectors || []),
+          ...vectors,
+        ].slice(-50);
+        existing.selfieFingerprints = [
+          ...new Set([...(existing.selfieFingerprints || []), ...fingerprints]),
+        ].slice(-50);
+        existing.email = email;
+        existing.whatsapp = whatsapp;
+        existing.emailLookupHash = emailLookupHash;
+        existing.mobileLookupHash = mobileLookupHash;
+        existing.notifyEmail = notifyEmail;
+        existing.notifyWhatsapp = notifyWhatsapp;
+        existing.lastSeenAt = new Date();
+        existing.consentAt = new Date();
+        existing.profileRevision = (existing.profileRevision || 1) + 1;
+        data = await existing.save();
+        updatedGlobalProfile = true;
+      } else {
+        data = await this.registrations.create({
+          eventId: this.objectId(dto.eventId),
+          albumId: dto.albumId ? this.objectId(dto.albumId) : undefined,
+          tokenHash: this.galleryAccess.tokenHash(token),
+          tokenCipher: this.encryptToken(token),
+          faceVectors: vectors,
+          email,
+          whatsapp,
+          emailLookupHash,
+          mobileLookupHash,
+          globalProfile: true,
+          profileRevision: 1,
+          notifyEmail,
+          notifyWhatsapp,
+          consentAt: new Date(),
+          consentSource: 'global-face-qr',
+          lastSeenAt: new Date(),
+          selfieFingerprint: fingerprints[0],
+          selfieFingerprints: fingerprints,
+        });
+      }
+    } else {
+      const retentionDays = Math.min(
+        Math.max(Number(access!.event.faceRetentionDays) || 30, 1),
+        365,
+      );
+      data = await this.registrations.create({
+        eventId: this.objectId(dto.eventId),
+        albumId: dto.albumId ? this.objectId(dto.albumId) : undefined,
+        tokenHash: this.galleryAccess.tokenHash(token),
+        tokenCipher: this.encryptToken(token),
+        faceVectors: vectors,
+        email,
+        whatsapp,
+        emailLookupHash,
+        mobileLookupHash,
+        globalProfile: false,
+        notifyEmail,
+        notifyWhatsapp,
+        consentAt: new Date(),
+        consentSource: 'public-gallery',
+        expiresAt: new Date(Date.now() + retentionDays * 86400000),
+        selfieFingerprint: fingerprints[0],
+        selfieFingerprints: fingerprints,
+      });
+    }
 
     return {
-      message: 'Personal gallery created',
+      message: updatedGlobalProfile
+        ? 'Global face profile updated'
+        : 'Personal gallery created',
       guestToken: token,
-      expiresAt,
+      expiresAt: data.expiresAt || null,
       registrationId: String(data._id),
+      globalProfile: data.globalProfile === true,
+      updatedGlobalProfile,
+      profileRevision: data.profileRevision || 1,
+      storedFaceSamples: data.faceVectors?.length || vectors.length,
       notificationPreferences: {
         email: data.notifyEmail,
         whatsapp: data.notifyWhatsapp,
@@ -247,13 +385,19 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
       (a, b) =>
         (scores.get(String(b._id)) || 0) - (scores.get(String(a._id)) || 0),
     );
+    const accessTokenHours = registration.globalProfile
+      ? 24 * 30
+      : Math.max(
+          1,
+          Math.ceil(
+            ((registration.expiresAt?.getTime() || Date.now()) - Date.now()) /
+              3600000,
+          ),
+        );
     const accessToken = await this.galleryAccess.issuePersonalToken(
       query.eventId,
       albumId,
-      Math.max(
-        1,
-        Math.ceil((registration.expiresAt.getTime() - Date.now()) / 3600000),
-      ),
+      accessTokenHours,
     );
     return {
       data,
@@ -278,12 +422,15 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
 
   async personalByMobile(eventId: string, mobile: string, albumId?: string) {
     const mobileLookupHash = this.mobileLookupHash(mobile);
-    if (!mobileLookupHash) throw new HttpException('Mobile number is required', 400);
+    if (!mobileLookupHash)
+      throw new HttpException('Mobile number is required', 400);
     const registration = await this.registrations
       .findOne({
-        eventId: this.objectId(eventId),
         mobileLookupHash,
-        expiresAt: { $gt: new Date() },
+        $or: [
+          { globalProfile: true },
+          { eventId: this.objectId(eventId), expiresAt: { $gt: new Date() } },
+        ],
       })
       .select('+tokenCipher')
       .sort({ createdAt: -1 })
@@ -291,21 +438,32 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
     if (!registration) return { data: [], totalItems: 0 };
     const guestToken = this.decryptToken(registration.tokenCipher);
     const result = await this.personal({ eventId, albumId, guestToken });
-    return { data: result.data, totalItems: result.totalItems, event: result.event };
+    return {
+      data: result.data,
+      totalItems: result.totalItems,
+      event: result.event,
+    };
   }
   async updatePreferences(dto: UpdateGuestPreferencesDto) {
     const registration = await this.registration(dto.eventId, dto.guestToken);
-    if (!registration) throw new HttpException('Personal gallery is invalid or expired', 401);
-    if (dto.email !== undefined) registration.email = dto.email.trim().toLowerCase() || undefined;
+    if (!registration)
+      throw new HttpException('Personal gallery is invalid or expired', 401);
+    if (dto.email !== undefined) {
+      registration.email = dto.email.trim().toLowerCase() || undefined;
+      registration.emailLookupHash =
+        this.emailLookupHash(dto.email) || undefined;
+    }
     if (dto.whatsapp !== undefined) {
       registration.whatsapp = dto.whatsapp.trim() || undefined;
-      registration.mobileLookupHash = this.mobileLookupHash(dto.whatsapp) || undefined;
+      registration.mobileLookupHash =
+        this.mobileLookupHash(dto.whatsapp) || undefined;
     }
     if (dto.notifyEmail !== undefined) {
       registration.notifyEmail = dto.notifyEmail && Boolean(registration.email);
     }
     if (dto.notifyWhatsapp !== undefined) {
-      registration.notifyWhatsapp = dto.notifyWhatsapp && Boolean(registration.whatsapp);
+      registration.notifyWhatsapp =
+        dto.notifyWhatsapp && Boolean(registration.whatsapp);
     }
     await registration.save();
     return {
@@ -340,7 +498,12 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
 
     const targetId = String(eventImage._id);
     const cursor = this.registrations
-      .find({ eventId: eventImage.eventId, expiresAt: { $gt: new Date() } })
+      .find({
+        $or: [
+          { globalProfile: true },
+          { eventId: eventImage.eventId, expiresAt: { $gt: new Date() } },
+        ],
+      })
       .select('+faceVectors')
       .cursor();
     let batch: GuestFaceRegistrationDocument[] = [];
@@ -348,13 +511,17 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
       batch.push(registration);
       if (batch.length < 10) continue;
       await Promise.allSettled(
-        batch.map((item) => this.matchNewPhoto(item, eventImage, event, targetId)),
+        batch.map((item) =>
+          this.matchNewPhoto(item, eventImage, event, targetId),
+        ),
       );
       batch = [];
     }
     if (batch.length) {
       await Promise.allSettled(
-        batch.map((item) => this.matchNewPhoto(item, eventImage, event, targetId)),
+        batch.map((item) =>
+          this.matchNewPhoto(item, eventImage, event, targetId),
+        ),
       );
     }
   }
@@ -402,22 +569,32 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
       registration.notifyEmail &&
       event.emailNotificationsEnabled !== false &&
       this.notifier.emailConfigured()
-    ) channels.push('email');
+    )
+      channels.push('email');
     if (
       registration.notifyWhatsapp &&
       event.whatsappNotificationsEnabled === true &&
       this.notifier.whatsappConfigured()
-    ) channels.push('whatsapp');
+    )
+      channels.push('whatsapp');
 
     for (const channel of channels) {
       const delivered = await this.notifications.exists({
+        eventId: eventImage.eventId,
         registrationId: registration._id,
         channel,
         photoIds: eventImage._id,
-        status: { $in: [GuestNotificationStatus.PENDING, GuestNotificationStatus.SENDING, GuestNotificationStatus.SENT] },
+        status: {
+          $in: [
+            GuestNotificationStatus.PENDING,
+            GuestNotificationStatus.SENDING,
+            GuestNotificationStatus.SENT,
+          ],
+        },
       });
       if (delivered) continue;
       const existing = await this.notifications.findOne({
+        eventId: eventImage.eventId,
         registrationId: registration._id,
         channel,
         status: GuestNotificationStatus.PENDING,
@@ -458,7 +635,8 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
 
   private async deliver(item: GuestNotificationDocument) {
     if (item.channel === 'email' && !this.notifier.emailConfigured()) return;
-    if (item.channel === 'whatsapp' && !this.notifier.whatsappConfigured()) return;
+    if (item.channel === 'whatsapp' && !this.notifier.whatsappConfigured())
+      return;
     const claimed = await this.notifications.findOneAndUpdate(
       { _id: item._id, status: GuestNotificationStatus.PENDING },
       { $set: { status: GuestNotificationStatus.SENDING } },

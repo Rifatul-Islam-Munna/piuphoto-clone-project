@@ -31,8 +31,7 @@ export class EventController {
   constructor(private readonly eventService: EventService) {}
 
   @Post()
-  @UseGuards(AuthGuard, RolesGuard, ThrottlerGuard)
-  @Roles(UserType.USER, UserType.EDITOR, UserType.ADMIN)
+  @UseGuards(AuthGuard, ThrottlerGuard)
   @Throttle({ default: { limit: 100, ttl: 3600000 } })
   create(@Body() createEventDto: CreateEventDto, @Req() req: ExpressRequest) {
     const targetUserId =
@@ -40,10 +39,13 @@ export class EventController {
         ? String(createEventDto.userId)
         : String(req.user?.id);
 
-    return this.eventService.create({
-      ...createEventDto,
-      userId: targetUserId,
-    });
+    return this.eventService.create(
+      {
+        ...createEventDto,
+        userId: targetUserId,
+      },
+      req.user?.role,
+    );
   }
 
   @Get('my-events')

@@ -7,6 +7,7 @@ import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
+import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/pages/event_gallery/event_qr_scan_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
@@ -21,6 +22,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _isRefreshingProfile = false;
+  bool _resolvingSoloWorkspace = false;
 
   @override
   void initState() {
@@ -107,6 +109,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       );
       try {
         await _refreshCurrentUser();
+        await _ensureSoloPhotographerWorkspace();
       } catch (_) {}
       AppToast.success('Payment successful');
     } on StripeException catch (e) {
@@ -129,12 +132,62 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _ensureSoloPhotographerWorkspace() async {
+    if (_resolvingSoloWorkspace ||
+        ActiveEventStorage.activeEvent.value != null) {
+      return;
+    }
+    final user = UserStorage.currentUser.value;
+    if (!(user?.isPhotographer ?? false) ||
+        !(user?.hasPlannerAccess ?? false)) {
+      return;
+    }
+
+    _resolvingSoloWorkspace = true;
+    try {
+      final response = await DioHelper.get(
+        '/event/my-events',
+        queryParameters: {'workspace': 'planner', 'page': 1, 'limit': 1},
+      );
+      final rows = response.data is Map ? response.data['data'] : null;
+      Map<String, dynamic>? rawEvent;
+      if (rows is List && rows.isNotEmpty && rows.first is Map) {
+        rawEvent = Map<String, dynamic>.from(rows.first as Map);
+      }
+
+      if (rawEvent == null) {
+        final created = await DioHelper.post(
+          '/event',
+          data: {
+            'title': 'Solo Workspace',
+            'description': 'My photographer delivery workspace',
+            'isPublished': true,
+          },
+        );
+        final raw = created.data is Map ? created.data['data'] : null;
+        if (raw is Map) rawEvent = Map<String, dynamic>.from(raw);
+      }
+
+      if (rawEvent != null) {
+        final event = EventSummary.fromJson(rawEvent);
+        if (event.id.isNotEmpty) {
+          await ActiveEventStorage.saveActiveEvent(event);
+        }
+      }
+    } catch (_) {
+      // The Events screen remains available for manual selection if needed.
+    } finally {
+      _resolvingSoloWorkspace = false;
+    }
+  }
+
   Future<void> _refreshProfileSilently() async {
     if (_isRefreshingProfile) return;
 
     setState(() => _isRefreshingProfile = true);
     try {
       await _refreshCurrentUser();
+      await _ensureSoloPhotographerWorkspace();
     } catch (_) {
     } finally {
       if (mounted) {
@@ -149,6 +202,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     setState(() => _isRefreshingProfile = true);
     try {
       await _refreshCurrentUser();
+      await _ensureSoloPhotographerWorkspace();
     } catch (_) {
       AppToast.error('Failed to refresh account');
     } finally {
@@ -436,7 +490,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  hasEvent ? event.title : 'No Active Event',
+                  hasEvent
+                      ? event.title
+                      : (UserStorage.currentUser.value?.hasPlannerAccess ??
+                            false)
+                      ? 'Solo Photographer'
+                      : 'No Active Event',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
@@ -447,6 +506,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 Text(
                   hasEvent
                       ? '${event.photosCount} photos'
+                      : (UserStorage.currentUser.value?.hasPlannerAccess ??
+                            false)
+                      ? 'Solo mode ready - no planner invitation needed'
                       : 'Accept an invitation first',
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.8),
@@ -463,9 +525,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
-              hasEvent ? 'Active' : 'None',
+              hasEvent
+                  ? 'Active'
+                  : (UserStorage.currentUser.value?.hasPlannerAccess ?? false)
+                  ? 'Solo'
+                  : 'None',
               style: TextStyle(
-                color: hasEvent ? Colors.green : Colors.grey,
+                color:
+                    hasEvent ||
+                        (UserStorage.currentUser.value?.hasPlannerAccess ??
+                            false)
+                    ? Colors.green
+                    : Colors.grey,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -476,7 +547,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildActionsGrid(BuildContext context, dynamic activeEvent) {
-    final isDisabled = activeEvent == null;
+    final hasPlannerAccess =
+        UserStorage.currentUser.value?.hasPlannerAccess ?? false;
+    final isDisabled = activeEvent == null && !hasPlannerAccess;
     return GridView.count(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -503,6 +576,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           isDisabled: isDisabled,
           onTap: isDisabled
               ? null
+              : activeEvent == null
+              ? () => context.router.root.push(const EventsRoute())
               : () => context.router.root.push(const EventImagesRoute()),
         ),
         _ActionTile(

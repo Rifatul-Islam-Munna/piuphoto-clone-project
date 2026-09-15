@@ -8,11 +8,11 @@
   Post,
   Query,
   Req,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { memoryStorage } from 'multer';
 import { AuthGuard } from '../lib/auth.guard';
@@ -27,7 +27,7 @@ import { GuestGalleryService } from './guest-gallery.service';
 
 const selfieOptions = {
   storage: memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 },
+  limits: { fileSize: 20 * 1024 * 1024, files: 5 },
   fileFilter: (_req, file, callback) => {
     if (
       !['image/jpeg', 'image/png', 'image/webp', 'image/jpg'].includes(
@@ -50,12 +50,12 @@ export class GuestGalleryController {
   @Post('register')
   @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 30, ttl: 3600000 } })
-  @UseInterceptors(FileInterceptor('selfie', selfieOptions))
+  @UseInterceptors(AnyFilesInterceptor(selfieOptions))
   register(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFiles() files: Express.Multer.File[],
     @Body() dto: RegisterGuestDto,
   ) {
-    return this.service.register(file, dto);
+    return this.service.register(files || [], dto);
   }
 
   @Get('personal')

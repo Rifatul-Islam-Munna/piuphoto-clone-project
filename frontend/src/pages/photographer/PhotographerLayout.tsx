@@ -1,6 +1,18 @@
 import { type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { CalendarDays, Camera, Inbox, LogOut, Monitor } from "lucide-react";
+import {
+  BarChart3,
+  CalendarDays,
+  Camera,
+  Images,
+  Inbox,
+  KeyRound,
+  LogOut,
+  Monitor,
+  Scissors,
+  Settings,
+  ShoppingBag,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useWorkspaceAccess } from "@/hooks/use-workspace-access";
@@ -14,6 +26,12 @@ const items = [
     href: "/photographer/dashboard",
   },
   { icon: Inbox, label: "Invitations", href: "/photographer/invitations" },
+  { icon: Images, label: "Galleries", href: "/planner/gallery" },
+  { icon: Scissors, label: "Retouch", href: "/retouch" },
+  { icon: ShoppingBag, label: "Store", href: "/planner/store" },
+  { icon: BarChart3, label: "Analytics", href: "/planner/analytics" },
+  { icon: KeyRound, label: "API", href: "/planner/api" },
+  { icon: Settings, label: "Settings", href: "/planner/settings" },
 ];
 
 export default function PhotographerLayout({ children }: Props) {
@@ -50,7 +68,7 @@ export default function PhotographerLayout({ children }: Props) {
                 onClick={() => navigate("/planner/dashboard")}
               >
                 <CalendarDays className="mr-2 h-4 w-4" />
-                Event Planner
+                Solo events
               </Button>
             ) : null}
             <Button variant="ghost" size="icon" onClick={logout}>

@@ -31,60 +31,52 @@ class AppRouter extends RootStackRouter {
 
   @override
   RouteType get defaultRouteType => RouteType.custom(
-        transitionsBuilder: _smoothPageTransition,
-        duration: const Duration(milliseconds: 280),
-        reverseDuration: const Duration(milliseconds: 240),
-      );
+    transitionsBuilder: _smoothPageTransition,
+    duration: const Duration(milliseconds: 280),
+    reverseDuration: const Duration(milliseconds: 240),
+  );
 
   @override
   List<AutoRoute> get routes => [
-        AutoRoute(page: SplashRoute.page, path: '/', initial: true),
-        AutoRoute(page: OnboardingRoute.page, path: '/onboarding'),
-        AutoRoute(page: LoginRoute.page, path: '/login'),
-        AutoRoute(page: RegisterRoute.page, path: '/register'),
+    AutoRoute(page: SplashRoute.page, path: '/', initial: true),
+    AutoRoute(page: OnboardingRoute.page, path: '/onboarding'),
+    AutoRoute(page: LoginRoute.page, path: '/login'),
+    AutoRoute(page: RegisterRoute.page, path: '/register'),
+    AutoRoute(page: ProfileRoute.page, path: '/profile', guards: [authGuard]),
+    AutoRoute(
+      page: InvitationsRoute.page,
+      path: '/invitations',
+      guards: [authGuard],
+    ),
+    AutoRoute(
+      page: EventImagesRoute.page,
+      path: '/event-images',
+      guards: [authGuard],
+    ),
+    AutoRoute(page: UploadRoute.page, path: '/upload', guards: [authGuard]),
+    AutoRoute(page: EventsRoute.page, path: '/events', guards: [authGuard]),
+    AutoRoute(
+      page: MainShellRoute.page,
+      path: '/main',
+      children: [
+        RedirectRoute(path: '', redirectTo: 'home'),
+        AutoRoute(page: HomeRoute.page, path: 'home'),
+        AutoRoute(page: PlansRoute.page, path: 'plans'),
+        AutoRoute(page: EventsRoute.page, path: 'events', guards: [authGuard]),
         AutoRoute(
           page: ProfileRoute.page,
-          path: '/profile',
+          path: 'profile',
           guards: [authGuard],
         ),
+        AutoRoute(page: UploadRoute.page, path: 'upload', guards: [authGuard]),
         AutoRoute(
           page: InvitationsRoute.page,
-          path: '/invitations',
+          path: 'invitations',
           guards: [authGuard],
         ),
-        AutoRoute(
-          page: EventImagesRoute.page,
-          path: '/event-images',
-          guards: [authGuard],
-        ),
-        AutoRoute(page: UploadRoute.page, path: '/upload', guards: [authGuard]),
-        AutoRoute(page: EventsRoute.page, path: '/events', guards: [authGuard]),
-        AutoRoute(
-          page: MainShellRoute.page,
-          path: '/main',
-          children: [
-            RedirectRoute(path: '', redirectTo: 'home'),
-            AutoRoute(page: HomeRoute.page, path: 'home'),
-            AutoRoute(page: PlansRoute.page, path: 'plans'),
-            AutoRoute(page: EventsRoute.page, path: 'events', guards: [authGuard]),
-            AutoRoute(
-              page: ProfileRoute.page,
-              path: 'profile',
-              guards: [authGuard],
-            ),
-            AutoRoute(
-              page: UploadRoute.page,
-              path: 'upload',
-              guards: [authGuard],
-            ),
-            AutoRoute(
-              page: InvitationsRoute.page,
-              path: 'invitations',
-              guards: [authGuard],
-            ),
-          ],
-        ),
-      ];
+      ],
+    ),
+  ];
 }
 
 Widget _smoothPageTransition(
@@ -119,6 +111,27 @@ Future<void> popOrHome(BuildContext context) async {
 
 List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
   if (user?.isPhotographer ?? false) {
+    if (user?.hasPlannerAccess ?? false) {
+      return const [
+        BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: 'Home'),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.event_outlined),
+          label: 'Events',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.cloud_upload_outlined),
+          label: 'Upload',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.mail_outline),
+          label: 'Invites',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.person_outline),
+          label: 'Profile',
+        ),
+      ];
+    }
     return const [
       BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: 'Home'),
       BottomNavigationBarItem(
@@ -126,7 +139,10 @@ List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
         label: 'Upload',
       ),
       BottomNavigationBarItem(icon: Icon(Icons.mail_outline), label: 'Invites'),
-      BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'Profile'),
+      BottomNavigationBarItem(
+        icon: Icon(Icons.person_outline),
+        label: 'Profile',
+      ),
     ];
   }
 

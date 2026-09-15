@@ -4,6 +4,7 @@ import {
   Calendar,
   Camera,
   CheckCircle2,
+  Copy,
   Download,
   ExternalLink,
   Eye,
@@ -177,6 +178,8 @@ export default function UserDashboard() {
   const [qrEvent, setQrEvent] = useState<EventType | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrPayload, setQrPayload] = useState("");
+  const [faceQrDataUrl, setFaceQrDataUrl] = useState<string | null>(null);
+  const [faceQrPayload, setFaceQrPayload] = useState("");
   const [albumEvent, setAlbumEvent] = useState<EventType | null>(null);
   const [albums, setAlbums] = useState<AlbumType[]>([]);
   const [albumsLoading, setAlbumsLoading] = useState(false);
@@ -602,37 +605,61 @@ export default function UserDashboard() {
 
   const handleGenerateQrCode = async (event: EventType) => {
     const webUrl = getPublicGalleryUrl(event._id);
-    const payload = `web: ${webUrl}\nmobile: ${event._id}`;
+    const faceUrl = `${webUrl}?face=1`;
+    const payload = webUrl;
+    const globalFacePayload = faceUrl;
 
     setQrEvent(event);
     setQrPayload(payload);
+    setFaceQrPayload(globalFacePayload);
     setQrDataUrl(null);
+    setFaceQrDataUrl(null);
 
     try {
-      const dataUrl = await QRCode.toDataURL(payload, {
+      const [, settingsError] = await PatchRequestAxios(
+        "/gallery-access/settings",
+        { eventId: event._id, faceSearchEnabled: true },
+        { withToken: true, withCredentials: true },
+      );
+      if (settingsError) {
+        throw new Error(
+          settingsError.message || "Could not enable face search",
+        );
+      }
+      const options = {
         width: 720,
         margin: 2,
-        errorCorrectionLevel: "M",
-        color: {
-          dark: "#111827",
-          light: "#ffffff",
-        },
-      });
+        errorCorrectionLevel: "M" as const,
+        color: { dark: "#111827", light: "#ffffff" },
+      };
+      const [dataUrl, globalFaceDataUrl] = await Promise.all([
+        QRCode.toDataURL(payload, options),
+        QRCode.toDataURL(globalFacePayload, options),
+      ]);
       setQrDataUrl(dataUrl);
+      setFaceQrDataUrl(globalFaceDataUrl);
     } catch (error) {
-      toast.error("Failed to generate QR code");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to generate QR codes",
+      );
     }
   };
 
-  const handleDownloadQrCode = () => {
-    if (!qrDataUrl || !qrEvent) {
-      return;
-    }
-
+  const handleDownloadQrCode = (kind: "session" | "face") => {
+    if (!qrEvent) return;
+    const dataUrl = kind === "face" ? faceQrDataUrl : qrDataUrl;
+    if (!dataUrl) return;
     const link = document.createElement("a");
-    link.href = qrDataUrl;
-    link.download = `${qrEvent.title || "event"}-qr-code.png`;
+    link.href = dataUrl;
+    link.download = `${qrEvent.title || "event"}-${kind === "face" ? "face-delivery" : "session-gallery"}-qr.png`;
     link.click();
+  };
+
+  const handleCopyQrLink = async (kind: "session" | "face") => {
+    const value = kind === "face" ? faceQrPayload : qrPayload;
+    if (!value) return;
+    await navigator.clipboard.writeText(value);
+    toast.success(kind === "face" ? "Face delivery link copied" : "Session gallery link copied");
   };
 
   const handleCloseQrDialog = (open: boolean) => {
@@ -640,6 +667,8 @@ export default function UserDashboard() {
       setQrEvent(null);
       setQrDataUrl(null);
       setQrPayload("");
+      setFaceQrDataUrl(null);
+      setFaceQrPayload("");
     }
   };
 
@@ -872,7 +901,7 @@ export default function UserDashboard() {
                                 onClick={() => handleGenerateQrCode(event)}
                               >
                                 <QrCode className="mr-2 h-4 w-4" />
-                                Generate QR Code
+                                Session & Face QR Codes
                               </DropdownMenuItem>
 
                               <DropdownMenuItem
@@ -1496,29 +1525,94 @@ export default function UserDashboard() {
         </Dialog>
 
         <Dialog open={!!qrEvent} onOpenChange={handleCloseQrDialog}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Event QR Code</DialogTitle>
+              <DialogTitle className="flex items-center gap-2 text-xl">
+                <QrCode className="h-5 w-5" /> Session & Face Delivery QR Codes
+              </DialogTitle>
               <DialogDescription>
-                Guests can scan this to open the public event gallery.
+                Use the session QR for a street/mini-session gallery, or the
+                face QR so guests can build a reusable personal profile from 2-5
+                selfies.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4">
-              <div className="flex min-h-72 items-center justify-center rounded-lg border bg-white p-4">
-                {qrDataUrl ? (
-                  <img
-                    src={qrDataUrl}
-                    alt={`${qrEvent?.title || "Event"} QR code`}
-                    className="h-64 w-64"
-                  />
-                ) : (
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label>QR information</Label>
-                <Textarea readOnly value={qrPayload} rows={3} />
-              </div>
+            <div className="grid gap-5 md:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Quick session gallery QR
+                  </CardTitle>
+                  <CardDescription>
+                    Scan to see every published photo from this session. The
+                    gallery keeps updating on web and in the mobile app.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex min-h-64 items-center justify-center rounded-lg border bg-white p-4">
+                    {qrDataUrl ? (
+                      <img
+                        src={qrDataUrl}
+                        alt="Session gallery QR"
+                        className="h-56 w-56"
+                      />
+                    ) : (
+                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground">
+                    No login required. Guests open the live session and see every published image as it arrives.
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Button variant="outline" onClick={() => void handleCopyQrLink("session")} disabled={!qrPayload}>
+                      <Copy className="mr-2 h-4 w-4" /> Copy link
+                    </Button>
+                    <Button onClick={() => handleDownloadQrCode("session")} disabled={!qrDataUrl}>
+                      <Download className="mr-2 h-4 w-4" /> Download QR
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Global face delivery QR
+                  </CardTitle>
+                  <CardDescription>
+                    Guest takes 2-5 selfies, adds email + WhatsApp, then
+                    matching photos from enabled events can be delivered
+                    automatically.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex min-h-64 items-center justify-center rounded-lg border bg-white p-4">
+                    {faceQrDataUrl ? (
+                      <img
+                        src={faceQrDataUrl}
+                        alt="Global face delivery QR"
+                        className="h-56 w-56"
+                      />
+                    ) : (
+                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground">
+                    Reusable identity: 2-5 selfies + email + WhatsApp. Future matches can reach the guest automatically when the event allows it.
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Button variant="outline" onClick={() => void handleCopyQrLink("face")} disabled={!faceQrPayload}>
+                      <Copy className="mr-2 h-4 w-4" /> Copy link
+                    </Button>
+                    <Button onClick={() => handleDownloadQrCode("face")} disabled={!faceQrDataUrl}>
+                      <Download className="mr-2 h-4 w-4" /> Download QR
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+            <div className="rounded-xl border bg-muted/30 p-3 text-sm text-muted-foreground">
+              Face search is enabled when these QR codes are generated.
+              Email/WhatsApp auto-delivery remains controlled by the event owner
+              under Delivery & Privacy.
             </div>
             <DialogFooter className="gap-2 sm:justify-between">
               <Button
@@ -1528,12 +1622,16 @@ export default function UserDashboard() {
                   window.open(getPublicGalleryUrl(qrEvent._id), "_blank")
                 }
               >
-                <ExternalLink className="mr-2 h-4 w-4" />
-                Open Gallery
+                <ExternalLink className="mr-2 h-4 w-4" /> Open session gallery
               </Button>
-              <Button onClick={handleDownloadQrCode} disabled={!qrDataUrl}>
-                <Download className="mr-2 h-4 w-4" />
-                Download QR
+              <Button
+                variant="outline"
+                onClick={() =>
+                  qrEvent &&
+                  (window.location.hash = `#/planner/event/${qrEvent._id}/experience`)
+                }
+              >
+                <ShieldCheck className="mr-2 h-4 w-4" /> Delivery & Privacy
               </Button>
             </DialogFooter>
           </DialogContent>

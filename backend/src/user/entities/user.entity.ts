@@ -51,7 +51,7 @@ export class User {
   @Prop({ min: 10, max: 100 })
   age?: number;
 
-@Prop({ trim: true })
+  @Prop({ trim: true })
   bloodGroup?: string;
 
   @Prop({ min: 20, max: 200 })

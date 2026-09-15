@@ -13,14 +13,23 @@ class MainShellPage extends StatelessWidget {
       valueListenable: UserStorage.currentUser,
       builder: (context, user, _) {
         final isPhotographer = user?.isPhotographer ?? false;
-        
+        final hasPlannerAccess = user?.hasPlannerAccess ?? false;
+
         final routes = isPhotographer
-            ? [
-                const HomeRoute(),
-                const UploadRoute(),
-                const InvitationsRoute(),
-                const ProfileRoute(),
-              ]
+            ? (hasPlannerAccess
+                  ? [
+                      const HomeRoute(),
+                      const EventsRoute(),
+                      const UploadRoute(),
+                      const InvitationsRoute(),
+                      const ProfileRoute(),
+                    ]
+                  : [
+                      const HomeRoute(),
+                      const UploadRoute(),
+                      const InvitationsRoute(),
+                      const ProfileRoute(),
+                    ])
             : [
                 const HomeRoute(),
                 const EventsRoute(),
@@ -29,7 +38,9 @@ class MainShellPage extends StatelessWidget {
               ];
 
         return AutoTabsScaffold(
-          key: ValueKey(user?.role ?? 'guest'),
+          key: ValueKey(
+            '${user?.role ?? 'guest'}-${user?.hasPlannerAccess ?? false}',
+          ),
           routes: routes,
           bottomNavigationBuilder: (context, tabsRouter) => BottomNavigationBar(
             currentIndex: tabsRouter.activeIndex,

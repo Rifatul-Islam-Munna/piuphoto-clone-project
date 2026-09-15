@@ -265,6 +265,7 @@ export class UserService implements OnModuleInit {
       .select(
         'email id role phone name password userId gender whatsapp age maritalStatus bloodGroup weight subscriptionPlanId isSubscriber subscriptionStartDate subscriptionEndDate profileImage isActive isPublished isEmailVerified credits createdAt updatedAt',
       )
+      .populate('subscriptionPlanId', 'title permissions features')
       .lean();
 
     if (!findOneUser) {
@@ -398,7 +399,7 @@ export class UserService implements OnModuleInit {
     const findOne = await this.userModel
       .findById(id)
       .select('-password')
-      .populate('subscriptionPlanId', 'title permissions')
+      .populate('subscriptionPlanId', 'title permissions features isActive')
       .lean();
 
     if (!findOne) {

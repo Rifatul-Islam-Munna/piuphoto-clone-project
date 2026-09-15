@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsInt,
   IsMongoId,
+  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -37,6 +38,19 @@ export class GalleryBrandingDto {
   @IsOptional() @IsString() @MaxLength(500) logoUrl?: string;
   @IsOptional() @IsString() @MaxLength(500) coverUrl?: string;
   @IsOptional() @IsString() @MaxLength(500) watermarkUrl?: string;
+  @IsOptional() @IsString() @MaxLength(32) watermarkPosition?: string;
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.05)
+  @Max(1)
+  watermarkOpacity?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(5)
+  @Max(80)
+  watermarkScale?: number;
   @IsOptional() @IsString() @MaxLength(40) primaryColor?: string;
   @IsOptional() @IsString() @MaxLength(40) accentColor?: string;
   @IsOptional() @IsString() @MaxLength(80) fontFamily?: string;

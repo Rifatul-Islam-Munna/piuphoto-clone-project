@@ -5,6 +5,7 @@ import {
   CalendarDays,
   Camera,
   Images,
+  Inbox,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -22,9 +23,20 @@ import { useWorkspaceAccess } from "@/hooks/use-workspace-access";
 
 type PlannerLayoutProps = { children: ReactNode };
 
-const navItems = [
+const plannerNavItems = [
   { icon: LayoutDashboard, label: "Overview", href: "/planner/dashboard" },
   { icon: CalendarDays, label: "Events & Team", href: "/planner/events" },
+  { icon: Images, label: "Galleries", href: "/planner/gallery" },
+  { icon: Scissors, label: "Retouch", href: "/retouch" },
+  { icon: ShoppingBag, label: "Store", href: "/planner/store" },
+  { icon: BarChart3, label: "Analytics", href: "/planner/analytics" },
+  { icon: KeyRound, label: "API", href: "/planner/api" },
+  { icon: Settings, label: "Settings", href: "/planner/settings" },
+];
+
+const photographerNavItems = [
+  { icon: Camera, label: "Shooting workspace", href: "/photographer/dashboard" },
+  { icon: Inbox, label: "Invitations", href: "/photographer/invitations" },
   { icon: Images, label: "Galleries", href: "/planner/gallery" },
   { icon: Scissors, label: "Retouch", href: "/retouch" },
   { icon: ShoppingBag, label: "Store", href: "/planner/store" },
@@ -40,6 +52,9 @@ export default function PlannerLayout({ children }: PlannerLayoutProps) {
   const workspaceAccess = useWorkspaceAccess();
   const userRaw = localStorage.getItem("user");
   const user = userRaw ? JSON.parse(userRaw) : null;
+  const isPhotographer = user?.role === "photographer";
+  const navItems = isPhotographer ? photographerNavItems : plannerNavItems;
+  const homeHref = isPhotographer ? "/photographer/dashboard" : "/planner/dashboard";
 
   const logout = () => {
     localStorage.removeItem("access_token");
@@ -86,8 +101,8 @@ export default function PlannerLayout({ children }: PlannerLayoutProps) {
         <Button variant="ghost" size="icon" onClick={() => setOpen(true)}>
           <Menu className="h-5 w-5" />
         </Button>
-        <Link to="/planner/dashboard" className="font-bold">
-          airpix planner
+        <Link to={homeHref} className="font-bold">
+          {isPhotographer ? "airpix photographer" : "airpix planner"}
         </Link>
         <Button variant="ghost" size="icon" onClick={logout}>
           <LogOut className="h-5 w-5" />
@@ -105,9 +120,9 @@ export default function PlannerLayout({ children }: PlannerLayoutProps) {
           >
             <div className="mb-6 flex items-center justify-between">
               <div>
-                <p className="font-bold">Event Planner</p>
+                <p className="font-bold">{isPhotographer ? "Photographer" : "Event Planner"}</p>
                 <p className="text-xs text-muted-foreground">
-                  Operations workspace
+                  {isPhotographer ? "Photo delivery workspace" : "Operations workspace"}
                 </p>
               </div>
               <Button
@@ -125,14 +140,14 @@ export default function PlannerLayout({ children }: PlannerLayoutProps) {
 
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 border-r bg-background lg:flex lg:flex-col">
         <div className="flex h-16 items-center border-b px-5">
-          <Link to="/planner/dashboard" className="flex items-center gap-3">
+          <Link to={homeHref} className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-              <CalendarDays className="h-5 w-5" />
+              {isPhotographer ? <Camera className="h-5 w-5" /> : <CalendarDays className="h-5 w-5" />}
             </div>
             <div>
               <p className="font-bold leading-none">airpix</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Event Planner
+                {isPhotographer ? "Photographer" : "Event Planner"}
               </p>
             </div>
           </Link>
@@ -140,7 +155,16 @@ export default function PlannerLayout({ children }: PlannerLayoutProps) {
         <div className="flex flex-1 flex-col overflow-y-auto p-4">
           <Navigation />
           <div className="mt-auto space-y-3 border-t pt-4">
-            {workspaceAccess.data?.photographer ? (
+            {isPhotographer && workspaceAccess.data?.planner ? (
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => navigate("/planner/dashboard")}
+              >
+                <CalendarDays className="mr-2 h-4 w-4" />
+                Solo events
+              </Button>
+            ) : !isPhotographer && workspaceAccess.data?.photographer ? (
               <Button
                 variant="outline"
                 className="w-full justify-start"

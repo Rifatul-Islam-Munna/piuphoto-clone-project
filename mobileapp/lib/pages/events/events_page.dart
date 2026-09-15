@@ -3,10 +3,12 @@ import 'dart:io';
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/utils/image_loader.dart';
 import 'package:mobileapp/core/utils/image_upload_helper.dart';
 import 'package:mobileapp/models/album_model.dart';
+import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/pages/event_gallery/event_gallery_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
@@ -119,7 +121,7 @@ class _EventsListViewState extends State<_EventsListView> {
   @override
   Widget build(BuildContext context) {
     final canCreateEvents =
-        !(UserStorage.currentUser.value?.isPhotographer ?? false);
+        UserStorage.currentUser.value?.hasPlannerAccess ?? false;
 
     return Scaffold(
       appBar: AppBar(
@@ -204,7 +206,7 @@ class _EventsListViewState extends State<_EventsListView> {
               ),
             ),
             const SizedBox(height: 24),
-            if (!(UserStorage.currentUser.value?.isPhotographer ?? false))
+            if (UserStorage.currentUser.value?.hasPlannerAccess ?? false)
               FilledButton.icon(
                 onPressed: () => _showCreateEventDialog(context),
                 icon: const Icon(Icons.add),
@@ -407,7 +409,7 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
         );
       }
 
-      await DioHelper.post(
+      final response = await DioHelper.post(
         '/event',
         data: {
           'title': _titleController.text.trim(),
@@ -418,6 +420,15 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
             'image': {'url': imageUrl},
         },
       );
+
+      final raw = response.data is Map ? response.data['data'] : null;
+      if ((UserStorage.currentUser.value?.isPhotographer ?? false) &&
+          raw is Map) {
+        final event = EventSummary.fromJson(Map<String, dynamic>.from(raw));
+        if (event.id.isNotEmpty) {
+          await ActiveEventStorage.saveActiveEvent(event);
+        }
+      }
 
       if (mounted) {
         Navigator.pop(context);
@@ -664,6 +675,19 @@ class _EventDetailPageState extends State<_EventDetailPage> {
     super.dispose();
   }
 
+  Future<void> _makeActiveEvent() async {
+    await ActiveEventStorage.saveActiveEvent(
+      EventSummary(
+        id: _event.id,
+        title: _event.title,
+        description: _event.description,
+        imageUrl: _event.imageUrl,
+        photosCount: _event.photosCount,
+      ),
+    );
+    AppToast.success('Active upload event updated');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -766,6 +790,18 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                       ],
                     ],
                   ),
+                  if (UserStorage.currentUser.value?.isPhotographer ??
+                      false) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.tonalIcon(
+                        onPressed: _makeActiveEvent,
+                        icon: const Icon(Icons.cloud_upload_outlined),
+                        label: const Text('Use as active upload event'),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   InkWell(
                     onTap: () =>
@@ -830,6 +866,18 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                       _event.description!,
                       style: Theme.of(context).textTheme.bodyLarge,
                     ),
+                  ],
+                  if (UserStorage.currentUser.value?.hasPlannerAccess ??
+                      false) ...[
+                    const SizedBox(height: 32),
+                    Text(
+                      'Gallery Access',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _GalleryPrivacySection(eventId: _event.id),
                   ],
                   const SizedBox(height: 32),
                   _EventAlbumsSection(eventId: _event.id),
@@ -919,6 +967,397 @@ class _EventDetailPageState extends State<_EventDetailPage> {
         }
       }
     }
+  }
+}
+
+class _GalleryPrivacySection extends StatefulWidget {
+  const _GalleryPrivacySection({required this.eventId});
+
+  final String eventId;
+
+  @override
+  State<_GalleryPrivacySection> createState() => _GalleryPrivacySectionState();
+}
+
+class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
+  final _passwordController = TextEditingController();
+  String _mode = 'public';
+  String _loadedMode = 'public';
+  bool _loading = true;
+  bool _saving = false;
+  bool _faceSearchEnabled = false;
+  bool _guestNotificationsEnabled = false;
+  bool _emailNotificationsEnabled = true;
+  bool _whatsappNotificationsEnabled = false;
+  bool _uploadingWatermark = false;
+  Map<String, dynamic> _branding = {};
+  String _watermarkPosition = 'bottom_right';
+  double _watermarkOpacity = 0.7;
+  double _watermarkScale = 24;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final response = await DioHelper.get(
+        '/gallery-access/settings',
+        queryParameters: {'eventId': widget.eventId},
+      );
+      final raw = response.data is Map ? response.data['data'] : null;
+      final data = raw is Map
+          ? Map<String, dynamic>.from(raw)
+          : <String, dynamic>{};
+      final mode = data['galleryVisibility']?.toString() ?? 'public';
+      if (mounted) {
+        setState(() {
+          _mode = mode;
+          _loadedMode = mode;
+          _faceSearchEnabled = data['faceSearchEnabled'] == true;
+          _guestNotificationsEnabled =
+              data['guestNotificationsEnabled'] == true;
+          _emailNotificationsEnabled =
+              data['emailNotificationsEnabled'] != false;
+          _whatsappNotificationsEnabled =
+              data['whatsappNotificationsEnabled'] == true;
+          final brandingRaw = data['branding'];
+          _branding = brandingRaw is Map
+              ? Map<String, dynamic>.from(brandingRaw)
+              : <String, dynamic>{};
+          _watermarkPosition =
+              _branding['watermarkPosition']?.toString() ?? 'bottom_right';
+          _watermarkOpacity =
+              (_branding['watermarkOpacity'] as num?)?.toDouble() ?? 0.7;
+          _watermarkScale =
+              (_branding['watermarkScale'] as num?)?.toDouble() ?? 24;
+        });
+      }
+    } catch (_) {
+      AppToast.error('Could not load gallery privacy');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _pickWatermark() async {
+    if (_uploadingWatermark) return;
+    setState(() => _uploadingWatermark = true);
+    try {
+      final picked = await ImageUploadHelper.pickFromGallery();
+      if (picked == null) return;
+      final url = await ImageUploadHelper.uploadFile(
+        path: picked.path,
+        filename: picked.name,
+      );
+      if (!mounted) return;
+      setState(() {
+        _branding = {..._branding, 'watermarkUrl': url};
+      });
+      AppToast.success('Watermark uploaded');
+    } catch (_) {
+      AppToast.error('Could not upload watermark');
+    } finally {
+      if (mounted) setState(() => _uploadingWatermark = false);
+    }
+  }
+
+  Future<void> _save() async {
+    final password = _passwordController.text.trim();
+    if (_mode == 'password' && _loadedMode != 'password' && password.isEmpty) {
+      AppToast.error('Enter a gallery password');
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await DioHelper.patch(
+        '/gallery-access/settings',
+        data: {
+          'eventId': widget.eventId,
+          'visibility': _mode,
+          'faceSearchEnabled': _faceSearchEnabled,
+          'guestNotificationsEnabled': _guestNotificationsEnabled,
+          'emailNotificationsEnabled': _emailNotificationsEnabled,
+          'whatsappNotificationsEnabled': _whatsappNotificationsEnabled,
+          'branding': {
+            ..._branding,
+            'watermarkPosition': _watermarkPosition,
+            'watermarkOpacity': _watermarkOpacity,
+            'watermarkScale': _watermarkScale,
+          },
+          if (_mode == 'password' && password.isNotEmpty) 'password': password,
+        },
+      );
+      _passwordController.clear();
+      _loadedMode = _mode;
+      AppToast.success(
+        _mode == 'password'
+            ? 'Gallery is password protected'
+            : 'Gallery access updated',
+      );
+    } catch (_) {
+      AppToast.error('Could not update gallery privacy');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: _mode,
+              decoration: const InputDecoration(
+                labelText: 'Who can view this gallery?',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: 'public',
+                  child: Text('Public - anyone with link'),
+                ),
+                DropdownMenuItem(
+                  value: 'password',
+                  child: Text('Password protected'),
+                ),
+                DropdownMenuItem(
+                  value: 'private',
+                  child: Text('Private secure link only'),
+                ),
+                DropdownMenuItem(
+                  value: 'facial',
+                  child: Text('Face recognition privacy'),
+                ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _mode = value ?? 'public'),
+            ),
+            if (_mode == 'password') ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _passwordController,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: _loadedMode == 'password'
+                      ? 'New password (optional)'
+                      : 'Gallery password',
+                  hintText: _loadedMode == 'password'
+                      ? 'Leave blank to keep current password'
+                      : 'Required',
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Text(
+              'Password-protected galleries block viewing and downloads until the guest unlocks the gallery.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _faceSearchEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _faceSearchEnabled = value),
+              title: const Text('Face recognition'),
+              subtitle: const Text(
+                'Allow guests to build personal galleries and use the face-delivery QR.',
+              ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _guestNotificationsEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) =>
+                        setState(() => _guestNotificationsEnabled = value),
+              title: const Text('Automatic match alerts'),
+              subtitle: const Text(
+                'Send a personal gallery link when this event finds a registered guest.',
+              ),
+            ),
+            if (_guestNotificationsEnabled) ...[
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _emailNotificationsEnabled,
+                onChanged: _saving
+                    ? null
+                    : (value) =>
+                          setState(() => _emailNotificationsEnabled = value),
+                title: const Text('Email delivery'),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _whatsappNotificationsEnabled,
+                onChanged: _saving
+                    ? null
+                    : (value) =>
+                          setState(() => _whatsappNotificationsEnabled = value),
+                title: const Text('WhatsApp delivery'),
+              ),
+            ],
+            const Divider(height: 28),
+            Text(
+              'Store preview watermark',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Preview files are resized and watermarked. Paid customers receive the original full-resolution file without this watermark.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            if ((_branding['watermarkUrl']?.toString().isNotEmpty ?? false))
+              Container(
+                height: 90,
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.all(8),
+                child: ImageLoader.loadImage(
+                  _branding['watermarkUrl'].toString(),
+                  fit: BoxFit.contain,
+                ),
+              ),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _uploadingWatermark ? null : _pickWatermark,
+                    icon: _uploadingWatermark
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.branding_watermark_outlined),
+                    label: Text(
+                      _branding['watermarkUrl'] == null
+                          ? 'Upload watermark'
+                          : 'Replace watermark',
+                    ),
+                  ),
+                ),
+                if (_branding['watermarkUrl'] != null) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'Remove watermark',
+                    onPressed: _saving
+                        ? null
+                        : () => setState(() {
+                            _branding = {..._branding}..remove('watermarkUrl');
+                          }),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: _watermarkPosition,
+              decoration: const InputDecoration(
+                labelText: 'Watermark position',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'top_left', child: Text('Top left')),
+                DropdownMenuItem(
+                  value: 'top_center',
+                  child: Text('Top center'),
+                ),
+                DropdownMenuItem(value: 'top_right', child: Text('Top right')),
+                DropdownMenuItem(value: 'center', child: Text('Center')),
+                DropdownMenuItem(
+                  value: 'bottom_left',
+                  child: Text('Bottom left'),
+                ),
+                DropdownMenuItem(
+                  value: 'bottom_center',
+                  child: Text('Bottom center'),
+                ),
+                DropdownMenuItem(
+                  value: 'bottom_right',
+                  child: Text('Bottom right'),
+                ),
+                DropdownMenuItem(value: 'tile', child: Text('Tile')),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(
+                      () => _watermarkPosition = value ?? 'bottom_right',
+                    ),
+            ),
+            const SizedBox(height: 12),
+            Text('Opacity ${(_watermarkOpacity * 100).round()}%'),
+            Slider(
+              value: _watermarkOpacity.clamp(0.05, 1),
+              min: 0.05,
+              max: 1,
+              divisions: 19,
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _watermarkOpacity = value),
+            ),
+            Text('Size ${_watermarkScale.round()}% of preview width'),
+            Slider(
+              value: _watermarkScale.clamp(5, 80),
+              min: 5,
+              max: 80,
+              divisions: 15,
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _watermarkScale = value),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _saving ? null : _save,
+                icon: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.lock_outline),
+                label: Text(_saving ? 'Saving...' : 'Save gallery access'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

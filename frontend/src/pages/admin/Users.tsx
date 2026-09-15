@@ -103,7 +103,7 @@ const defaultFormData: UserFormData = {
 const roleLabels: Record<UserType, string> = {
   admin: "Admin",
   editor: "Editor",
-  user: "User",
+  user: "Event Planner",
   photographer: "Photographer",
 };
 

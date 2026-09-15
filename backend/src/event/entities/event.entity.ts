@@ -87,6 +87,9 @@ export class Event {
     logoUrl?: string;
     coverUrl?: string;
     watermarkUrl?: string;
+    watermarkPosition?: string;
+    watermarkOpacity?: number;
+    watermarkScale?: number;
     primaryColor?: string;
     accentColor?: string;
     fontFamily?: string;

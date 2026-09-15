@@ -17,15 +17,21 @@ export class GuestFaceRegistration {
   faceVectors: number[][];
   @Prop({ trim: true, lowercase: true }) email?: string;
   @Prop({ trim: true }) whatsapp?: string;
+  @Prop({ trim: true, index: true, select: false }) emailLookupHash?: string;
   @Prop({ trim: true, index: true, select: false }) mobileLookupHash?: string;
+  @Prop({ default: false, index: true }) globalProfile: boolean;
+  @Prop({ default: 1, min: 1 }) profileRevision: number;
   @Prop({ default: false }) notifyEmail: boolean;
   @Prop({ default: false }) notifyWhatsapp: boolean;
   @Prop({ required: true }) consentAt: Date;
   @Prop({ trim: true, default: 'gallery' }) consentSource: string;
-  @Prop({ required: true, index: true }) expiresAt: Date;
+  @Prop({ index: true }) expiresAt?: Date;
+  @Prop() lastSeenAt?: Date;
   @Prop() lastMatchedAt?: Date;
   @Prop() lastNotificationAt?: Date;
   @Prop({ trim: true }) selfieFingerprint?: string;
+  @Prop({ type: [String], default: [], select: false })
+  selfieFingerprints: string[];
 }
 
 export const GuestFaceRegistrationSchema = SchemaFactory.createForClass(
@@ -33,4 +39,14 @@ export const GuestFaceRegistrationSchema = SchemaFactory.createForClass(
 );
 GuestFaceRegistrationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 GuestFaceRegistrationSchema.index({ eventId: 1, createdAt: -1 });
-GuestFaceRegistrationSchema.index({ eventId: 1, mobileLookupHash: 1, expiresAt: 1 });
+GuestFaceRegistrationSchema.index({
+  eventId: 1,
+  mobileLookupHash: 1,
+  expiresAt: 1,
+});
+GuestFaceRegistrationSchema.index({
+  globalProfile: 1,
+  emailLookupHash: 1,
+  mobileLookupHash: 1,
+});
+GuestFaceRegistrationSchema.index({ globalProfile: 1, lastSeenAt: -1 });

@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -9,6 +9,8 @@ import {
   Image as ImageIcon,
   Loader2,
   Lock,
+  Mail,
+  MessageCircle,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -36,12 +38,16 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import WatermarkEditor from "@/components/gallery/WatermarkEditor";
 import PlannerLayout from "./PlannerLayout";
 
 type Branding = {
   logoUrl?: string;
   coverUrl?: string;
   watermarkUrl?: string;
+  watermarkPosition?: string;
+  watermarkOpacity?: number;
+  watermarkScale?: number;
   primaryColor?: string;
   accentColor?: string;
   fontFamily?: string;
@@ -132,14 +138,17 @@ export default function Phase2Settings() {
     {},
   );
   const [albumModes, setAlbumModes] = useState<Record<string, string>>({});
-  const [albumPolicies, setAlbumPolicies] = useState<Record<string, string>>({});
+  const [albumPolicies, setAlbumPolicies] = useState<Record<string, string>>(
+    {},
+  );
 
   useEffect(() => {
     const rows = albumsQuery.data?.data || [];
     setAlbumModes((current) => {
       const next = { ...current };
       for (const album of rows) {
-        if (!next[album._id]) next[album._id] = album.galleryVisibility || "inherit";
+        if (!next[album._id])
+          next[album._id] = album.galleryVisibility || "inherit";
       }
       return next;
     });
@@ -150,7 +159,8 @@ export default function Phase2Settings() {
     setAlbumPolicies((current) => {
       const next = { ...current };
       for (const album of rows) {
-        if (!next[album._id]) next[album._id] = album.publishPolicy || "inherit";
+        if (!next[album._id])
+          next[album._id] = album.publishPolicy || "inherit";
       }
       return next;
     });
@@ -422,14 +432,24 @@ export default function Phase2Settings() {
               <div className="space-y-2">
                 <Label>Publish workflow</Label>
                 <Select value={publishPolicy} onValueChange={setPublishPolicy}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="auto_upload">Publish after upload</SelectItem>
-                    <SelectItem value="auto_ai">Publish after AI enhancement</SelectItem>
-                    <SelectItem value="manual">Manual review & publish</SelectItem>
+                    <SelectItem value="auto_upload">
+                      Publish after upload
+                    </SelectItem>
+                    <SelectItem value="auto_ai">
+                      Publish after AI enhancement
+                    </SelectItem>
+                    <SelectItem value="manual">
+                      Manual review & publish
+                    </SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">Controls when new camera photos become visible to guests.</p>
+                <p className="text-xs text-muted-foreground">
+                  Controls when new camera photos become visible to guests.
+                </p>
               </div>
               {visibility === "password" ? (
                 <div className="space-y-2">
@@ -497,9 +517,12 @@ export default function Phase2Settings() {
                 onChange={setFaceSearchEnabled}
               />
               <div className="rounded-xl border p-3">
-                <p className="text-sm font-medium">Explicit selfie consent required</p>
+                <p className="text-sm font-medium">
+                  Explicit selfie consent required
+                </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Face recognition always requires guest consent before a face profile is created.
+                  Face recognition always requires guest consent before a face
+                  profile is created.
                 </p>
               </div>
               <div className="space-y-2">
@@ -542,39 +565,70 @@ export default function Phase2Settings() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Automatic guest notifications</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b bg-muted/20">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle>Automatic guest delivery</CardTitle>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Send a secure personal-gallery link whenever a new face match arrives.
+                  </p>
+                </div>
+                <Badge variant={guestNotificationsEnabled ? "default" : "outline"}>
+                  {guestNotificationsEnabled ? "Automation on" : "Automation off"}
+                </Badge>
+              </div>
+            </CardHeader>            <CardContent className="space-y-4 p-5">
               <Toggle
                 label="Enable automatic match notifications"
                 checked={guestNotificationsEnabled}
                 onChange={setGuestNotificationsEnabled}
               />
-              <Toggle
-                label="Email delivery"
-                checked={emailNotificationsEnabled}
-                onChange={setEmailNotificationsEnabled}
-              />
-              <Toggle
-                label="WhatsApp delivery"
-                checked={whatsappNotificationsEnabled}
-                onChange={setWhatsappNotificationsEnabled}
-              />
-              <p className="text-xs text-muted-foreground">
-                New face matches are grouped before sending, deduplicated per
-                guest/photo, retried on failure, and linked to the guest's
-                secure personal gallery.
-              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex items-center justify-between gap-4 rounded-2xl border p-4 transition-colors hover:bg-muted/30">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted">
+                      <Mail className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold">Email delivery</p>
+                      <p className="text-xs text-muted-foreground">Send new match links by email.</p>
+                    </div>
+                  </div>
+                  <Switch
+                    disabled={!guestNotificationsEnabled}
+                    checked={emailNotificationsEnabled}
+                    onCheckedChange={setEmailNotificationsEnabled}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-4 rounded-2xl border p-4 transition-colors hover:bg-muted/30">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted">
+                      <MessageCircle className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold">WhatsApp delivery</p>
+                      <p className="text-xs text-muted-foreground">Send new match links by WhatsApp.</p>
+                    </div>
+                  </div>                  <Switch
+                    disabled={!guestNotificationsEnabled}
+                    checked={whatsappNotificationsEnabled}
+                    onCheckedChange={setWhatsappNotificationsEnabled}
+                  />
+                </div>
+              </div>
+              <div className="rounded-xl border bg-muted/20 p-3 text-xs text-muted-foreground">
+                Guests still choose whether they want each available channel. Matches are batched, deduplicated and linked to the secure personal gallery.
+              </div>
               <div className="flex flex-wrap gap-2">
-                {Object.entries(
-                  notificationQuery.data?.notifications || {},
-                ).map(([status, count]) => (
+                {Object.entries(notificationQuery.data?.notifications || {}).map(([status, count]) => (
                   <Badge key={status} variant="outline">
                     {status}: {count}
                   </Badge>
                 ))}
+                {notificationTotal === 0 ? (
+                  <Badge variant="outline">No deliveries yet</Badge>
+                ) : null}
               </div>
             </CardContent>
           </Card>
@@ -601,6 +655,18 @@ export default function Phase2Settings() {
                 value={branding.watermarkUrl}
                 loading={uploadingAsset === "watermarkUrl"}
                 onFile={(file) => uploadAsset(file, "watermarkUrl")}
+              />
+              <WatermarkEditor
+                value={branding}
+                onChange={(patch) =>
+                  setBranding((current) => ({ ...current, ...patch }))
+                }
+                coverUrl={branding.coverUrl}
+                logoUrl={branding.logoUrl}
+                eventTitle={settingsQuery.data?.data?.title}
+                footerText={branding.footerText}
+                sponsorText={branding.sponsorText}
+                whiteLabel={branding.whiteLabel}
               />
               <div className="grid gap-3 sm:grid-cols-2">
                 <ColorField
@@ -651,20 +717,13 @@ export default function Phase2Settings() {
               <Toggle
                 label="White-label gallery"
                 checked={Boolean(branding.whiteLabel)}
-                onChange={(checked) => setBranding((current) => ({ ...current, whiteLabel: checked }))}
+                onChange={(checked) =>
+                  setBranding((current) => ({
+                    ...current,
+                    whiteLabel: checked,
+                  }))
+                }
               />
-              <div className="space-y-2 border-t pt-4">
-                <Label>Live branding preview</Label>
-                <div className="relative aspect-[16/9] overflow-hidden rounded-xl border bg-muted">
-                  {branding.coverUrl ? <img src={branding.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" /> : null}
-                  <div className="absolute inset-0 bg-black/45" />
-                  <div className="relative flex h-full flex-col justify-between p-4 text-white">
-                    {branding.logoUrl ? <img src={branding.logoUrl} alt="" className="max-h-10 max-w-32 object-contain" /> : <span className="font-bold">{branding.whiteLabel ? "" : "airpix"}</span>}
-                    <div><p className="text-xl font-bold">{settingsQuery.data?.data?.title || "Event gallery"}</p><p className="text-xs text-white/75">{branding.footerText || branding.sponsorText || "Your live branded gallery"}</p></div>
-                  </div>
-                  {branding.watermarkUrl ? <img src={branding.watermarkUrl} alt="" className="absolute bottom-3 right-3 max-h-10 max-w-[35%] object-contain opacity-80" /> : null}
-                </div>
-              </div>
             </CardContent>
           </Card>
         </div>
@@ -691,7 +750,11 @@ export default function Phase2Settings() {
                     </p>
                   </div>
                   <Select
-                    value={albumModes[album._id] || album.galleryVisibility || "inherit"}
+                    value={
+                      albumModes[album._id] ||
+                      album.galleryVisibility ||
+                      "inherit"
+                    }
                     onValueChange={(mode) =>
                       setAlbumModes((current) => ({
                         ...current,
@@ -712,12 +775,25 @@ export default function Phase2Settings() {
                     </SelectContent>
                   </Select>
                   <Select
-                    value={albumPolicies[album._id] || album.publishPolicy || "inherit"}
-                    onValueChange={(policy) => setAlbumPolicies((current) => ({ ...current, [album._id]: policy }))}
+                    value={
+                      albumPolicies[album._id] ||
+                      album.publishPolicy ||
+                      "inherit"
+                    }
+                    onValueChange={(policy) =>
+                      setAlbumPolicies((current) => ({
+                        ...current,
+                        [album._id]: policy,
+                      }))
+                    }
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="inherit">Inherit publishing</SelectItem>
+                      <SelectItem value="inherit">
+                        Inherit publishing
+                      </SelectItem>
                       <SelectItem value="auto_upload">After upload</SelectItem>
                       <SelectItem value="auto_ai">After AI</SelectItem>
                       <SelectItem value="manual">Manual</SelectItem>
@@ -740,8 +816,14 @@ export default function Phase2Settings() {
                     onClick={() =>
                       albumMutation.mutate({
                         albumId: album._id,
-                        mode: albumModes[album._id] || album.galleryVisibility || "inherit",
-                        publishPolicy: albumPolicies[album._id] || album.publishPolicy || "inherit",
+                        mode:
+                          albumModes[album._id] ||
+                          album.galleryVisibility ||
+                          "inherit",
+                        publishPolicy:
+                          albumPolicies[album._id] ||
+                          album.publishPolicy ||
+                          "inherit",
                       })
                     }
                   >

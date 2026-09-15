@@ -140,19 +140,23 @@ export class GalleryAccessService {
     albumId?: string,
     scopes: TokenScope[] = ['gallery'],
   ) {
-    if (!payload || payload.eventId !== eventId || !scopes.includes(payload.scope)) {
+    if (
+      !payload ||
+      payload.eventId !== eventId ||
+      !scopes.includes(payload.scope)
+    ) {
       return false;
     }
     const exactAlbum = (payload.albumId || '') === (albumId || '');
     const eventWideInheritedAlbum = Boolean(
       albumId &&
-        !payload.albumId &&
-        access.album?.galleryVisibility === GalleryAccessMode.INHERIT &&
-        payload.version.split(':')[0] === access.version.split(':')[0],
+      !payload.albumId &&
+      access.album?.galleryVisibility === GalleryAccessMode.INHERIT &&
+      payload.version.split(':')[0] === access.version.split(':')[0],
     );
     return Boolean(
       (exactAlbum && payload.version === access.version) ||
-        eventWideInheritedAlbum,
+      eventWideInheritedAlbum,
     );
   }
 
@@ -178,8 +182,12 @@ export class GalleryAccessService {
 
   async assertFacialBlurPreview(eventId: string, albumId?: string) {
     const access = await this.effective(eventId, albumId);
-    const mode = access.event.facialPrivacyMode || FacialPrivacyMode.HIDE_NON_MATCHES;
-    if (access.mode !== GalleryAccessMode.FACIAL || mode !== FacialPrivacyMode.BLUR_NON_MATCHES) {
+    const mode =
+      access.event.facialPrivacyMode || FacialPrivacyMode.HIDE_NON_MATCHES;
+    if (
+      access.mode !== GalleryAccessMode.FACIAL ||
+      mode !== FacialPrivacyMode.BLUR_NON_MATCHES
+    ) {
       throw new ForbiddenException('FACIAL_BLUR_PREVIEW_DISABLED');
     }
     return access;
@@ -231,6 +239,8 @@ export class GalleryAccessService {
       faceSearchEnabled: event.faceSearchEnabled === true,
       faceConsentRequired: event.faceConsentRequired !== false,
       guestNotificationsEnabled: event.guestNotificationsEnabled === true,
+      emailNotificationsEnabled: event.emailNotificationsEnabled !== false,
+      whatsappNotificationsEnabled: event.whatsappNotificationsEnabled === true,
       branding: event.branding || {},
       gallerySlug: event.gallerySlug,
       customDomain: event.customDomain,

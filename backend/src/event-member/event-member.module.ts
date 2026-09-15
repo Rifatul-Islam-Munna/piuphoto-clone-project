@@ -7,6 +7,10 @@ import {
 } from '../event/entities/event-invitation.entity';
 import { User, UserSchema } from '../user/entities/user.entity';
 import { Album, AlbumSchema } from '../album/entities/album.entity';
+import {
+  SubscriptionPlan,
+  SubscriptionPlanSchema,
+} from '../subscription/entities/subscription-plan.entity';
 import { EventMemberController } from './event-member.controller';
 import { EventMemberService } from './event-member.service';
 import { EventMember, EventMemberSchema } from './entities/event-member.entity';
@@ -19,6 +23,7 @@ import { EventMember, EventMemberSchema } from './entities/event-member.entity';
       { name: EventInvitation.name, schema: EventInvitationSchema },
       { name: User.name, schema: UserSchema },
       { name: Album.name, schema: AlbumSchema },
+      { name: SubscriptionPlan.name, schema: SubscriptionPlanSchema },
     ]),
   ],
   controllers: [EventMemberController],

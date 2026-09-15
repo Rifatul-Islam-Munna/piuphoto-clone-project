@@ -360,7 +360,7 @@ export default function Phase2Gallery() {
               review, and publish while the event is live.
             </p>
           </div>
-          <div className="w-full xl:w-72">
+          <div className="w-full space-y-2 xl:w-72">
             <Label>Event</Label>
             <Select
               value={selectedEventId}
@@ -382,6 +382,19 @@ export default function Phase2Gallery() {
                 ))}
               </SelectContent>
             </Select>
+            <Button
+              variant="outline"
+              className="w-full"
+              disabled={!selectedEventId}
+              onClick={() => {
+                if (selectedEventId) {
+                  window.location.hash = `#/planner/event/${selectedEventId}/experience`;
+                }
+              }}
+            >
+              <ShieldCheck className="mr-2 h-4 w-4" />
+              Privacy & gallery password
+            </Button>
           </div>
         </div>
 

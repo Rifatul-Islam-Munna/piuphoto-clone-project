@@ -168,12 +168,17 @@ export class EventService {
     };
   }
 
-  async create(createEventDto: CreateEventDto) {
+  async create(createEventDto: CreateEventDto, actorRole?: string) {
     const normalizedUserId = String(createEventDto.userId);
 
     if (!Types.ObjectId.isValid(normalizedUserId)) {
       throw new HttpException('Invalid user id', 400);
     }
+
+    await this.eventMemberService.assertCanCreateOwnEvent(
+      normalizedUserId,
+      actorRole,
+    );
 
     const event = await this.eventModel.create({
       ...createEventDto,

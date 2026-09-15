@@ -15,6 +15,10 @@ import {
 import { User, UserDocument, UserType } from '../user/entities/user.entity';
 import { Album, AlbumDocument } from '../album/entities/album.entity';
 import {
+  SubscriptionPlan,
+  SubscriptionPlanDocument,
+} from '../subscription/entities/subscription-plan.entity';
+import {
   AddEventMemberDto,
   UpdateEventMemberDto,
 } from './dto/event-member.dto';
@@ -38,6 +42,8 @@ export class EventMemberService {
     private readonly invitationModel: Model<EventInvitationDocument>,
     @InjectModel(Album.name)
     private readonly albumModel: Model<AlbumDocument>,
+    @InjectModel(SubscriptionPlan.name)
+    private readonly subscriptionPlanModel: Model<SubscriptionPlanDocument>,
   ) {}
 
   private toObjectId(id: string | Types.ObjectId) {
@@ -67,6 +73,64 @@ export class EventMemberService {
     }
   }
 
+  private async hasPlannerSubscription(userId: string) {
+    const user = await this.userModel
+      .findById(userId)
+      .select('role isSubscriber subscriptionPlanId subscriptionEndDate')
+      .lean();
+    if (!user) return false;
+    if (
+      user.role === UserType.ADMIN ||
+      user.role === UserType.USER ||
+      user.role === UserType.EDITOR
+    ) {
+      return true;
+    }
+    if (
+      user.role !== UserType.PHOTOGRAPHER ||
+      !user.isSubscriber ||
+      !user.subscriptionPlanId
+    ) {
+      return false;
+    }
+    if (
+      user.subscriptionEndDate &&
+      new Date(user.subscriptionEndDate).getTime() < Date.now()
+    ) {
+      return false;
+    }
+    const plan = await this.subscriptionPlanModel
+      .findById(user.subscriptionPlanId)
+      .select('features isActive')
+      .lean();
+    return Boolean(
+      plan?.isActive !== false &&
+      (plan?.features || []).includes('event.create'),
+    );
+  }
+
+  async assertCanCreateOwnEvent(userId?: string, globalRole?: string) {
+    if (!userId || !Types.ObjectId.isValid(userId)) {
+      throw new ForbiddenException('Login required to create events');
+    }
+    if (
+      globalRole === UserType.ADMIN ||
+      globalRole === UserType.USER ||
+      globalRole === UserType.EDITOR
+    ) {
+      return true;
+    }
+    if (
+      globalRole === UserType.PHOTOGRAPHER &&
+      (await this.hasPlannerSubscription(userId))
+    ) {
+      return true;
+    }
+    throw new ForbiddenException(
+      'Your photographer account needs a planner-enabled plan to create solo events',
+    );
+  }
+
   async workspaceAccess(userId?: string, globalRole?: string) {
     if (!userId || !Types.ObjectId.isValid(userId)) {
       return { planner: false, photographer: false, roles: [] as string[] };
@@ -76,9 +140,14 @@ export class EventMemberService {
       status: EventMemberStatus.ACTIVE,
     });
     const roleSet = new Set(roles.map(String));
+    const plannerSubscription =
+      globalRole === UserType.PHOTOGRAPHER
+        ? await this.hasPlannerSubscription(userId)
+        : false;
     const planner =
       globalRole === UserType.USER ||
       globalRole === UserType.EDITOR ||
+      plannerSubscription ||
       roleSet.has(EventMemberRole.OWNER) ||
       roleSet.has(EventMemberRole.EVENT_PLANNER);
     const photographer =
@@ -89,8 +158,7 @@ export class EventMemberService {
       planner ||
       roleSet.has(EventMemberRole.RETOUCHER) ||
       roleSet.has(EventMemberRole.REVIEWER);
-    const reviewer =
-      planner || roleSet.has(EventMemberRole.REVIEWER);
+    const reviewer = planner || roleSet.has(EventMemberRole.REVIEWER);
     return { planner, photographer, retoucher, reviewer, roles: [...roleSet] };
   }
 
@@ -365,7 +433,11 @@ export class EventMemberService {
     return event;
   }
 
-  async assertCanPublish(eventId: string, userId?: string, globalRole?: string) {
+  async assertCanPublish(
+    eventId: string,
+    userId?: string,
+    globalRole?: string,
+  ) {
     const event = await this.eventOrThrow(eventId);
     if (globalRole === UserType.ADMIN || String(event.userId) === userId) {
       return event;

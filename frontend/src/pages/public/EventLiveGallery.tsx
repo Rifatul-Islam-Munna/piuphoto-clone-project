@@ -11,6 +11,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   Camera,
+  CheckCircle2,
   Copy,
   Download,
   Folder,
@@ -32,12 +33,19 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { GetRequestAxios, PatchRequestAxios, PostRequestAxios } from "@/api-hooks/api-hooks";
+import {
+  GetRequestAxios,
+  PatchRequestAxios,
+  PostRequestAxios,
+} from "@/api-hooks/api-hooks";
 
 type Branding = {
   logoUrl?: string;
   coverUrl?: string;
   watermarkUrl?: string;
+  watermarkPosition?: string;
+  watermarkOpacity?: number;
+  watermarkScale?: number;
   primaryColor?: string;
   accentColor?: string;
   fontFamily?: string;
@@ -58,6 +66,8 @@ type GalleryInfo = {
   faceSearchEnabled: boolean;
   faceConsentRequired: boolean;
   guestNotificationsEnabled: boolean;
+  emailNotificationsEnabled?: boolean;
+  whatsappNotificationsEnabled?: boolean;
   facialPrivacyMode?: "off" | "hide_non_matches" | "blur_non_matches";
   branding?: Branding;
 };
@@ -85,7 +95,12 @@ type Album = {
 
 type PersonalGalleryResponse = GalleryImageResponse & {
   event?: { branding?: Branding };
-  notificationPreferences?: { email?: string; whatsapp?: string; notifyEmail?: boolean; notifyWhatsapp?: boolean };
+  notificationPreferences?: {
+    email?: string;
+    whatsapp?: string;
+    notifyEmail?: boolean;
+    notifyWhatsapp?: boolean;
+  };
 };
 
 const pageSize = 24;
@@ -93,6 +108,29 @@ const imageAccept = "image/jpeg,image/png,image/webp";
 const baseUrl = import.meta.env.VITE_BASE_URL ?? "";
 const imageId = (image: GalleryImage) =>
   image._id || image.id || image.imageUrl || "";
+
+const watermarkPositionClass = (position?: string) => {
+  switch (position) {
+    case "top_left":
+      return "left-3 top-3";
+    case "top_center":
+      return "left-1/2 top-3 -translate-x-1/2";
+    case "top_right":
+      return "right-3 top-3";
+    case "center_left":
+      return "left-3 top-1/2 -translate-y-1/2";
+    case "center":
+      return "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2";
+    case "center_right":
+      return "right-3 top-1/2 -translate-y-1/2";
+    case "bottom_left":
+      return "bottom-3 left-3";
+    case "bottom_center":
+      return "bottom-3 left-1/2 -translate-x-1/2";
+    default:
+      return "bottom-3 right-3";
+  }
+};
 
 async function downloadImage(url: string, filename: string) {
   try {
@@ -113,6 +151,7 @@ async function downloadImage(url: string, filename: string) {
 export default function EventLiveGallery() {
   const { eventId = "", albumId } = useParams();
   const [params, setParams] = useSearchParams();
+  const faceEnrollment = params.get("face") === "1";
   const faceInput = useRef<HTMLInputElement>(null);
   const registerInput = useRef<HTMLInputElement>(null);
   const storageKey = `gallery_access_${eventId}_${albumId || "all"}`;
@@ -135,12 +174,12 @@ export default function EventLiveGallery() {
   const [faceSearching, setFaceSearching] = useState(false);
   const [faceMatches, setFaceMatches] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [selfie, setSelfie] = useState<File>();
+  const [selfies, setSelfies] = useState<File[]>([]);
   const [registering, setRegistering] = useState(false);
   const [email, setEmail] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [notifyEmail, setNotifyEmail] = useState(true);
-  const [notifyWhatsapp, setNotifyWhatsapp] = useState(false);
+  const [notifyWhatsapp, setNotifyWhatsapp] = useState(faceEnrollment);
   const [consent, setConsent] = useState(false);
   const [blurredIds, setBlurredIds] = useState<string[]>([]);
   const [savingPreferences, setSavingPreferences] = useState(false);
@@ -275,7 +314,12 @@ export default function EventLiveGallery() {
   }, [guestToken, loadPersonal]);
 
   useEffect(() => {
-    if (!eventId || guestToken || info?.visibility !== "facial" || info?.facialPrivacyMode !== "blur_non_matches") {
+    if (
+      !eventId ||
+      guestToken ||
+      info?.visibility !== "facial" ||
+      info?.facialPrivacyMode !== "blur_non_matches"
+    ) {
       setBlurredIds([]);
       return;
     }
@@ -284,7 +328,9 @@ export default function EventLiveGallery() {
     void GetRequestAxios<{ data?: Array<{ _id: string }> }>(
       `/eventImage/public/blur-list?${query.toString()}`,
       { withCredentials: false, redirectOnUnauthorized: false },
-    ).then(([data]) => setBlurredIds((data?.data || []).map((item) => item._id)));
+    ).then(([data]) =>
+      setBlurredIds((data?.data || []).map((item) => item._id)),
+    );
   }, [albumId, eventId, guestToken, info?.facialPrivacyMode, info?.visibility]);
 
   useEffect(() => {
@@ -326,30 +372,37 @@ export default function EventLiveGallery() {
   };
 
   const registerPersonalGallery = async () => {
-    if (!selfie || !consent) {
-      toast.error("Add a selfie and accept face-search consent");
+    const minimumSelfies = faceEnrollment ? 2 : 1;
+    if (selfies.length < minimumSelfies || !consent) {
+      toast.error(
+        `Add at least ${minimumSelfies} selfie${minimumSelfies > 1 ? "s" : ""} and accept face-search consent`,
+      );
+      return;
+    }
+    if (faceEnrollment && (!email.trim() || !whatsapp.trim())) {
+      toast.error("Email and WhatsApp are required for global face delivery");
       return;
     }
     setRegistering(true);
     const body = new FormData();
-    body.append("selfie", selfie);
+    selfies.slice(0, 5).forEach((file) => body.append("selfies", file));
     body.append("eventId", eventId);
     if (albumId) body.append("albumId", albumId);
     body.append("consent", "true");
+    body.append("globalProfile", String(faceEnrollment));
     body.append("notifyEmail", String(notifyEmail));
     body.append("notifyWhatsapp", String(notifyWhatsapp));
     if (email.trim()) body.append("email", email.trim());
     if (whatsapp.trim()) body.append("whatsapp", whatsapp.trim());
     if (accessToken) body.append("accessToken", accessToken);
-    const [data, error] = await PostRequestAxios<{ guestToken?: string }>(
-      "/guest-gallery/register",
-      body,
-      {
-        withCredentials: false,
-        redirectOnUnauthorized: false,
-        headers: { "Content-Type": "multipart/form-data" },
-      },
-    );
+    const [data, error] = await PostRequestAxios<{
+      guestToken?: string;
+      updatedGlobalProfile?: boolean;
+    }>("/guest-gallery/register", body, {
+      withCredentials: false,
+      redirectOnUnauthorized: false,
+      headers: { "Content-Type": "multipart/form-data" },
+    });
     setRegistering(false);
     if (error || !data?.guestToken) {
       toast.error(error?.message || "Could not create personal gallery");
@@ -359,7 +412,11 @@ export default function EventLiveGallery() {
     setGuestToken(data.guestToken);
     updateUrlToken("guest", data.guestToken);
     toast.success(
-      "Personal gallery created. New matches will appear automatically.",
+      data.updatedGlobalProfile
+        ? "Your global face profile was updated with the new selfies."
+        : faceEnrollment
+          ? "Global face profile created. Matching photos from enabled events can now reach you automatically."
+          : "Personal gallery created. New matches will appear automatically.",
     );
   };
 
@@ -386,11 +443,20 @@ export default function EventLiveGallery() {
     setSavingPreferences(true);
     const [, error] = await PatchRequestAxios(
       "/guest-gallery/preferences",
-      { eventId, guestToken, ...(email.trim() ? { email: email.trim() } : {}), ...(whatsapp.trim() ? { whatsapp: whatsapp.trim() } : {}), notifyEmail, notifyWhatsapp },
+      {
+        eventId,
+        guestToken,
+        ...(email.trim() ? { email: email.trim() } : {}),
+        ...(whatsapp.trim() ? { whatsapp: whatsapp.trim() } : {}),
+        notifyEmail,
+        notifyWhatsapp,
+      },
       { withCredentials: false, redirectOnUnauthorized: false },
     );
     setSavingPreferences(false);
-    error ? toast.error(error.message) : toast.success("Notification preferences saved");
+    error
+      ? toast.error(error.message)
+      : toast.success("Notification preferences saved");
   };
 
   const runFaceSearch = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -506,23 +572,51 @@ export default function EventLiveGallery() {
   }
 
   if (
-    (info?.requiresFaceSearch || info?.visibility === "facial") &&
+    (faceEnrollment ||
+      info?.requiresFaceSearch ||
+      info?.visibility === "facial") &&
     !guestToken
   ) {
     return (
       <AccessShell info={info} branding={branding} cover={cover} style={style}>
         <UserRoundSearch className="mb-4 h-10 w-10" />
-        <h2 className="text-2xl font-bold">Find only your photos</h2>
+        <h2 className="text-2xl font-bold">
+          {faceEnrollment
+            ? "Create or update your global face profile"
+            : "Find only your photos"}
+        </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Take or upload one selfie. Your personal gallery updates while
-          photographers keep shooting.
+          {faceEnrollment
+            ? "Take 2-5 clear selfies and add your email + WhatsApp. We reuse the private face profile at enabled events so new matching photos can reach you automatically."
+            : "Take or upload a selfie. Your personal gallery updates while photographers keep shooting."}
         </p>
+        {faceEnrollment ? (
+          <div className="mt-5 grid grid-cols-3 gap-2">
+            <EnrollmentStep number="1" label="Selfies" done={selfies.length >= 2} />
+            <EnrollmentStep number="2" label="Contact" done={Boolean(email.trim() && whatsapp.trim())} />
+            <EnrollmentStep number="3" label="Consent" done={consent} />
+          </div>
+        ) : null}
         {info?.facialPrivacyMode === "blur_non_matches" && blurredIds.length ? (
           <div className="mt-4">
-            <p className="mb-2 text-xs font-medium text-muted-foreground">Live gallery preview — photos stay blurred until they match you.</p>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">
+              Live gallery preview — photos stay blurred until they match you.
+            </p>
             <div className="grid grid-cols-3 gap-2">
               {blurredIds.slice(0, 6).map((id) => (
-                <img key={id} src={baseUrl + "/eventImage/public/blurred?id=" + encodeURIComponent(id) + "&eventId=" + encodeURIComponent(eventId) + (albumId ? "&albumId=" + encodeURIComponent(albumId) : "")} alt="Private blurred preview" className="aspect-square w-full rounded-lg object-cover" />
+                <img
+                  key={id}
+                  src={
+                    baseUrl +
+                    "/eventImage/public/blurred?id=" +
+                    encodeURIComponent(id) +
+                    "&eventId=" +
+                    encodeURIComponent(eventId) +
+                    (albumId ? "&albumId=" + encodeURIComponent(albumId) : "")
+                  }
+                  alt="Private blurred preview"
+                  className="aspect-square w-full rounded-lg object-cover"
+                />
               ))}
             </div>
           </div>
@@ -533,30 +627,79 @@ export default function EventLiveGallery() {
             type="file"
             accept={imageAccept}
             capture="user"
+            multiple
             className="hidden"
-            onChange={(event) => setSelfie(event.target.files?.[0])}
+            onChange={(event) => {
+              const incoming = Array.from(event.target.files || []);
+              setSelfies((current) => [...current, ...incoming].slice(0, 5));
+              event.currentTarget.value = "";
+            }}
           />
           <Button
             className="w-full"
-            variant={selfie ? "outline" : "default"}
+            variant={selfies.length ? "outline" : "default"}
+            disabled={selfies.length >= 5}
             onClick={() => registerInput.current?.click()}
           >
             <Camera className="mr-2 h-4 w-4" />
-            {selfie ? selfie.name : "Take or upload selfie"}
+            {selfies.length
+              ? `Add another selfie (${selfies.length}/5)`
+              : faceEnrollment
+                ? "Take your first selfie"
+                : "Take or upload selfie"}
           </Button>
-          {info.guestNotificationsEnabled ? (
+          {faceEnrollment ? (
+            <div className="rounded-xl border bg-muted/20 p-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium">Face samples</span>
+                <span className="text-muted-foreground">{selfies.length}/5 · minimum 2</span>
+              </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-all duration-300"
+                  style={{ width: `${Math.max(8, (selfies.length / 5) * 100)}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
+          {selfies.length ? (
+            <div className="flex flex-wrap gap-2">
+              {selfies.map((file, index) => (
+                <Badge
+                  key={`${file.name}-${file.lastModified}-${index}`}
+                  variant="outline"
+                  className="gap-2 py-1.5"
+                >
+                  Selfie {index + 1}
+                  <button
+                    type="button"
+                    aria-label={`Remove selfie ${index + 1}`}
+                    onClick={() =>
+                      setSelfies((current) =>
+                        current.filter((_, itemIndex) => itemIndex !== index),
+                      )
+                    }
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          ) : null}
+          {faceEnrollment || info.guestNotificationsEnabled ? (
             <>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label>Email</Label>
+                  <Label>Email {faceEnrollment ? "*" : ""}</Label>
                   <Input
+                    type="email"
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
                     placeholder="you@example.com"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>WhatsApp</Label>
+                  <Label>WhatsApp {faceEnrollment ? "*" : ""}</Label>
                   <Input
                     value={whatsapp}
                     onChange={(event) => setWhatsapp(event.target.value)}
@@ -564,18 +707,38 @@ export default function EventLiveGallery() {
                   />
                 </div>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Toggle
-                  label="Email new matches"
-                  checked={notifyEmail}
-                  onChange={setNotifyEmail}
-                />
-                <Toggle
-                  label="WhatsApp new matches"
-                  checked={notifyWhatsapp}
-                  onChange={setNotifyWhatsapp}
-                />
-              </div>
+              {info.guestNotificationsEnabled ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {info.emailNotificationsEnabled !== false ? (
+                    <Toggle
+                      label="Email new matches"
+                      checked={notifyEmail}
+                      onChange={setNotifyEmail}
+                    />
+                  ) : (
+                    <p className="rounded-xl border p-3 text-xs text-muted-foreground">
+                      Email alerts are disabled for this event.
+                    </p>
+                  )}
+                  {info.whatsappNotificationsEnabled === true ? (
+                    <Toggle
+                      label="WhatsApp new matches"
+                      checked={notifyWhatsapp}
+                      onChange={setNotifyWhatsapp}
+                    />
+                  ) : (
+                    <p className="rounded-xl border p-3 text-xs text-muted-foreground">
+                      WhatsApp alerts are disabled for this event.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="rounded-xl border p-3 text-xs text-muted-foreground">
+                  This event has automatic match alerts turned off. Your
+                  reusable face profile can still be created and used to find
+                  matching photos.
+                </p>
+              )}
             </>
           ) : null}
           <label className="flex items-start gap-3 rounded-xl border p-3 text-sm">
@@ -584,13 +747,19 @@ export default function EventLiveGallery() {
               onCheckedChange={(value) => setConsent(value === true)}
             />
             <span>
-              I consent to an event-scoped face profile for this gallery. My
-              original selfie is not stored and I can delete the profile later.
+              {faceEnrollment
+                ? "I consent to a reusable global face profile. Face vectors and contact preferences can be reused at enabled events; original selfie files are not retained and I can delete the profile later."
+                : "I consent to an event-scoped face profile for this gallery. My original selfie is not stored and I can delete the profile later."}
             </span>
           </label>
           <Button
             className="w-full"
-            disabled={registering || !selfie || !consent}
+            disabled={
+              registering ||
+              selfies.length < (faceEnrollment ? 2 : 1) ||
+              !consent ||
+              (faceEnrollment && (!email.trim() || !whatsapp.trim()))
+            }
             onClick={() => void registerPersonalGallery()}
           >
             {registering ? (
@@ -598,7 +767,9 @@ export default function EventLiveGallery() {
             ) : (
               <Search className="mr-2 h-4 w-4" />
             )}
-            Create my personal gallery
+            {faceEnrollment
+              ? "Create / update my global face profile"
+              : "Create my personal gallery"}
           </Button>
         </div>
       </AccessShell>
@@ -765,10 +936,46 @@ export default function EventLiveGallery() {
         {guestToken && info?.guestNotificationsEnabled ? (
           <Card>
             <CardContent className="space-y-3 p-4">
-              <div><p className="font-semibold">New photo alerts</p><p className="text-xs text-muted-foreground">Change how we notify you when new face matches arrive.</p></div>
-              <div className="grid gap-3 sm:grid-cols-2"><Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" /><Input value={whatsapp} onChange={(event) => setWhatsapp(event.target.value)} placeholder="WhatsApp" /></div>
-              <div className="grid gap-2 sm:grid-cols-2"><Toggle label="Email alerts" checked={notifyEmail} onChange={setNotifyEmail} /><Toggle label="WhatsApp alerts" checked={notifyWhatsapp} onChange={setNotifyWhatsapp} /></div>
-              <Button size="sm" disabled={savingPreferences} onClick={() => void saveGuestPreferences()}>{savingPreferences ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save alerts</Button>
+              <div>
+                <p className="font-semibold">New photo alerts</p>
+                <p className="text-xs text-muted-foreground">
+                  Change how we notify you when new face matches arrive.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="Email"
+                />
+                <Input
+                  value={whatsapp}
+                  onChange={(event) => setWhatsapp(event.target.value)}
+                  placeholder="WhatsApp"
+                />
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Toggle
+                  label="Email alerts"
+                  checked={notifyEmail}
+                  onChange={setNotifyEmail}
+                />
+                <Toggle
+                  label="WhatsApp alerts"
+                  checked={notifyWhatsapp}
+                  onChange={setNotifyWhatsapp}
+                />
+              </div>
+              <Button
+                size="sm"
+                disabled={savingPreferences}
+                onClick={() => void saveGuestPreferences()}
+              >
+                {savingPreferences ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
+                Save alerts
+              </Button>
             </CardContent>
           </Card>
         ) : null}
@@ -822,10 +1029,24 @@ export default function EventLiveGallery() {
                   <div className="group relative aspect-[4/3] bg-muted">
                     {image.imageUrl ? (
                       image.mediaType === "video" ? (
-                        <video src={image.imageUrl} controls preload="metadata" className="h-full w-full object-cover" />
+                        <video
+                          src={image.imageUrl}
+                          controls
+                          preload="metadata"
+                          className="h-full w-full object-cover"
+                        />
                       ) : (
-                        <a href={image.imageUrl} target="_blank" rel="noreferrer" onClick={() => track("image_view", id)}>
-                          <img src={image.imageUrl} alt="" className="h-full w-full object-cover" />
+                        <a
+                          href={image.imageUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={() => track("image_view", id)}
+                        >
+                          <img
+                            src={image.imageUrl}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
                         </a>
                       )
                     ) : (
@@ -833,11 +1054,24 @@ export default function EventLiveGallery() {
                         <ImageIcon className="h-8 w-8 text-muted-foreground" />
                       </div>
                     )}
-                    {branding.watermarkUrl ? (
+                    {branding.watermarkUrl && branding.watermarkPosition === "tile" ? (
+                      <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-2 place-items-center gap-3 p-4">
+                        {Array.from({ length: 6 }, (_, watermarkIndex) => (
+                          <img
+                            key={watermarkIndex}
+                            src={branding.watermarkUrl}
+                            alt=""
+                            className="max-h-12 max-w-full object-contain"
+                            style={{ opacity: branding.watermarkOpacity ?? 0.7, width: `${Math.min(branding.watermarkScale ?? 24, 45)}%` }}
+                          />
+                        ))}
+                      </div>
+                    ) : branding.watermarkUrl ? (
                       <img
                         src={branding.watermarkUrl}
                         alt=""
-                        className="pointer-events-none absolute bottom-3 right-3 max-h-10 max-w-[40%] object-contain opacity-80"
+                        className={`pointer-events-none absolute max-h-[60%] object-contain ${watermarkPositionClass(branding.watermarkPosition)}`}
+                        style={{ opacity: branding.watermarkOpacity ?? 0.7, width: `${branding.watermarkScale ?? 24}%` }}
                       />
                     ) : null}
                     <label className="absolute left-3 top-3 rounded-full bg-background/90 p-1.5 shadow">
@@ -950,6 +1184,25 @@ function AccessShell({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function EnrollmentStep({
+  number,
+  label,
+  done,
+}: {
+  number: string;
+  label: string;
+  done: boolean;
+}) {
+  return (
+    <div className={`rounded-xl border p-2.5 text-center transition-all duration-200 ${done ? "border-primary/30 bg-primary/5" : "bg-muted/20"}`}>
+      <div className="mx-auto flex h-7 w-7 items-center justify-center rounded-full border bg-background text-xs font-bold">
+        {done ? <CheckCircle2 className="h-4 w-4 text-primary" /> : number}
+      </div>
+      <p className="mt-1.5 text-[11px] font-medium">{label}</p>
     </div>
   );
 }

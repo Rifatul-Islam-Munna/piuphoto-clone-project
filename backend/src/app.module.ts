@@ -20,52 +20,17 @@ import { RetouchWorkflowModule } from './retouch-workflow/retouch-workflow.modul
 import { StoreModule } from './store/store.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ExternalApiModule } from './external-api/external-api.module';
+import { GuestGalleryModule } from './guest-gallery/guest-gallery.module';
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60000,
-        limit: 1000,
-        getTracker: (req) => {
-          const getHeader = (headerName: string): string | null => {
-            const value = req.headers[headerName];
-            if (!value) return null;
-
-            const str = typeof value === 'string' ? value : value[0];
-            return str?.trim() || null;
-          };
-
-          const ip =
-            getHeader('cf-connecting-ip') ||
-            getHeader('x-forwarded-for')?.split(',')[0]?.trim() ||
-            getHeader('x-real-ip') ||
-            getHeader('true-client-ip') ||
-            getHeader('x-client-ip') ||
-            req.ip ||
-            'unknown';
-
-          return ip;
-        },
-      },
-    ]),
-    ConfigModule.forRoot({
-      isGlobal: true,
-    }),
-    JwtModule.register({
-      global: true,
-      secret: process.env.ACCESS_TOKEN,
-      signOptions: { expiresIn: '1d' },
-    }),
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 1000 }]),
+    ConfigModule.forRoot({ isGlobal: true }),
+    JwtModule.register({ global: true, secret: process.env.ACCESS_TOKEN, signOptions: { expiresIn: '1d' } }),
     MongooseModule.forRoot(process.env.MONGODB_URL as string, {
       autoIndex: true,
       onConnectionCreate: (connection: Connection) => {
         connection.on('connected', () => console.log('connected'));
-        connection.on('open', () => console.log('open'));
-        connection.on('disconnected', () => console.log('disconnected'));
-        connection.on('reconnected', () => console.log('reconnected'));
-        connection.on('disconnecting', () => console.log('disconnecting'));
-
         return connection;
       },
       connectionFactory: (connection: Connection) => {
@@ -88,6 +53,7 @@ import { ExternalApiModule } from './external-api/external-api.module';
     StoreModule,
     AnalyticsModule,
     ExternalApiModule,
+    GuestGalleryModule,
   ],
   controllers: [],
   providers: [],

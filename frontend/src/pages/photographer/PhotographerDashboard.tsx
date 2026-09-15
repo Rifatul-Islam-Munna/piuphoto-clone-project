@@ -1,13 +1,17 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import {
+  CalendarDays,
   Camera,
   CheckCircle2,
   Clock3,
   Loader2,
+  ShieldCheck,
   Smartphone,
 } from "lucide-react";
 import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
 import { PatchRequestAxios } from "@/api-hooks/api-hooks";
+import { useWorkspaceAccess } from "@/hooks/use-workspace-access";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,6 +44,8 @@ type MembershipResponse = { data: Membership[]; totalItems: number };
 
 export default function PhotographerDashboard() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const workspaceAccess = useWorkspaceAccess();
   const invitations = useQueryWrapper<InvitationResponse>(
     ["photographer-invitations"],
     "/event/my-photographer-invitations",
@@ -132,6 +138,29 @@ export default function PhotographerDashboard() {
             </div>
           </div>
         </section>
+
+        {workspaceAccess.data?.planner ? (
+          <Card className="border-primary/25 bg-primary/5">
+            <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="font-semibold">Solo photographer mode is enabled</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Create your own events without a planner invitation, then manage galleries, password protection, retouch, store, analytics and API from this photographer account.
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button onClick={() => navigate("/planner/dashboard")}>
+                  <CalendarDays className="mr-2 h-4 w-4" />
+                  My solo events
+                </Button>
+                <Button variant="outline" onClick={() => navigate("/planner/gallery")}>
+                  <ShieldCheck className="mr-2 h-4 w-4" />
+                  Gallery tools
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <div className="grid gap-4 sm:grid-cols-3">
           <Card>

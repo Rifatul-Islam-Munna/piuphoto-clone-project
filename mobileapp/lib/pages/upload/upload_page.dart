@@ -17,6 +17,7 @@ import 'package:mobileapp/core/platform/ptp_ip_camera.dart';
 import 'package:mobileapp/core/platform/upnp_camera_media.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
+import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/storage/uploaded_gallery_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
@@ -87,6 +88,8 @@ class _UploadPageState extends State<UploadPage> {
   bool _wirelessScanning = false;
   bool _wirelessBusy = false;
   bool _disposed = false;
+  bool _resolvingSoloEvent = false;
+  bool _soloEventResolved = false;
   int _wirelessGeneration = 0;
   int _otgGeneration = 0;
   int _galleryGeneration = 0;
@@ -1958,6 +1961,57 @@ class _UploadPageState extends State<UploadPage> {
     }
   }
 
+  Future<void> _ensureSoloActiveEvent() async {
+    if (_resolvingSoloEvent || _soloEventResolved) return;
+    if (ActiveEventStorage.activeEvent.value != null) {
+      _soloEventResolved = true;
+      return;
+    }
+    final user = UserStorage.currentUser.value;
+    if (!(user?.isPhotographer ?? false) ||
+        !(user?.hasPlannerAccess ?? false)) {
+      return;
+    }
+
+    _safeSetState(() => _resolvingSoloEvent = true);
+    try {
+      final response = await DioHelper.get(
+        '/event/my-events',
+        queryParameters: {'workspace': 'planner', 'page': 1, 'limit': 1},
+      );
+      final rows = response.data is Map ? response.data['data'] : null;
+      Map<String, dynamic>? rawEvent;
+      if (rows is List && rows.isNotEmpty && rows.first is Map) {
+        rawEvent = Map<String, dynamic>.from(rows.first as Map);
+      }
+
+      if (rawEvent == null) {
+        final created = await DioHelper.post(
+          '/event',
+          data: {
+            'title': 'Solo Workspace',
+            'description': 'My photographer delivery workspace',
+            'isPublished': true,
+          },
+        );
+        final raw = created.data is Map ? created.data['data'] : null;
+        if (raw is Map) rawEvent = Map<String, dynamic>.from(raw);
+      }
+
+      if (rawEvent != null) {
+        final event = EventSummary.fromJson(rawEvent);
+        if (event.id.isNotEmpty) {
+          await ActiveEventStorage.saveActiveEvent(event);
+        }
+      }
+    } catch (_) {
+      // Keep manual event selection available if the automatic solo workspace fails.
+    } finally {
+      _soloEventResolved = true;
+      _safeSetState(() => _resolvingSoloEvent = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder(
@@ -1972,6 +2026,12 @@ class _UploadPageState extends State<UploadPage> {
           _selectedAlbumId = null;
           _albums = [];
         }
+        if (activeEvent == null &&
+            (UserStorage.currentUser.value?.hasPlannerAccess ?? false)) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _ensureSoloActiveEvent();
+          });
+        }
 
         return Scaffold(
           appBar: AppBar(title: const Text('Upload')),
@@ -1980,11 +2040,29 @@ class _UploadPageState extends State<UploadPage> {
             children: [
               // ── Active event ──
               if (activeEvent == null)
-                const Card(
+                Card(
                   child: Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text(
-                      'No active event selected. Accept an invitation and make an event active first.',
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        if (_resolvingSoloEvent)
+                          const Padding(
+                            padding: EdgeInsets.only(right: 12),
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        Expanded(
+                          child: Text(
+                            (UserStorage.currentUser.value?.hasPlannerAccess ??
+                                    false)
+                                ? 'Preparing your solo photographer workspace. You do not need a planner invitation.'
+                                : 'No active event selected. Accept an invitation and make an event active first.',
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 )

@@ -152,4 +152,25 @@ class UserModel {
   bool get isAdmin => normalizedRole == 'admin';
 
   bool get isUser => normalizedRole == 'user';
+
+  bool get isEventPlanner =>
+      normalizedRole == 'user' || normalizedRole == 'editor';
+
+  List<String> get subscriptionFeatures {
+    final plan = subscriptionPlan;
+    if (plan is! Map) return const [];
+    final raw = plan['features'];
+    if (raw is! List) return const [];
+    return raw.map((item) => item.toString()).toList();
+  }
+
+  bool get hasPlannerAccess {
+    if (isAdmin || isEventPlanner) return true;
+    if (!isPhotographer || isSubscriber != true) return false;
+    if (subscriptionEndDate != null) {
+      final expiry = DateTime.tryParse(subscriptionEndDate!);
+      if (expiry != null && expiry.isBefore(DateTime.now())) return false;
+    }
+    return subscriptionFeatures.contains('event.create');
+  }
 }
