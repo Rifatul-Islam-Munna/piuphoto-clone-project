@@ -1,8 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsMongoId } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsBoolean,
+  IsMongoId,
+  IsIn,
+} from 'class-validator';
 
 class ImageDto {
-  @ApiPropertyOptional({ example: 'https://minio.example.com/bucket/image.jpg' })
+  @ApiPropertyOptional({
+    example: 'https://minio.example.com/bucket/image.jpg',
+  })
   @IsString()
   @IsOptional()
   url?: string;
@@ -42,6 +51,21 @@ export class CreateEventDto {
   @IsBoolean()
   @IsOptional()
   autoEnhanceImages?: boolean;
+
+  @ApiPropertyOptional({ example: true, default: true })
+  @IsBoolean()
+  @IsOptional()
+  autoPublishImages?: boolean;
+
+  @ApiPropertyOptional({ example: false, default: false })
+  @IsBoolean()
+  @IsOptional()
+  requireReview?: boolean;
+
+  @ApiPropertyOptional({ enum: ['auto_upload', 'auto_ai', 'manual'] })
+  @IsOptional()
+  @IsIn(['auto_upload', 'auto_ai', 'manual'])
+  publishPolicy?: 'auto_upload' | 'auto_ai' | 'manual';
 }
 
 export class UpdateEventDto {
@@ -73,9 +97,29 @@ export class UpdateEventDto {
   @IsBoolean()
   @IsOptional()
   autoEnhanceImages?: boolean;
+
+  @ApiPropertyOptional({ example: true, default: true })
+  @IsBoolean()
+  @IsOptional()
+  autoPublishImages?: boolean;
+
+  @ApiPropertyOptional({ example: false, default: false })
+  @IsBoolean()
+  @IsOptional()
+  requireReview?: boolean;
+
+  @ApiPropertyOptional({ enum: ['auto_upload', 'auto_ai', 'manual'] })
+  @IsOptional()
+  @IsIn(['auto_upload', 'auto_ai', 'manual'])
+  publishPolicy?: 'auto_upload' | 'auto_ai' | 'manual';
 }
 
 export class EventFilterDto {
+  @ApiPropertyOptional({ example: 'planner', enum: ['all', 'planner'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(['all', 'planner'])
+  workspace?: string = 'all';
   @ApiPropertyOptional({ example: 'Iftar' })
   @IsOptional()
   @IsString()
@@ -89,12 +133,20 @@ export class EventFilterDto {
   @IsOptional()
   limit?: number = 10;
 
-  @ApiPropertyOptional({ example: 'true', default: 'all', enum: ['all', 'true', 'false'] })
+  @ApiPropertyOptional({
+    example: 'true',
+    default: 'all',
+    enum: ['all', 'true', 'false'],
+  })
   @IsOptional()
   @IsString()
   isPublished?: string = 'all';
 
-  @ApiPropertyOptional({ example: 'true', default: 'all', enum: ['all', 'true', 'false'] })
+  @ApiPropertyOptional({
+    example: 'true',
+    default: 'all',
+    enum: ['all', 'true', 'false'],
+  })
   @IsOptional()
   @IsString()
   isActive?: string = 'all';

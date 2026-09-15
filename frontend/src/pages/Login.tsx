@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Apple, Camera, Image, Lock, Mail, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -22,10 +22,14 @@ type LoginResponse = {
 
 const Login = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  const loginMutation = useCommonMutationApi<LoginResponse, { email: string; password: string }>({
+  const loginMutation = useCommonMutationApi<
+    LoginResponse,
+    { email: string; password: string }
+  >({
     url: "/user/login",
     method: "POST",
     successMessage: "Login success",
@@ -38,10 +42,15 @@ const Login = () => {
         window.localStorage.setItem("user", JSON.stringify(data.user));
       }
 
-      if (data?.user?.role === "admin") {
+      const nextPath = searchParams.get("next");
+      if (data?.user?.role !== "admin" && nextPath?.startsWith("/join/")) {
+        navigate(nextPath);
+      } else if (data?.user?.role === "admin") {
         navigate("/admin/dashboard");
+      } else if (data?.user?.role === "photographer") {
+        navigate("/photographer/dashboard");
       } else {
-        navigate("/user/dashboard");
+        navigate("/planner/dashboard");
       }
     },
   });
@@ -57,7 +66,9 @@ const Login = () => {
         <div className="container-custom flex h-16 items-center justify-between">
           <Link to="/" className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
-              <span className="text-lg font-bold text-primary-foreground">n</span>
+              <span className="text-lg font-bold text-primary-foreground">
+                n
+              </span>
             </div>
             <span className="text-xl font-bold text-foreground">airpix</span>
           </Link>
@@ -79,7 +90,8 @@ const Login = () => {
             Sign in to manage event photos in real time.
           </h1>
           <p className="max-w-lg text-lg leading-8 text-muted-foreground">
-            Keep galleries, camera transfers, guest sharing, and client delivery ready from one quiet dashboard.
+            Keep galleries, camera transfers, guest sharing, and client delivery
+            ready from one quiet dashboard.
           </p>
 
           <div className="mt-10 grid max-w-2xl grid-cols-2 gap-4">
@@ -104,10 +116,14 @@ const Login = () => {
         <section className="rounded-lg border border-border bg-card p-6 md:p-8">
           <div className="mb-8">
             <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
-              <span className="text-xl font-bold text-primary-foreground">n</span>
+              <span className="text-xl font-bold text-primary-foreground">
+                n
+              </span>
             </div>
             <h2 className="text-3xl font-bold text-foreground">Welcome back</h2>
-            <p className="mt-2 text-sm text-muted-foreground">Login to your airpix account.</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Login to your airpix account.
+            </p>
           </div>
 
           <form className="space-y-5" onSubmit={handleSubmit}>
@@ -144,23 +160,35 @@ const Login = () => {
             </div>
 
             <div className="flex items-center justify-between gap-4 text-sm">
-              <Label htmlFor="remember" className="flex items-center gap-2 font-normal text-muted-foreground">
+              <Label
+                htmlFor="remember"
+                className="flex items-center gap-2 font-normal text-muted-foreground"
+              >
                 <Checkbox id="remember" />
                 Remember me
               </Label>
-              <a href="#" className="font-semibold text-primary hover:text-primary/80">
+              <a
+                href="#"
+                className="font-semibold text-primary hover:text-primary/80"
+              >
                 Forgot?
               </a>
             </div>
 
-            <Button type="submit" className="h-12 w-full" disabled={loginMutation.isPending}>
+            <Button
+              type="submit"
+              className="h-12 w-full"
+              disabled={loginMutation.isPending}
+            >
               {loginMutation.isPending ? "Logging in..." : "Login"}
             </Button>
           </form>
 
           <div className="my-6 flex items-center gap-3">
             <div className="h-px flex-1 bg-border" />
-            <span className="text-xs font-semibold uppercase text-muted-foreground">or</span>
+            <span className="text-xs font-semibold uppercase text-muted-foreground">
+              or
+            </span>
             <div className="h-px flex-1 bg-border" />
           </div>
 
@@ -171,7 +199,10 @@ const Login = () => {
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
             New to airpix?{" "}
-            <a href="#" className="font-semibold text-primary hover:text-primary/80">
+            <a
+              href="#"
+              className="font-semibold text-primary hover:text-primary/80"
+            >
               Create account
             </a>
           </p>
@@ -182,4 +213,3 @@ const Login = () => {
 };
 
 export default Login;
-

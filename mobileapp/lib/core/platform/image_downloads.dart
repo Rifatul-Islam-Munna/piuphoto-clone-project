@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/services.dart';
 
 class ImageDownloads {
@@ -11,13 +9,10 @@ class ImageDownloads {
     required Uint8List bytes,
     required String filename,
   }) async {
-    return await _channel.invokeMethod<bool>(
-          'saveImage',
-          {
-            'bytes': bytes,
-            'filename': filename,
-          },
-        ) ??
+    return await _channel.invokeMethod<bool>('saveImage', {
+          'bytes': bytes,
+          'filename': filename,
+        }) ??
         false;
   }
 }

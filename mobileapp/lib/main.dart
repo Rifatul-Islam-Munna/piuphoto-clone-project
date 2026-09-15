@@ -1,5 +1,3 @@
-import 'package:auto_route/auto_route.dart';
-import 'package:cached_query/cached_query.dart';
 import 'package:cached_storage/cached_storage.dart';
 import 'package:cached_query_flutter/cached_query_flutter.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +12,7 @@ import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
+import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
@@ -27,6 +26,7 @@ Future<void> setupDependencies() async {
   await UserStorage.init();
   await ActiveEventStorage.init();
   await UploadQueueStorage.init();
+  await TransferLedgerStorage.init();
   DioHelper.init();
   UploadQueueService.start();
 }

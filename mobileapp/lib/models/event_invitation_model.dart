@@ -48,6 +48,8 @@ class EventInvitationModel {
     this.respondedAt,
     this.event,
     this.inviterName,
+    this.isTeamMembership = false,
+    this.teamRole,
   });
 
   final String id;
@@ -56,14 +58,18 @@ class EventInvitationModel {
   final String? respondedAt;
   final EventSummary? event;
   final String? inviterName;
+  final bool isTeamMembership;
+  final String? teamRole;
 
   factory EventInvitationModel.fromJson(Map<String, dynamic> json) {
-    final event = json['event'];
-    final inviter = json['inviter'];
+    final isTeamMembership = json['eventId'] is Map;
+    final event = isTeamMembership ? json['eventId'] : json['event'];
+    final inviter = isTeamMembership ? json['invitedBy'] : json['inviter'];
+    final rawStatus = json['status']?.toString() ?? 'pending';
 
     return EventInvitationModel(
       id: json['_id']?.toString() ?? json['id']?.toString() ?? '',
-      status: json['status']?.toString() ?? 'pending',
+      status: rawStatus == 'active' ? 'accepted' : rawStatus,
       createdAt: json['createdAt']?.toString(),
       respondedAt: json['respondedAt']?.toString(),
       event: event is Map
@@ -71,8 +77,10 @@ class EventInvitationModel {
           : null,
       inviterName: inviter is Map
           ? (inviter['name'] ?? inviter['email'] ?? inviter['phone'])
-              ?.toString()
+                ?.toString()
           : null,
+      isTeamMembership: isTeamMembership,
+      teamRole: json['role']?.toString(),
     );
   }
 

@@ -28,10 +28,14 @@ import { Roles } from '../lib/roles.decorator';
 import { UserType } from './entities/user.entity';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
+import { EventMemberService } from '../event-member/event-member.service';
 
 @Controller('user')
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly eventMemberService: EventMemberService,
+  ) {}
 
   @Post()
   @UseGuards(ThrottlerGuard)
@@ -89,6 +93,20 @@ export class UserController {
     return this.userService.getPhotographersForInvite();
   }
 
+  @Get('team-candidates')
+  @UseGuards(AuthGuard)
+  async getTeamCandidates(
+    @Query('eventId') eventId: string,
+    @Query('query') query: string,
+    @Req() req: ExpressRequest,
+  ) {
+    await this.eventMemberService.assertCanManage(
+      eventId,
+      req.user?.id,
+      req.user?.role,
+    );
+    return this.userService.getTeamCandidates(query || '', req.user?.id);
+  }
   @Get('get-user-profile-admin')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserType.ADMIN)
@@ -117,7 +135,10 @@ export class UserController {
   @UseGuards(AuthGuard, RolesGuard, ThrottlerGuard)
   @Throttle({ default: { limit: 200, ttl: 3600000 } })
   @Roles(UserType.ADMIN)
-  UpdateUserAdmin(@Body() updateUserDto: UpdateUserDto, @Query('id') id: string) {
+  UpdateUserAdmin(
+    @Body() updateUserDto: UpdateUserDto,
+    @Query('id') id: string,
+  ) {
     return this.userService.update({ ...updateUserDto, id } as any);
   }
 

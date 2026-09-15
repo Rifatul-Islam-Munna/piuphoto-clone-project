@@ -3,6 +3,8 @@ class EventImageModel {
     required this.id,
     required this.imageUrl,
     this.isEnhanced = false,
+    this.isPublished = true,
+    this.mediaType = 'photo',
     this.createdAt,
     this.takenBy,
     this.albumId,
@@ -12,6 +14,8 @@ class EventImageModel {
   final String id;
   final String imageUrl;
   final bool isEnhanced;
+  final bool isPublished;
+  final String mediaType;
   final String? createdAt;
   final String? takenBy;
   final String? albumId;
@@ -25,13 +29,15 @@ class EventImageModel {
       id: json['_id']?.toString() ?? json['id']?.toString() ?? '',
       imageUrl: json['imageUrl']?.toString() ?? '',
       isEnhanced: json['isEnhanced'] == true,
+      isPublished: json['isPublished'] != false,
+      mediaType: json['mediaType']?.toString() ?? 'photo',
       createdAt: json['createdAt']?.toString(),
       takenBy: userTakenBy is Map
           ? (userTakenBy['name'] ??
-                  userTakenBy['email'] ??
-                  userTakenBy['phone'] ??
-                  userTakenBy['userId'])
-              ?.toString()
+                    userTakenBy['email'] ??
+                    userTakenBy['phone'] ??
+                    userTakenBy['userId'])
+                ?.toString()
           : null,
       albumId: album is Map
           ? (album['_id'] ?? album['id'])?.toString()

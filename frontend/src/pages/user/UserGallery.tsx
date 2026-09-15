@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Share2, Sparkles, Trash2 } from "lucide-react";
+import { Eye, EyeOff, Loader2, Share2, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import UserLayout from "./UserLayout";
+import PlannerLayout from "../planner/PlannerLayout";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -27,7 +28,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { DeleteRequestAxios, PostRequestAxios } from "@/api-hooks/api-hooks";
+import {
+  DeleteRequestAxios,
+  PatchRequestAxios,
+  PostRequestAxios,
+} from "@/api-hooks/api-hooks";
 import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
 
 type EventType = {
@@ -43,6 +48,7 @@ type ImageType = {
   _id: string;
   imageUrl: string;
   isEnhanced?: boolean;
+  isPublished?: boolean;
   createdAt?: string;
 };
 
@@ -93,11 +99,32 @@ export default function UserGallery() {
         `/eventImage/delete?id=${id}`,
         { withToken: true, withCredentials: true },
       );
-      if (error || !response) throw new Error(error?.message || "Delete failed");
+      if (error || !response)
+        throw new Error(error?.message || "Delete failed");
       return response;
     },
     onSuccess: () => {
       toast.success("Image deleted");
+      queryClient.invalidateQueries({ queryKey: ["user-gallery-images"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const publishMutation = useMutation({
+    mutationFn: async (image: ImageType) => {
+      const nextPublished = image.isPublished === false;
+      const [response, error] = await PatchRequestAxios<{ message: string }>(
+        `/eventImage/publish?id=${image._id}`,
+        { isPublished: nextPublished },
+        { withToken: true, withCredentials: true },
+      );
+      if (error || !response) {
+        throw new Error(error?.message || "Publish update failed");
+      }
+      return { response, nextPublished };
+    },
+    onSuccess: ({ nextPublished }) => {
+      toast.success(nextPublished ? "Image published" : "Image hidden from live gallery");
       queryClient.invalidateQueries({ queryKey: ["user-gallery-images"] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -117,7 +144,8 @@ export default function UserGallery() {
         },
         { withToken: true, withCredentials: true },
       );
-      if (error || !response) throw new Error(error?.message || "Enhance failed");
+      if (error || !response)
+        throw new Error(error?.message || "Enhance failed");
       return response;
     },
     onSuccess: (response) => {
@@ -143,7 +171,7 @@ export default function UserGallery() {
   };
 
   return (
-    <UserLayout>
+    <PlannerLayout>
       <div className="space-y-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
@@ -196,18 +224,43 @@ export default function UserGallery() {
             ) : (
               <div className="grid gap-4 md:grid-cols-3">
                 {(imagesQuery.data?.data || []).map((image) => (
-                  <div key={image._id} className="overflow-hidden rounded-lg border">
+                  <div
+                    key={image._id}
+                    className="overflow-hidden rounded-lg border"
+                  >
                     <img
                       src={image.imageUrl}
                       alt="Event"
                       className="aspect-square w-full object-cover"
                     />
-                    <div className="flex items-center justify-between p-2">
-                      <span className="text-xs text-muted-foreground">
-                        {image.isEnhanced ? "Enhanced" : "Original"}
-                      </span>
+                    <div className="flex items-center justify-between gap-2 p-2">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          {image.isEnhanced ? "Enhanced" : "Original"}
+                        </span>
+                        <Badge variant={image.isPublished === false ? "secondary" : "default"}>
+                          {image.isPublished === false ? "Hidden" : "Live"}
+                        </Badge>
+                      </div>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => shareImage(image)}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title={image.isPublished === false ? "Publish" : "Hide from live gallery"}
+                          onClick={() => publishMutation.mutate(image)}
+                          disabled={publishMutation.isPending}
+                        >
+                          {image.isPublished === false ? (
+                            <Eye className="h-4 w-4" />
+                          ) : (
+                            <EyeOff className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => shareImage(image)}
+                        >
                           <Share2 className="h-4 w-4" />
                         </Button>
                         <Button
@@ -257,7 +310,10 @@ export default function UserGallery() {
           </CardContent>
         </Card>
 
-        <Dialog open={!!enhanceImage} onOpenChange={(open) => !open && setEnhanceImage(null)}>
+        <Dialog
+          open={!!enhanceImage}
+          onOpenChange={(open) => !open && setEnhanceImage(null)}
+        >
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Enhance Image</DialogTitle>
@@ -274,7 +330,10 @@ export default function UserGallery() {
               <Button variant="outline" onClick={() => setEnhanceImage(null)}>
                 Cancel
               </Button>
-              <Button onClick={() => enhanceMutation.mutate()} disabled={enhanceMutation.isPending}>
+              <Button
+                onClick={() => enhanceMutation.mutate()}
+                disabled={enhanceMutation.isPending}
+              >
                 {enhanceMutation.isPending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
@@ -286,6 +345,6 @@ export default function UserGallery() {
           </DialogContent>
         </Dialog>
       </div>
-    </UserLayout>
+    </PlannerLayout>
   );
 }

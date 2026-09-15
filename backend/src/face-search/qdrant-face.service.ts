@@ -97,11 +97,11 @@ export class QdrantFaceService implements OnModuleInit {
   }
 
   private groupScoreThreshold() {
-    return this.scoreFromDistance('FACE_CLUSTER_DISTANCE', 0.55);
+    return this.scoreFromDistance('FACE_CLUSTER_DISTANCE', 0.35);
   }
 
   private matchScoreThreshold() {
-    return this.scoreFromDistance('FACE_MATCH_DISTANCE', 0.95);
+    return this.scoreFromDistance('FACE_MATCH_DISTANCE', 0.55);
   }
 
   private searchLimit(limit?: number) {

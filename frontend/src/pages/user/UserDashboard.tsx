@@ -13,10 +13,13 @@ import {
   Pencil,
   Plus,
   QrCode,
+  Radio,
+  ShieldCheck,
   Sparkles,
   Trash2,
   Upload,
   UserPlus,
+  Users,
   X,
 } from "lucide-react";
 import QRCode from "qrcode";
@@ -63,7 +66,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import UserLayout from "./UserLayout";
+import PlannerLayout from "../planner/PlannerLayout";
+import EventTeamDialog from "../planner/EventTeamDialog";
+import PendingTeamInvitations from "../planner/PendingTeamInvitations";
 import {
   DeleteRequestAxios,
   GetRequestAxios,
@@ -89,11 +94,11 @@ type EventInvitation = {
 };
 
 type InviteSummary = {
-  maxPhotographers: number;
+  maxPhotographers: number | null;
   totalInvited: number;
   pendingInvites: number;
   acceptedInvites: number;
-  remainingInvites: number;
+  remainingInvites: number | null;
 };
 
 type EventType = {
@@ -104,6 +109,8 @@ type EventType = {
   isPublished: boolean;
   isActive: boolean;
   autoEnhanceImages?: boolean;
+  autoPublishImages?: boolean;
+  requireReview?: boolean;
   createdAt: string;
   invitations: EventInvitation[];
   inviteSummary: InviteSummary;
@@ -129,8 +136,9 @@ type EventsResponse = {
   hasNextPage: boolean;
   hasPreviousPage: boolean;
   subscription?: {
-    maxPhotographers: number;
+    maxPhotographers: number | null;
     planTitle?: string | null;
+    unlimitedPhotographers?: boolean;
   };
 };
 
@@ -139,6 +147,8 @@ type EventFormData = {
   description: string;
   image?: { url?: string };
   autoEnhanceImages: boolean;
+  autoPublishImages: boolean;
+  requireReview: boolean;
 };
 
 type ImageUploadResponse = {
@@ -154,6 +164,8 @@ const defaultFormData: EventFormData = {
   title: "",
   description: "",
   autoEnhanceImages: false,
+  autoPublishImages: true,
+  requireReview: false,
 };
 
 export default function UserDashboard() {
@@ -170,6 +182,7 @@ export default function UserDashboard() {
   const [albumsLoading, setAlbumsLoading] = useState(false);
   const [albumForm, setAlbumForm] = useState({ title: "", description: "" });
   const [inviteEventId, setInviteEventId] = useState<string | null>(null);
+  const [teamEvent, setTeamEvent] = useState<EventType | null>(null);
   const [selectedPhotographerId, setSelectedPhotographerId] = useState<
     string | undefined
   >(undefined);
@@ -180,7 +193,7 @@ export default function UserDashboard() {
 
   const { data: eventsData, isLoading } = useQueryWrapper<EventsResponse>(
     ["events", page],
-    `/event/my-events?page=${page}&limit=10`,
+    `/event/my-events?workspace=planner&page=${page}&limit=10`,
     { withToken: true, withCredentials: true },
   );
 
@@ -219,6 +232,8 @@ export default function UserDashboard() {
       title: data.title,
       description: data.description,
       autoEnhanceImages: data.autoEnhanceImages,
+      autoPublishImages: data.autoPublishImages,
+      requireReview: data.requireReview,
     };
 
     if (data.image?.url) {
@@ -318,10 +333,14 @@ export default function UserDashboard() {
     const [response, error] = await PostRequestAxios<{
       message: string;
       data: EventInvitation;
-    }>("/event/invite-photographer", { eventId, photographerId }, {
-      withToken: true,
-      withCredentials: true,
-    });
+    }>(
+      "/event/invite-photographer",
+      { eventId, photographerId },
+      {
+        withToken: true,
+        withCredentials: true,
+      },
+    );
 
     if (error || !response) {
       throw new Error(error?.message || "Failed to invite photographer");
@@ -377,7 +396,9 @@ export default function UserDashboard() {
   };
 
   const deleteAlbum = async (album: AlbumType) => {
-    if (!confirm(`Delete album "${album.title}"? Images stay in event gallery.`)) {
+    if (
+      !confirm(`Delete album "${album.title}"? Images stay in event gallery.`)
+    ) {
       return;
     }
 
@@ -426,13 +447,7 @@ export default function UserDashboard() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({
-      id,
-      data,
-    }: {
-      id: string;
-      data: EventFormData;
-    }) => {
+    mutationFn: async ({ id, data }: { id: string; data: EventFormData }) => {
       let imageUrl = data.image?.url;
 
       if (imageFile) {
@@ -657,13 +672,14 @@ export default function UserDashboard() {
   }, [photographersQuery.data?.data, selectedInviteEvent]);
 
   return (
-    <UserLayout>
+    <PlannerLayout>
       <div className="space-y-6">
+        <PendingTeamInvitations />
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">Dashboard</h1>
             <p className="text-muted-foreground">
-              Manage events, photographer invites, plan limits.
+              Manage events, team, categories, and real-time delivery.
             </p>
           </div>
           <Button onClick={() => setDialogOpen(true)}>
@@ -675,7 +691,9 @@ export default function UserDashboard() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Events</CardTitle>
+              <CardTitle className="text-sm font-medium">
+                Total Events
+              </CardTitle>
               <Calendar className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -689,16 +707,14 @@ export default function UserDashboard() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">
-                Max Photographers
+                Multi-camera team
               </CardTitle>
               <Camera className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                {subscription?.maxPhotographers || 0}
-              </div>
+              <div className="text-2xl font-bold">Unlimited</div>
               <p className="text-xs text-muted-foreground">
-                {subscription?.planTitle || "No active plan"}
+                No extra photographer seat charge
               </p>
             </CardContent>
           </Card>
@@ -728,7 +744,7 @@ export default function UserDashboard() {
             <CardContent>
               <div className="text-2xl font-bold">{acceptedInvites}</div>
               <p className="text-xs text-muted-foreground">
-                Active photographer slots used
+                Photographers collaborating now
               </p>
             </CardContent>
           </Card>
@@ -736,19 +752,18 @@ export default function UserDashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Photographer Invite Policy</CardTitle>
+            <CardTitle>Multi-Photographer Collaboration</CardTitle>
             <CardDescription>
-              Each event can invite up to{" "}
-              <span className="font-medium">
-                {subscription?.maxPhotographers || 0}
-              </span>{" "}
-              photographer{(subscription?.maxPhotographers || 0) === 1 ? "" : "s"}.
+              Add photographers without per-camera seat charges. Everyone can
+              feed the same event workflow while shooting into different
+              categories.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
-              Pending invite stays pending until photographer accepts from
-              invitation page. Accepted + pending both count toward plan limit.
+              Invitations remain pending until accepted. Accepted photographers
+              can upload concurrently and every photo keeps
+              photographer/category attribution.
             </div>
           </CardContent>
         </Card>
@@ -793,19 +808,20 @@ export default function UserDashboard() {
                   <TableBody>
                     {myEvents.map((event) => (
                       <TableRow key={event._id}>
-                        <TableCell className="font-medium">{event.title}</TableCell>
+                        <TableCell className="font-medium">
+                          {event.title}
+                        </TableCell>
                         <TableCell className="max-w-xs truncate">
                           {event.description || "-"}
                         </TableCell>
                         <TableCell>
                           <div className="space-y-1">
                             <p className="text-sm font-medium">
-                              {event.inviteSummary.acceptedInvites}/
-                              {event.inviteSummary.maxPhotographers} accepted
+                              {event.inviteSummary.acceptedInvites} active
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              {event.inviteSummary.pendingInvites} pending,{" "}
-                              {event.inviteSummary.remainingInvites} left
+                              {event.inviteSummary.pendingInvites} pending -
+                              unlimited team
                             </p>
                           </div>
                         </TableCell>
@@ -846,7 +862,9 @@ export default function UserDashboard() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => setViewEvent(event)}>
+                              <DropdownMenuItem
+                                onClick={() => setViewEvent(event)}
+                              >
                                 <Eye className="mr-2 h-4 w-4" />
                                 View
                               </DropdownMenuItem>
@@ -856,11 +874,28 @@ export default function UserDashboard() {
                                 <QrCode className="mr-2 h-4 w-4" />
                                 Generate QR Code
                               </DropdownMenuItem>
+
                               <DropdownMenuItem
-                                onClick={() => handleOpenInviteDialog(event._id)}
+                                onClick={() => setTeamEvent(event)}
                               >
-                                <UserPlus className="mr-2 h-4 w-4" />
-                                Invitations
+                                <Users className="mr-2 h-4 w-4" />
+                                Event Team
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  window.location.hash = `#/planner/live/${event._id}`;
+                                }}
+                              >
+                                <Radio className="mr-2 h-4 w-4" />
+                                Live Console
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  window.location.hash = `#/planner/event/${event._id}/experience`;
+                                }}
+                              >
+                                <ShieldCheck className="mr-2 h-4 w-4" />
+                                Delivery & Privacy
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => handleOpenAlbumsDialog(event)}
@@ -877,6 +912,9 @@ export default function UserDashboard() {
                                     image: event.image,
                                     autoEnhanceImages:
                                       event.autoEnhanceImages || false,
+                                    autoPublishImages:
+                                      event.autoPublishImages !== false,
+                                    requireReview: event.requireReview === true,
                                   });
                                   if (event.image?.url) {
                                     setImagePreview(event.image.url);
@@ -917,7 +955,8 @@ export default function UserDashboard() {
                 </Table>
                 <div className="flex items-center justify-between text-sm text-muted-foreground">
                   <span>
-                    Page {eventsData?.page || page} of {eventsData?.totalPages || 1}
+                    Page {eventsData?.page || page} of{" "}
+                    {eventsData?.totalPages || 1}
                   </span>
                   <div className="flex gap-2">
                     <Button
@@ -943,6 +982,14 @@ export default function UserDashboard() {
           </CardContent>
         </Card>
 
+        <EventTeamDialog
+          eventId={teamEvent?._id || null}
+          eventTitle={teamEvent?.title}
+          open={Boolean(teamEvent)}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setTeamEvent(null);
+          }}
+        />
         <Dialog open={dialogOpen} onOpenChange={handleDialogClose}>
           <DialogContent>
             <DialogHeader>
@@ -1043,6 +1090,45 @@ export default function UserDashboard() {
                   }
                 />
               </div>
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div className="space-y-1">
+                  <Label htmlFor="autoPublishImages">
+                    Publish while shooting
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Send new uploads directly to the live gallery.
+                  </p>
+                </div>
+                <Switch
+                  id="autoPublishImages"
+                  checked={formData.autoPublishImages}
+                  disabled={formData.requireReview}
+                  onCheckedChange={(checked) =>
+                    setFormData({ ...formData, autoPublishImages: checked })
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div className="space-y-1">
+                  <Label htmlFor="requireReview">Review before delivery</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Keep new photos hidden until a publisher approves them.
+                  </p>
+                </div>
+                <Switch
+                  id="requireReview"
+                  checked={formData.requireReview}
+                  onCheckedChange={(checked) =>
+                    setFormData({
+                      ...formData,
+                      requireReview: checked,
+                      autoPublishImages: checked
+                        ? false
+                        : formData.autoPublishImages,
+                    })
+                  }
+                />
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setDialogOpen(false)}>
@@ -1065,30 +1151,26 @@ export default function UserDashboard() {
           </DialogContent>
         </Dialog>
 
-        <Dialog
-          open={!!inviteEventId}
-          onOpenChange={handleCloseInviteDialog}
-        >
+        <Dialog open={!!inviteEventId} onOpenChange={handleCloseInviteDialog}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
               <DialogTitle>Manage Photographer Invitations</DialogTitle>
               <DialogDescription>
-                {selectedInviteEvent?.title || "Event"} invite count follows
-                plan limit.
+                {selectedInviteEvent?.title || "Event"} supports unlimited
+                photographer collaboration.
               </DialogDescription>
             </DialogHeader>
 
             {selectedInviteEvent ? (
               <div className="space-y-6">
+                <PendingTeamInvitations />
                 <div className="grid gap-3 md:grid-cols-3">
                   <Card>
                     <CardContent className="pt-6">
                       <p className="text-xs uppercase text-muted-foreground">
-                        Max
+                        Team model
                       </p>
-                      <p className="text-2xl font-bold">
-                        {selectedInviteEvent.inviteSummary.maxPhotographers}
-                      </p>
+                      <p className="text-2xl font-bold">Unlimited</p>
                     </CardContent>
                   </Card>
                   <Card>
@@ -1104,10 +1186,10 @@ export default function UserDashboard() {
                   <Card>
                     <CardContent className="pt-6">
                       <p className="text-xs uppercase text-muted-foreground">
-                        Remaining
+                        Accepted
                       </p>
                       <p className="text-2xl font-bold">
-                        {selectedInviteEvent.inviteSummary.remainingInvites}
+                        {selectedInviteEvent.inviteSummary.acceptedInvites}
                       </p>
                     </CardContent>
                   </Card>
@@ -1121,15 +1203,7 @@ export default function UserDashboard() {
                     </p>
                   </div>
 
-                  {selectedInviteEvent.inviteSummary.maxPhotographers <= 0 ? (
-                    <p className="text-sm text-destructive">
-                      Your current plan does not allow photographer invites.
-                    </p>
-                  ) : selectedInviteEvent.inviteSummary.remainingInvites <= 0 ? (
-                    <p className="text-sm text-destructive">
-                      No slots left for this event.
-                    </p>
-                  ) : availablePhotographers.length === 0 ? (
+                  {availablePhotographers.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       No available photographer left to invite.
                     </p>
@@ -1167,7 +1241,9 @@ export default function UserDashboard() {
                             photographerId: selectedPhotographerId,
                           });
                         }}
-                        disabled={!selectedPhotographerId || inviteMutation.isPending}
+                        disabled={
+                          !selectedPhotographerId || inviteMutation.isPending
+                        }
                       >
                         {inviteMutation.isPending && (
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1244,6 +1320,7 @@ export default function UserDashboard() {
             </DialogHeader>
 
             <div className="space-y-6">
+              <PendingTeamInvitations />
               <div className="grid gap-3 rounded-lg border p-4">
                 <div>
                   <h3 className="font-medium">Create album</h3>
@@ -1447,7 +1524,8 @@ export default function UserDashboard() {
               <Button
                 variant="outline"
                 onClick={() =>
-                  qrEvent && window.open(getPublicGalleryUrl(qrEvent._id), "_blank")
+                  qrEvent &&
+                  window.open(getPublicGalleryUrl(qrEvent._id), "_blank")
                 }
               >
                 <ExternalLink className="mr-2 h-4 w-4" />
@@ -1461,7 +1539,6 @@ export default function UserDashboard() {
           </DialogContent>
         </Dialog>
       </div>
-    </UserLayout>
+    </PlannerLayout>
   );
 }
-

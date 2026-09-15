@@ -2,13 +2,19 @@ import { HttpException, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Event, EventDocument } from './entities/event.entity';
 import { Model, Types } from 'mongoose';
-import { CreateEventDto, UpdateEventDto, EventFilterDto } from './dto/create-event.dto';
+import {
+  CreateEventDto,
+  UpdateEventDto,
+  EventFilterDto,
+} from './dto/create-event.dto';
 import {
   EventInvitation,
   EventInvitationDocument,
   EventInvitationStatus,
 } from './entities/event-invitation.entity';
 import { InvitePhotographerDto } from './dto/event-invitation.dto';
+import { EventMemberService } from '../event-member/event-member.service';
+import { EventMemberRole } from '../event-member/entities/event-member.entity';
 import { User, UserDocument, UserType } from '../user/entities/user.entity';
 import {
   SubscriptionPlan,
@@ -34,6 +40,7 @@ export class EventService {
     private subscriptionPlanModel: Model<SubscriptionPlanDocument>,
     @InjectModel(EventImage.name)
     private eventImageModel: Model<EventImageDocument>,
+    private readonly eventMemberService: EventMemberService,
   ) {}
 
   private normalizeId(id: string | Types.ObjectId) {
@@ -81,7 +88,7 @@ export class EventService {
     const normalizedUserId = this.normalizeId(userId);
 
     if (!Types.ObjectId.isValid(normalizedUserId)) {
-      return { maxPhotographers: 0, planTitle: null as string | null };
+      return { maxPhotographers: null, planTitle: null as string | null };
     }
 
     const user = await this.userModel
@@ -90,7 +97,7 @@ export class EventService {
       .lean();
 
     if (!user?.isSubscriber || !user.subscriptionPlanId) {
-      return { maxPhotographers: 0, planTitle: null as string | null };
+      return { maxPhotographers: null, planTitle: null as string | null };
     }
 
     const plan = await this.subscriptionPlanModel
@@ -98,13 +105,8 @@ export class EventService {
       .select('title permissions')
       .lean();
 
-    const maxPhotographers = this.extractPermissionLimit(
-      Array.isArray(plan?.permissions) ? plan.permissions : [],
-      'photographers.max',
-    );
-
     return {
-      maxPhotographers,
+      maxPhotographers: null,
       planTitle: plan?.title ?? null,
     };
   }
@@ -114,28 +116,7 @@ export class EventService {
     actorId?: string,
     actorRole?: string,
   ) {
-    if (!Types.ObjectId.isValid(eventId)) {
-      throw new HttpException('Invalid event id', 400);
-    }
-
-    const event = await this.eventModel
-      .findById(eventId)
-      .select('title userId')
-      .lean();
-
-    if (!event) {
-      throw new HttpException('Event not found', 400);
-    }
-
-    if (
-      actorRole !== UserType.ADMIN &&
-      actorId &&
-      this.normalizeId(event.userId) !== actorId
-    ) {
-      throw new HttpException('You can only manage your own events', 403);
-    }
-
-    return event;
+    return this.eventMemberService.assertCanManage(eventId, actorId, actorRole);
   }
 
   private toOwnerInvitationView(invitation: any) {
@@ -202,10 +183,19 @@ export class EventService {
     if (!event) {
       throw new HttpException('Event not created', 400);
     }
+    await this.eventMemberService.ensureOwnerMembership(
+      String(event._id),
+      normalizedUserId,
+    );
     return { message: 'Event created successfully', data: event };
   }
 
-  async findAllByUser(userId?: string, page = 1, limit = 10) {
+  async findAllByUser(
+    userId?: string,
+    page = 1,
+    limit = 10,
+    workspace = 'all',
+  ) {
     const safePage = Math.max(Number(page) || 1, 1);
     const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 100);
     const skip = (safePage - 1) * safeLimit;
@@ -236,10 +226,38 @@ export class EventService {
       };
     }
 
-    const filter = {
+    const plannerOnly = workspace === 'planner';
+    const [memberEventIds, legacyAcceptedInvites] = await Promise.all([
+      this.eventMemberService.activeEventIds(
+        normalizedUserId,
+        plannerOnly
+          ? [EventMemberRole.OWNER, EventMemberRole.EVENT_PLANNER]
+          : undefined,
+      ),
+      plannerOnly
+        ? Promise.resolve([])
+        : this.eventInvitationModel
+            .find({
+              photographerId: this.toObjectId(normalizedUserId),
+              status: EventInvitationStatus.ACCEPTED,
+            })
+            .select('eventId')
+            .lean(),
+    ]);
+    const accessibleEventIds = [
+      ...memberEventIds,
+      ...legacyAcceptedInvites.map((item) =>
+        this.toObjectId(String(item.eventId)),
+      ),
+    ];
+
+    const filter: Record<string, unknown> = {
       $or: [
         { userId: new Types.ObjectId(normalizedUserId) },
         { userId: normalizedUserId as any },
+        ...(accessibleEventIds.length
+          ? [{ _id: { $in: accessibleEventIds } }]
+          : []),
       ],
     };
 
@@ -267,7 +285,10 @@ export class EventService {
             .lean()
             .exec(),
           this.eventImageModel
-            .aggregate<{ _id: Types.ObjectId; count: number }>([
+            .aggregate<{
+              _id: Types.ObjectId;
+              count: number;
+            }>([
               { $match: { eventId: { $in: eventIds } } },
               { $group: { _id: '$eventId', count: { $sum: 1 } } },
             ])
@@ -275,11 +296,17 @@ export class EventService {
         ])
       : [[], []];
 
+    const teamSummaryMap =
+      await this.eventMemberService.photographerSummaryByEventIds(eventIds);
+
     const photoCountMap = new Map(
       photoCounts.map((item) => [String(item._id), item.count]),
     );
 
-    const invitationMap = new Map<string, ReturnType<typeof this.toOwnerInvitationView>[]>();
+    const invitationMap = new Map<
+      string,
+      ReturnType<typeof this.toOwnerInvitationView>[]
+    >();
 
     invitations.forEach((invitation) => {
       const eventKey = this.normalizeId(invitation.eventId as Types.ObjectId);
@@ -290,26 +317,29 @@ export class EventService {
 
     const enrichedData = data.map((event) => {
       const eventInvitations = invitationMap.get(String(event._id)) ?? [];
-      const pendingInvites = eventInvitations.filter(
-        (invitation) => invitation.status === EventInvitationStatus.PENDING,
-      ).length;
-      const acceptedInvites = eventInvitations.filter(
-        (invitation) => invitation.status === EventInvitationStatus.ACCEPTED,
-      ).length;
-      const totalInvited = eventInvitations.length;
+      const teamSummary = teamSummaryMap.get(String(event._id));
+      const pendingInvites =
+        teamSummary?.pendingInvites ??
+        eventInvitations.filter(
+          (invitation) => invitation.status === EventInvitationStatus.PENDING,
+        ).length;
+      const acceptedInvites =
+        teamSummary?.acceptedInvites ??
+        eventInvitations.filter(
+          (invitation) => invitation.status === EventInvitationStatus.ACCEPTED,
+        ).length;
+      const totalInvited = teamSummary?.totalInvited ?? eventInvitations.length;
 
       return {
         ...event,
         invitations: eventInvitations,
         inviteSummary: {
-          maxPhotographers: subscription.maxPhotographers,
+          unlimitedPhotographers: true,
+          maxPhotographers: null,
           totalInvited,
           pendingInvites,
           acceptedInvites,
-          remainingInvites: Math.max(
-            subscription.maxPhotographers - totalInvited,
-            0,
-          ),
+          remainingInvites: null,
         },
         photosCount: photoCountMap.get(String(event._id)) ?? 0,
       };
@@ -325,16 +355,12 @@ export class EventService {
       totalPages,
       hasNextPage: safePage < totalPages,
       hasPreviousPage: safePage > 1,
-      subscription,
+      subscription: { ...subscription, unlimitedPhotographers: true },
     };
   }
 
   async findAll(query: EventFilterDto) {
-    const {
-      query: searchQuery,
-      isPublished,
-      isActive,
-    } = query;
+    const { query: searchQuery, isPublished, isActive } = query;
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 10, 1), 100);
 
@@ -381,7 +407,8 @@ export class EventService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, userId?: string, role?: string) {
+    await this.eventMemberService.assertCanAccess(id, userId, role);
     const event = await this.eventModel
       .findById(id)
       .populate('userId', 'name email phone')
@@ -394,7 +421,13 @@ export class EventService {
     return event;
   }
 
-  async update(id: string, updateEventDto: UpdateEventDto) {
+  async update(
+    id: string,
+    updateEventDto: UpdateEventDto,
+    actorId?: string,
+    actorRole?: string,
+  ) {
+    await this.eventMemberService.assertCanManage(id, actorId, actorRole);
     const shouldUnsetImage =
       updateEventDto.image &&
       !updateEventDto.image.url &&
@@ -423,7 +456,8 @@ export class EventService {
     return { message: 'Event updated successfully', data: event };
   }
 
-  async remove(id: string) {
+  async remove(id: string, actorId?: string, actorRole?: string) {
+    await this.eventMemberService.assertCanManage(id, actorId, actorRole);
     const event = await this.eventModel.findByIdAndDelete(id).lean();
 
     if (!event) {
@@ -454,21 +488,11 @@ export class EventService {
       .select('name email phone userId role isActive')
       .lean();
 
-    if (!photographer) {
-      throw new HttpException('Photographer not found', 400);
+    if (!photographer?.isActive) {
+      throw new HttpException('Active photographer not found', 400);
     }
-
     if (photographer.role !== UserType.PHOTOGRAPHER) {
       throw new HttpException('Selected user is not a photographer', 400);
-    }
-
-    const subscription = await this.getUserSubscriptionMeta(event.userId);
-
-    if (subscription.maxPhotographers <= 0) {
-      throw new HttpException(
-        'Your current subscription does not allow photographer invitations',
-        403,
-      );
     }
 
     const existingInvitation = await this.eventInvitationModel
@@ -481,27 +505,8 @@ export class EventService {
     if (existingInvitation) {
       throw new HttpException(
         existingInvitation.status === EventInvitationStatus.ACCEPTED
-          ? 'Photographer already accepted invitation for this event'
+          ? 'Photographer already joined this event'
           : 'Photographer already invited for this event',
-        400,
-      );
-    }
-
-    const activeInvitationsCount = await this.eventInvitationModel.countDocuments(
-      {
-        eventId: this.toObjectId(eventId),
-        status: {
-          $in: [
-            EventInvitationStatus.PENDING,
-            EventInvitationStatus.ACCEPTED,
-          ],
-        },
-      },
-    );
-
-    if (activeInvitationsCount >= subscription.maxPhotographers) {
-      throw new HttpException(
-        `Invitation limit reached. Your plan allows ${subscription.maxPhotographers} photographers per event`,
         400,
       );
     }
@@ -513,6 +518,18 @@ export class EventService {
       status: EventInvitationStatus.PENDING,
     });
 
+    await this.eventMemberService.add(
+      {
+        eventId,
+        userId: photographerId,
+        role: 'photographer' as any,
+        assignedAlbumIds: [],
+        canPublish: true,
+      },
+      actorId || String(event.userId),
+      actorRole,
+    );
+
     const populatedInvitation = await this.eventInvitationModel
       .findById(createdInvitation._id)
       .populate('photographerId', 'name email phone userId')
@@ -523,13 +540,7 @@ export class EventService {
       data: populatedInvitation
         ? this.toOwnerInvitationView(populatedInvitation)
         : null,
-      meta: {
-        maxPhotographers: subscription.maxPhotographers,
-        remainingInvites: Math.max(
-          subscription.maxPhotographers - activeInvitationsCount - 1,
-          0,
-        ),
-      },
+      meta: { unlimitedPhotographers: true, remainingInvites: null },
     };
   }
 
@@ -552,7 +563,9 @@ export class EventService {
       .exec();
 
     return {
-      data: data.map((invitation) => this.toPhotographerInvitationView(invitation)),
+      data: data.map((invitation) =>
+        this.toPhotographerInvitationView(invitation),
+      ),
       totalItems: data.length,
       pendingItems: data.filter(
         (invitation) => invitation.status === EventInvitationStatus.PENDING,
@@ -563,14 +576,17 @@ export class EventService {
     };
   }
 
-  async acceptPhotographerInvitation(invitationId: string, photographerId?: string) {
+  async acceptPhotographerInvitation(
+    invitationId: string,
+    photographerId?: string,
+  ) {
     if (!photographerId || !Types.ObjectId.isValid(photographerId)) {
       throw new HttpException('Invalid photographer id', 400);
     }
 
     const invitation = await this.eventInvitationModel
       .findById(invitationId)
-      .select('photographerId status')
+      .select('photographerId status eventId userId')
       .lean();
 
     if (!invitation) {
@@ -600,6 +616,12 @@ export class EventService {
       .populate('userId', 'name email phone userId')
       .lean();
 
+    await this.eventMemberService.activateLegacyPhotographer(
+      String(invitation.eventId),
+      photographerId,
+      String(invitation.userId),
+    );
+
     return {
       message: 'Invitation accepted successfully',
       data: updatedInvitation
@@ -608,7 +630,10 @@ export class EventService {
     };
   }
 
-  async deletePhotographerInvitation(invitationId: string, photographerId?: string) {
+  async deletePhotographerInvitation(
+    invitationId: string,
+    photographerId?: string,
+  ) {
     if (!photographerId || !Types.ObjectId.isValid(photographerId)) {
       throw new HttpException('Invalid photographer id', 400);
     }
@@ -640,39 +665,32 @@ export class EventService {
     };
   }
 
-  async toggleActive(id: string, userId?: string) {
-    const event = await this.eventModel.findById(id).select('isActive userId').lean();
-
-    if (!event) {
-      throw new HttpException('Event not found', 400);
-    }
-
-    if (userId && String(event.userId) !== userId) {
-      throw new HttpException('You can only modify your own events', 403);
-    }
-
-    const updated = await this.eventModel
-      .findByIdAndUpdate(id, { $set: { isActive: !event.isActive } }, { new: true })
+  async toggleActive(id: string, userId?: string, userRole?: string) {
+    await this.eventMemberService.assertCanManage(id, userId, userRole);
+    const event = await this.eventModel.findById(id).select('isActive').lean();
+    if (!event) throw new HttpException('Event not found', 400);
+    return this.eventModel
+      .findByIdAndUpdate(
+        id,
+        { $set: { isActive: !event.isActive } },
+        { new: true },
+      )
       .lean();
-
-    return updated;
   }
 
-  async togglePublished(id: string, userId?: string) {
-    const event = await this.eventModel.findById(id).select('isPublished userId').lean();
-
-    if (!event) {
-      throw new HttpException('Event not found', 400);
-    }
-
-    if (userId && String(event.userId) !== userId) {
-      throw new HttpException('You can only modify your own events', 403);
-    }
-
-    const updated = await this.eventModel
-      .findByIdAndUpdate(id, { $set: { isPublished: !event.isPublished } }, { new: true })
+  async togglePublished(id: string, userId?: string, userRole?: string) {
+    await this.eventMemberService.assertCanManage(id, userId, userRole);
+    const event = await this.eventModel
+      .findById(id)
+      .select('isPublished')
       .lean();
-
-    return updated;
+    if (!event) throw new HttpException('Event not found', 400);
+    return this.eventModel
+      .findByIdAndUpdate(
+        id,
+        { $set: { isPublished: !event.isPublished } },
+        { new: true },
+      )
+      .lean();
   }
 }

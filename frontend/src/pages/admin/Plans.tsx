@@ -283,7 +283,7 @@ export default function Plans() {
   const plans = plansQuery.data?.data || [];
   const featureKeys = Object.keys(featureMapping);
   const limitKeys = Array.from(
-    new Set([...Object.keys(limitMapping), ...Object.keys(formData.limits)]),
+    new Set([...Object.keys(limitMapping), ...Object.keys(formData.limits)].filter((key) => key !== "photographers.max")),
   );
   const loading = plansQuery.isLoading;
   const submitting =

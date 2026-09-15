@@ -4,12 +4,14 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsNumberString,
   IsMongoId,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUrl,
+  MaxLength,
 } from 'class-validator';
 
 export class CreateEventImageDto {
@@ -24,10 +26,21 @@ export class CreateEventImageDto {
   @IsNotEmpty()
   imageUrl: string;
 
+  @ApiPropertyOptional({ example: 'camera-capture-1734567890' })
+  @IsString()
+  @MaxLength(160)
+  @IsOptional()
+  clientTransferId?: string;
+
   @ApiPropertyOptional({ example: false })
   @IsBoolean()
   @IsOptional()
   isEnhanced?: boolean;
+
+  @ApiPropertyOptional({ enum: ['photo', 'video'], default: 'photo' })
+  @IsOptional()
+  @IsIn(['photo', 'video'])
+  mediaType?: 'photo' | 'video';
 
   @ApiPropertyOptional({ example: '507f1f77bcf86cd799439014' })
   @IsMongoId()
@@ -56,10 +69,21 @@ export class CreateEventImagesBatchDto {
   @IsUrl({ require_tld: false }, { each: true })
   imageUrls: string[];
 
+  @ApiPropertyOptional({ example: 'camera-capture-1734567890' })
+  @IsString()
+  @MaxLength(160)
+  @IsOptional()
+  clientTransferId?: string;
+
   @ApiPropertyOptional({ example: false })
   @IsBoolean()
   @IsOptional()
   isEnhanced?: boolean;
+
+  @ApiPropertyOptional({ enum: ['photo', 'video'], default: 'photo' })
+  @IsOptional()
+  @IsIn(['photo', 'video'])
+  mediaType?: 'photo' | 'video';
 
   @ApiPropertyOptional({ example: '507f1f77bcf86cd799439014' })
   @IsMongoId()
@@ -110,6 +134,12 @@ export class EventImageQueryDto {
   id: string;
 }
 
+export class PublishEventImageDto {
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  isPublished: boolean;
+}
+
 export class EnhanceEventImageDto {
   @ApiProperty({ example: '507f1f77bcf86cd799439013' })
   @IsMongoId()
@@ -127,6 +157,16 @@ export class MyPictureDto {
   @IsMongoId()
   @IsOptional()
   eventId?: string;
+
+  @ApiPropertyOptional({ example: '507f1f77bcf86cd799439014' })
+  @IsMongoId()
+  @IsOptional()
+  albumId?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  accessToken?: string;
 
   @ApiPropertyOptional({ example: 100 })
   @IsNumberString()

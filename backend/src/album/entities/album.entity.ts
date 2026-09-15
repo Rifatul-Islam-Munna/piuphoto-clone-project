@@ -16,6 +16,28 @@ export class Album {
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   userId: Types.ObjectId;
+
+  @Prop({
+    type: String,
+    enum: ['inherit', 'auto_upload', 'auto_ai', 'manual'],
+    default: 'inherit',
+    index: true,
+  })
+  publishPolicy: 'inherit' | 'auto_upload' | 'auto_ai' | 'manual';
+
+  @Prop({
+    type: String,
+    enum: ['inherit', 'public', 'private', 'password', 'facial'],
+    default: 'inherit',
+    index: true,
+  })
+  galleryVisibility: 'inherit' | 'public' | 'private' | 'password' | 'facial';
+
+  @Prop({ select: false, trim: true })
+  galleryPasswordHash?: string;
+
+  @Prop({ default: 1 })
+  galleryAccessVersion: number;
 }
 
 export const AlbumSchema = SchemaFactory.createForClass(Album);

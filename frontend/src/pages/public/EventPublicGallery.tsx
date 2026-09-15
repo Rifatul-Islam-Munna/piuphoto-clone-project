@@ -25,14 +25,18 @@ type EventImage = {
   imageUrl?: string;
   isEnhanced?: boolean;
   createdAt?: string;
-  eventId?: {
-    _id?: string;
-    title?: string;
-    description?: string;
-  } | string;
-  userTakenBy?: {
-    name?: string;
-  } | string;
+  eventId?:
+    | {
+        _id?: string;
+        title?: string;
+        description?: string;
+      }
+    | string;
+  userTakenBy?:
+    | {
+        name?: string;
+      }
+    | string;
 };
 
 type EventImageResponse = {
@@ -127,14 +131,15 @@ export default function EventPublicGallery() {
       }
 
       setIsLoading(true);
-      const [imageResponse, imageError] = await GetRequestAxios<EventImageResponse>(
-        `/eventImage/public?eventId=${eventId}${albumId ? `&albumId=${albumId}` : ""}`,
-        {
-          withToken: false,
-          withCredentials: false,
-          redirectOnUnauthorized: false,
-        },
-      );
+      const [imageResponse, imageError] =
+        await GetRequestAxios<EventImageResponse>(
+          `/eventImage/public?eventId=${eventId}${albumId ? `&albumId=${albumId}` : ""}`,
+          {
+            withToken: false,
+            withCredentials: false,
+            redirectOnUnauthorized: false,
+          },
+        );
       const [albumResponse] = albumId
         ? [null]
         : await GetRequestAxios<PublicAlbumResponse>(
@@ -169,6 +174,30 @@ export default function EventPublicGallery() {
     };
   }, [albumId, eventId, reloadKey]);
 
+  useEffect(() => {
+    if (!eventId || showingFaceMatches) return;
+
+    let cancelled = false;
+    const syncLatest = async () => {
+      const [response, error] = await GetRequestAxios<EventImageResponse>(
+        `/eventImage/public?eventId=${eventId}${albumId ? `&albumId=${albumId}` : ""}`,
+        {
+          withToken: false,
+          withCredentials: false,
+          redirectOnUnauthorized: false,
+        },
+      );
+      if (!cancelled && !error && response?.data) {
+        setImages(response.data);
+      }
+    };
+
+    const timer = window.setInterval(syncLatest, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [albumId, eventId, showingFaceMatches]);
   useEffect(() => {
     const onScroll = () => {
       const nearBottom =
@@ -432,11 +461,14 @@ export default function EventPublicGallery() {
           <div className="flex min-h-96 items-center justify-center">
             <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
           </div>
-        ) : images.length === 0 && (showingFaceMatches || albumId || albums.length === 0) ? (
+        ) : images.length === 0 &&
+          (showingFaceMatches || albumId || albums.length === 0) ? (
           <div className="flex min-h-96 flex-col items-center justify-center rounded-lg border border-dashed text-center">
             <ImageIcon className="mb-3 h-12 w-12 text-muted-foreground" />
             <h2 className="text-xl font-semibold">
-              {showingFaceMatches ? "No matching photos found" : "No images uploaded yet"}
+              {showingFaceMatches
+                ? "No matching photos found"
+                : "No images uploaded yet"}
             </h2>
             <p className="text-muted-foreground">
               {showingFaceMatches
@@ -496,7 +528,9 @@ export default function EventPublicGallery() {
                         />
                       </label>
                       {image.isEnhanced && (
-                        <Badge className="absolute right-3 top-3">Enhanced</Badge>
+                        <Badge className="absolute right-3 top-3">
+                          Enhanced
+                        </Badge>
                       )}
                     </div>
                     <CardContent className="flex items-center justify-between gap-2 p-3">
@@ -545,4 +579,3 @@ export default function EventPublicGallery() {
     </main>
   );
 }
-

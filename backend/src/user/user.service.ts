@@ -17,7 +17,10 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { User, UserDocument } from './entities/user.entity';
 import { UserType } from './entities/user.entity';
-import { SubscriptionPlan, SubscriptionPlanDocument } from '../subscription/entities/subscription-plan.entity';
+import {
+  SubscriptionPlan,
+  SubscriptionPlanDocument,
+} from '../subscription/entities/subscription-plan.entity';
 import { Model, Types } from 'mongoose';
 import bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
@@ -47,7 +50,11 @@ export class UserService implements OnModuleInit {
     value:
       | string
       | Types.ObjectId
-      | { _id?: string | Types.ObjectId; id?: string | Types.ObjectId; toHexString?: () => string }
+      | {
+          _id?: string | Types.ObjectId;
+          id?: string | Types.ObjectId;
+          toHexString?: () => string;
+        }
       | null
       | undefined,
   ) {
@@ -331,7 +338,9 @@ export class UserService implements OnModuleInit {
     const [data, totalItems] = await Promise.all([
       this.userModel
         .find(filter)
-        .select('name email phone userId role gender age maritalStatus isActive isPublished createdAt credits')
+        .select(
+          'name email phone userId role gender age maritalStatus isActive isPublished createdAt credits',
+        )
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
@@ -361,10 +370,7 @@ export class UserService implements OnModuleInit {
     let findOne;
 
     if (isValidObjectId) {
-      findOne = await this.userModel
-        .findById(id)
-        .select('-password')
-        .lean();
+      findOne = await this.userModel.findById(id).select('-password').lean();
     }
 
     if (!findOne) {
@@ -419,8 +425,44 @@ export class UserService implements OnModuleInit {
     };
   }
 
+  async getTeamCandidates(query = '', requesterId?: string) {
+    const search = query.trim();
+    const filter: Record<string, unknown> = {
+      isActive: true,
+      role: { $ne: UserType.ADMIN },
+    };
+    if (requesterId && Types.ObjectId.isValid(requesterId)) {
+      filter._id = { $ne: new Types.ObjectId(requesterId) };
+    }
+    if (search) {
+      const regex = { $regex: search, $options: 'i' };
+      filter.$or = [
+        { name: regex },
+        { email: regex },
+        { phone: regex },
+        { userId: regex },
+      ];
+    }
+    const data = await this.userModel
+      .find(filter)
+      .select('name email phone userId role isActive profileImage')
+      .sort({ name: 1 })
+      .limit(60)
+      .lean()
+      .exec();
+    return { data, totalItems: data.length };
+  }
   async update(updateUserDto: UpdateUserDto, userId?: string) {
-    const { id, password, otpNumber, otpValidatedAt, _v, updatedAt, createdAt, ...rest } = updateUserDto as any;
+    const {
+      id,
+      password,
+      otpNumber,
+      otpValidatedAt,
+      _v,
+      updatedAt,
+      createdAt,
+      ...rest
+    } = updateUserDto as any;
 
     const targetId = userId || id;
 
@@ -442,10 +484,7 @@ export class UserService implements OnModuleInit {
   async updatePassword(id: string, updateDto: ResetPasswordDto) {
     const { oldPassword, newPassword } = updateDto;
 
-    const findOne = await this.userModel
-      .findById(id)
-      .select('password')
-      .lean();
+    const findOne = await this.userModel.findById(id).select('password').lean();
 
     if (!findOne) {
       throw new HttpException('User not found', 400);
@@ -460,7 +499,11 @@ export class UserService implements OnModuleInit {
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
     const updatePassword = await this.userModel
-      .findByIdAndUpdate(id, { $set: { password: passwordHash } }, { new: true })
+      .findByIdAndUpdate(
+        id,
+        { $set: { password: passwordHash } },
+        { new: true },
+      )
       .lean();
 
     if (!updatePassword) {
@@ -512,7 +555,11 @@ export class UserService implements OnModuleInit {
       filter.gender = gender;
     }
 
-    if (isPublished !== undefined && isPublished !== null && isPublished !== 'all') {
+    if (
+      isPublished !== undefined &&
+      isPublished !== null &&
+      isPublished !== 'all'
+    ) {
       filter.isPublished = isPublished === 'true';
     }
 
@@ -523,7 +570,9 @@ export class UserService implements OnModuleInit {
     const [data, totalItems] = await Promise.all([
       this.userModel
         .find(filter)
-        .select('name email phone whatsapp gender age role isActive isPublished userId createdAt subscriptionPlanId isSubscriber subscriptionEndDate credits')
+        .select(
+          'name email phone whatsapp gender age role isActive isPublished userId createdAt subscriptionPlanId isSubscriber subscriptionEndDate credits',
+        )
         .populate('subscriptionPlanId', 'title price')
         .skip(skip)
         .limit(limit)
@@ -566,7 +615,12 @@ export class UserService implements OnModuleInit {
 
   async assignPlan(
     userId: string,
-    planId: string | Types.ObjectId | { _id?: string | Types.ObjectId } | null | undefined,
+    planId:
+      | string
+      | Types.ObjectId
+      | { _id?: string | Types.ObjectId }
+      | null
+      | undefined,
     options?: { creditOverride?: number },
   ) {
     const normalizedPlanId = this.normalizeObjectIdInput(planId as any);
@@ -611,11 +665,7 @@ export class UserService implements OnModuleInit {
     }
 
     const updateUser = await this.userModel
-      .findByIdAndUpdate(
-        userId,
-        updatePayload,
-        { new: true },
-      )
+      .findByIdAndUpdate(userId, updatePayload, { new: true })
       .lean();
 
     if (!updateUser) {

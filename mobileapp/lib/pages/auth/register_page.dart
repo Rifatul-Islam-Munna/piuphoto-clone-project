@@ -90,25 +90,23 @@ class _RegisterPageState extends State<RegisterPage> {
                   const SizedBox(height: 20),
                   Text(
                     'Create account',
-                    style: Theme.of(context)
-                        .textTheme
-                        .headlineMedium
-                        ?.copyWith(fontWeight: FontWeight.w800),
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Choose if you manage events or upload as a photographer.',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(color: color.onSurface.withValues(alpha: 0.65)),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: color.onSurface.withValues(alpha: 0.65),
+                    ),
                   ),
                   const SizedBox(height: 24),
                   SegmentedButton<String>(
                     segments: const [
                       ButtonSegment(
                         value: 'user',
-                        label: Text('User'),
+                        label: Text('Event Planner'),
                         icon: Icon(Icons.event_available_outlined),
                       ),
                       ButtonSegment(
@@ -177,7 +175,8 @@ class _RegisterPageState extends State<RegisterPage> {
                   const SizedBox(height: 12),
                   Center(
                     child: TextButton(
-                      onPressed: () => context.router.replace(const LoginRoute()),
+                      onPressed: () =>
+                          context.router.replace(const LoginRoute()),
                       child: const Text('Already have an account? Login'),
                     ),
                   ),

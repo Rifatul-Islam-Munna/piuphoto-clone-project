@@ -16,6 +16,7 @@ class PendingUploadItem {
     required this.createdAt,
     this.fingerprint,
     this.albumId,
+    this.cameraId,
     this.attempts = 0,
     this.lastError,
     this.lastAttemptAt,
@@ -32,6 +33,7 @@ class PendingUploadItem {
   final int createdAt;
   final String? fingerprint;
   final String? albumId;
+  final String? cameraId;
   final int attempts;
   final String? lastError;
   final int? lastAttemptAt;
@@ -56,6 +58,7 @@ class PendingUploadItem {
       createdAt: createdAt,
       fingerprint: fingerprint,
       albumId: albumId,
+      cameraId: cameraId,
       attempts: attempts ?? this.attempts,
       lastError: clearLastError ? null : (lastError ?? this.lastError),
       lastAttemptAt: lastAttemptAt ?? this.lastAttemptAt,
@@ -75,6 +78,7 @@ class PendingUploadItem {
       'createdAt': createdAt,
       'fingerprint': fingerprint,
       'albumId': albumId,
+      'cameraId': cameraId,
       'attempts': attempts,
       'lastError': lastError,
       'lastAttemptAt': lastAttemptAt,
@@ -94,6 +98,7 @@ class PendingUploadItem {
       createdAt: int.tryParse(json['createdAt']?.toString() ?? '') ?? 0,
       fingerprint: json['fingerprint']?.toString(),
       albumId: json['albumId']?.toString(),
+      cameraId: json['cameraId']?.toString(),
       attempts: int.tryParse(json['attempts']?.toString() ?? '') ?? 0,
       lastError: json['lastError']?.toString(),
       lastAttemptAt: int.tryParse(json['lastAttemptAt']?.toString() ?? ''),
@@ -124,11 +129,15 @@ class UploadQueueStorage {
 
     return decoded
         .whereType<Map>()
-        .map((item) => PendingUploadItem.fromJson(Map<String, dynamic>.from(item)))
-        .where((item) =>
-            item.id.isNotEmpty &&
-            item.eventId.isNotEmpty &&
-            item.localPath.isNotEmpty)
+        .map(
+          (item) => PendingUploadItem.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .where(
+          (item) =>
+              item.id.isNotEmpty &&
+              item.eventId.isNotEmpty &&
+              item.localPath.isNotEmpty,
+        )
         .toList(growable: false);
   }
 
@@ -152,7 +161,9 @@ class UploadQueueStorage {
   }
 
   static Future<void> remove(String id) async {
-    final next = items.value.where((item) => item.id != id).toList(growable: false);
+    final next = items.value
+        .where((item) => item.id != id)
+        .toList(growable: false);
     await _save(next);
   }
 

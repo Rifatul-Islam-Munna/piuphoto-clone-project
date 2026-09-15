@@ -4,6 +4,8 @@ import { AlbumController } from './album.controller';
 import { AlbumService } from './album.service';
 import { Album, AlbumSchema } from './entities/album.entity';
 import { Event, EventSchema } from '../event/entities/event.entity';
+import { EventMemberModule } from '../event-member/event-member.module';
+import { GalleryAccessModule } from '../gallery-access/gallery-access.module';
 import {
   EventImage,
   EventImageSchema,
@@ -11,6 +13,8 @@ import {
 
 @Module({
   imports: [
+    EventMemberModule,
+    GalleryAccessModule,
     MongooseModule.forFeature([
       { name: Album.name, schema: AlbumSchema },
       { name: Event.name, schema: EventSchema },

@@ -1,0 +1,14 @@
+{
+  "backendUrl": "http://localhost:4000",
+  "token": "PASTE_RETOUCHER_JWT",
+  "eventId": "PASTE_EVENT_ID",
+  "albumId": "",
+  "deviceId": "retouch-pc-1",
+  "downloadDir": "./downloads",
+  "exportDir": "./exports",
+  "stateFile": "./.airpix-sync-state.json",
+  "pollSeconds": 5,
+  "heartbeatSeconds": 20,
+  "downloadConcurrency": 3,
+  "maxMbps": 0
+}

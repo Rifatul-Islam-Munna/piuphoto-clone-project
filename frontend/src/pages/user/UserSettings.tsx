@@ -1,30 +1,34 @@
-'use client';
+"use client";
 
-import { useState, useRef } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Upload, X, Loader2, Save } from 'lucide-react';
-import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { useState, useRef } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Upload, X, Loader2, Save } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+} from "@/components/ui/card";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import UserLayout from './UserLayout';
-import { GetRequestAxios, PatchRequestAxios, PostRequestAxios } from '@/api-hooks/api-hooks';
-import { useQueryWrapper } from '@/api-hooks/react-query-wrapper';
+} from "@/components/ui/select";
+import PlannerLayout from "../planner/PlannerLayout";
+import {
+  GetRequestAxios,
+  PatchRequestAxios,
+  PostRequestAxios,
+} from "@/api-hooks/api-hooks";
+import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
 
 type UserProfile = {
   _id: string;
@@ -61,14 +65,14 @@ type UserFormData = {
 };
 
 const defaultFormData: UserFormData = {
-  name: '',
-  phone: '',
-  whatsapp: '',
-  gender: '',
-  maritalStatus: '',
-  age: '',
-  bloodGroup: '',
-  weight: '',
+  name: "",
+  phone: "",
+  whatsapp: "",
+  gender: "",
+  maritalStatus: "",
+  age: "",
+  bloodGroup: "",
+  weight: "",
 };
 
 export default function UserSettings() {
@@ -80,24 +84,33 @@ export default function UserSettings() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { data: profile, isLoading } = useQueryWrapper<UserProfile>(
-    ['user-profile'],
-    '/user/get-my-profile',
-    { withToken: true, withCredentials: true }
+    ["user-profile"],
+    "/user/get-my-profile",
+    { withToken: true, withCredentials: true },
   );
 
-  const uploadImage = async (file: File): Promise<{ url: string; key: string }> => {
+  const uploadImage = async (
+    file: File,
+  ): Promise<{ url: string; key: string }> => {
     const formDataUpload = new FormData();
-    formDataUpload.append('file', file);
+    formDataUpload.append("file", file);
     const [response, error] = await PostRequestAxios<ImageUploadResponse>(
-      '/image/upload',
+      "/image/upload",
       formDataUpload,
-      { withToken: true, withCredentials: true, headers: { 'Content-Type': 'multipart/form-data' } }
+      {
+        withToken: true,
+        withCredentials: true,
+        headers: { "Content-Type": "multipart/form-data" },
+      },
     );
-    if (error || !response) throw new Error(error?.message || 'Failed to upload image');
+    if (error || !response)
+      throw new Error(error?.message || "Failed to upload image");
     return response.data;
   };
 
-  const updateProfile = async (data: UserFormData & { profileImage?: { url: string } }) => {
+  const updateProfile = async (
+    data: UserFormData & { profileImage?: { url: string } },
+  ) => {
     const payload: Record<string, unknown> = {
       name: data.name,
       phone: data.phone || undefined,
@@ -112,11 +125,12 @@ export default function UserSettings() {
       payload.profileImage = data.profileImage;
     }
     const [response, error] = await PatchRequestAxios<UserProfile>(
-      '/user/update-profile',
+      "/user/update-profile",
       payload,
-      { withToken: true, withCredentials: true }
+      { withToken: true, withCredentials: true },
     );
-    if (error || !response) throw new Error(error?.message || 'Failed to update profile');
+    if (error || !response)
+      throw new Error(error?.message || "Failed to update profile");
     return response;
   };
 
@@ -128,15 +142,18 @@ export default function UserSettings() {
         const uploaded = await uploadImage(imageFile);
         profileImageUrl = uploaded.url;
       }
-      return updateProfile({ ...data, profileImage: profileImageUrl ? { url: profileImageUrl } : undefined });
+      return updateProfile({
+        ...data,
+        profileImage: profileImageUrl ? { url: profileImageUrl } : undefined,
+      });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-profile'] });
-      toast.success('Profile updated successfully');
+      queryClient.invalidateQueries({ queryKey: ["user-profile"] });
+      toast.success("Profile updated successfully");
       setImageFile(null);
     },
     onError: (error: any) => {
-      toast.error(error?.message || 'Failed to update profile');
+      toast.error(error?.message || "Failed to update profile");
     },
     onSettled: () => {
       setIsSubmitting(false);
@@ -156,31 +173,31 @@ export default function UserSettings() {
   const handleRemoveImage = () => {
     setImageFile(null);
     setImagePreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const currentImage = imagePreview || profile?.profileImage?.url;
 
   if (isLoading) {
     return (
-      <UserLayout>
+      <PlannerLayout>
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
-      </UserLayout>
+      </PlannerLayout>
     );
   }
 
-  if (profile && formData.name === '') {
+  if (profile && formData.name === "") {
     setFormData({
-      name: profile.name || '',
-      phone: profile.phone || '',
-      whatsapp: profile.whatsapp || '',
-      gender: profile.gender || '',
-      maritalStatus: profile.maritalStatus || '',
-      age: profile.age?.toString() || '',
-      bloodGroup: profile.bloodGroup || '',
-      weight: profile.weight?.toString() || '',
+      name: profile.name || "",
+      phone: profile.phone || "",
+      whatsapp: profile.whatsapp || "",
+      gender: profile.gender || "",
+      maritalStatus: profile.maritalStatus || "",
+      age: profile.age?.toString() || "",
+      bloodGroup: profile.bloodGroup || "",
+      weight: profile.weight?.toString() || "",
     });
   }
 
@@ -194,17 +211,21 @@ export default function UserSettings() {
   };
 
   return (
-    <UserLayout>
+    <PlannerLayout>
       <div className="space-y-6 max-w-3xl mx-auto">
         <div>
           <h1 className="text-2xl font-bold">Settings</h1>
-          <p className="text-muted-foreground">Manage your account settings and profile information.</p>
+          <p className="text-muted-foreground">
+            Manage your account settings and profile information.
+          </p>
         </div>
 
         <Card>
           <CardHeader>
             <CardTitle>Credits</CardTitle>
-            <CardDescription>Current available credits in your account.</CardDescription>
+            <CardDescription>
+              Current available credits in your account.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{profile?.credits || 0}</div>
@@ -214,7 +235,9 @@ export default function UserSettings() {
         <Card>
           <CardHeader>
             <CardTitle>Profile Information</CardTitle>
-            <CardDescription>Update your personal details and profile picture.</CardDescription>
+            <CardDescription>
+              Update your personal details and profile picture.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
@@ -222,7 +245,11 @@ export default function UserSettings() {
                 <div className="relative">
                   {currentImage ? (
                     <div className="relative w-32 h-32 rounded-full overflow-hidden border-4 border-muted">
-                      <img src={currentImage} alt="Profile" className="w-full h-full object-cover" />
+                      <img
+                        src={currentImage}
+                        alt="Profile"
+                        className="w-full h-full object-cover"
+                      />
                       <Button
                         type="button"
                         variant="destructive"
@@ -249,7 +276,9 @@ export default function UserSettings() {
                   accept="image/*"
                   onChange={handleImageSelect}
                 />
-                <p className="text-sm text-muted-foreground">Click to upload profile picture</p>
+                <p className="text-sm text-muted-foreground">
+                  Click to upload profile picture
+                </p>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
@@ -258,7 +287,7 @@ export default function UserSettings() {
                   <Input
                     id="name"
                     value={formData.name}
-                    onChange={(e) => handleChange('name', e.target.value)}
+                    onChange={(e) => handleChange("name", e.target.value)}
                     placeholder="Enter your full name"
                     required
                   />
@@ -269,7 +298,7 @@ export default function UserSettings() {
                   <Input
                     id="phone"
                     value={formData.phone}
-                    onChange={(e) => handleChange('phone', e.target.value)}
+                    onChange={(e) => handleChange("phone", e.target.value)}
                     placeholder="Enter phone number"
                   />
                 </div>
@@ -279,7 +308,7 @@ export default function UserSettings() {
                   <Input
                     id="whatsapp"
                     value={formData.whatsapp}
-                    onChange={(e) => handleChange('whatsapp', e.target.value)}
+                    onChange={(e) => handleChange("whatsapp", e.target.value)}
                     placeholder="Enter WhatsApp number"
                   />
                 </div>
@@ -292,7 +321,7 @@ export default function UserSettings() {
                     min="10"
                     max="100"
                     value={formData.age}
-                    onChange={(e) => handleChange('age', e.target.value)}
+                    onChange={(e) => handleChange("age", e.target.value)}
                     placeholder="Enter age"
                   />
                 </div>
@@ -300,7 +329,9 @@ export default function UserSettings() {
 
               <div className="flex justify-end">
                 <Button type="submit" disabled={isSubmitting || !formData.name}>
-                  {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {isSubmitting && (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  )}
                   <Save className="mr-2 h-4 w-4" />
                   Save Changes
                 </Button>
@@ -335,7 +366,6 @@ export default function UserSettings() {
           </CardContent>
         </Card>
       </div>
-    </UserLayout>
+    </PlannerLayout>
   );
 }
-

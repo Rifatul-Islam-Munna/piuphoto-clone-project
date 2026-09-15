@@ -13,6 +13,13 @@ import { AddonModule } from './addon/addon.module';
 import { EventImageModule } from './event-image/event-image.module';
 import { AlbumModule } from './album/album.module';
 import { SettingsModule } from './settings/settings.module';
+import { EventMemberModule } from './event-member/event-member.module';
+import { TransferStatusModule } from './transfer-status/transfer-status.module';
+import { UploadSessionModule } from './upload-session/upload-session.module';
+import { RetouchWorkflowModule } from './retouch-workflow/retouch-workflow.module';
+import { StoreModule } from './store/store.module';
+import { AnalyticsModule } from './analytics/analytics.module';
+import { ExternalApiModule } from './external-api/external-api.module';
 
 @Module({
   imports: [
@@ -74,6 +81,13 @@ import { SettingsModule } from './settings/settings.module';
     AlbumModule,
     EventImageModule,
     SettingsModule,
+    EventMemberModule,
+    UploadSessionModule,
+    TransferStatusModule,
+    RetouchWorkflowModule,
+    StoreModule,
+    AnalyticsModule,
+    ExternalApiModule,
   ],
   controllers: [],
   providers: [],

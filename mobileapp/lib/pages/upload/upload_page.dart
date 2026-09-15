@@ -19,6 +19,7 @@ import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/uploaded_gallery_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
+import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
@@ -56,6 +57,8 @@ class _PtpProbe {
 }
 
 enum _WirelessImportMode { sharedNetwork, cameraHotspot }
+
+enum _TransferFilter { all, uploaded, notUploaded }
 
 @RoutePage()
 class UploadPage extends StatefulWidget {
@@ -108,8 +111,20 @@ class _UploadPageState extends State<UploadPage> {
   String? _loadedAlbumEventId;
   String? _selectedAlbumId;
   List<AlbumModel> _albums = [];
+  _TransferFilter _transferFilter = _TransferFilter.all;
 
   bool get _wirelessImporting => _wirelessScanning || _autoImporting;
+
+  String? get _wirelessCameraId {
+    final ptp = _ptpIpCamera;
+    if (ptp != null) return 'PTP/IP ${ptp.host}:${ptp.port}';
+    final canon = _canonCcapiCamera;
+    if (canon != null) return canon.sourceUrl;
+    final upnp = _upnpCameraMedia;
+    if (upnp != null) return upnp.sourceUrl;
+    final source = _wirelessSourceUrl?.trim();
+    return source?.isNotEmpty == true ? source : null;
+  }
 
   void _safeSetState(VoidCallback update) {
     if (!mounted || _disposed) return;
@@ -348,6 +363,7 @@ class _UploadPageState extends State<UploadPage> {
     required String path,
     required String filename,
     required String source,
+    String? cameraId,
   }) async {
     return UploadQueueService.uploadNowOrQueueFile(
       event: event,
@@ -356,6 +372,7 @@ class _UploadPageState extends State<UploadPage> {
       isEnhanced: _isEnhanced,
       albumId: _selectedAlbumId,
       source: source,
+      cameraId: cameraId,
     );
   }
 
@@ -372,6 +389,7 @@ class _UploadPageState extends State<UploadPage> {
     required Uint8List bytes,
     required String filename,
     required String source,
+    String? cameraId,
     String? fingerprint,
     String? lastError,
   }) async {
@@ -382,6 +400,7 @@ class _UploadPageState extends State<UploadPage> {
       isEnhanced: _isEnhanced,
       albumId: _selectedAlbumId,
       source: source,
+      cameraId: cameraId,
       fingerprint: fingerprint,
       lastError: lastError,
     );
@@ -1077,6 +1096,7 @@ class _UploadPageState extends State<UploadPage> {
         bytes: bytes,
         filename: filename,
         source: '$source-hotspot',
+        cameraId: _wirelessCameraId,
         fingerprint: _wirelessFingerprint(
           event: event,
           imageUrl: imageKey,
@@ -1099,6 +1119,7 @@ class _UploadPageState extends State<UploadPage> {
       isEnhanced: _isEnhanced,
       albumId: _selectedAlbumId,
       source: '$source-shared-network',
+      cameraId: _wirelessCameraId,
       fingerprint: _wirelessFingerprint(
         event: event,
         imageUrl: imageKey,
@@ -1554,6 +1575,7 @@ class _UploadPageState extends State<UploadPage> {
               isEnhanced: _isEnhanced,
               albumId: _selectedAlbumId,
               source: 'otg-ptp',
+              cameraId: _otgSourceName,
               fingerprint: '${event.id}|otg-ptp|${file.id ?? image.id}',
               tryUploadNow: true,
             );
@@ -1597,6 +1619,7 @@ class _UploadPageState extends State<UploadPage> {
           path: image.path,
           filename: image.name,
           source: 'otg',
+          cameraId: _otgSourceName,
         );
         _processedOtgIds.add(image.id);
 
@@ -2015,6 +2038,11 @@ class _UploadPageState extends State<UploadPage> {
 
               const SizedBox(height: 8),
 
+              if (activeEvent != null) ...[
+                _liveTransferPanel(activeEvent),
+                const SizedBox(height: 10),
+              ],
+
               // ── Add photos once ──
               Card(
                 margin: EdgeInsets.zero,
@@ -2345,6 +2373,377 @@ class _UploadPageState extends State<UploadPage> {
         );
       },
     );
+  }
+
+  String get _liveConnectionText {
+    if (_otgImporting) {
+      final name = _otgSourceName?.trim();
+      return name?.isNotEmpty == true ? 'OTG - $name' : 'OTG connected';
+    }
+    if (_wirelessImporting) {
+      return _wirelessMode == _WirelessImportMode.cameraHotspot
+          ? 'Camera hotspot live'
+          : 'Wireless camera live';
+    }
+    if (_galleryImporting) return 'Phone gallery live';
+    return 'Ready for camera';
+  }
+
+  bool get _liveConnectionActive =>
+      _otgImporting || _wirelessImporting || _galleryImporting;
+
+  IconData get _liveConnectionIcon {
+    if (_otgImporting) return Icons.usb;
+    if (_wirelessImporting) return Icons.wifi;
+    if (_galleryImporting) return Icons.photo_library_outlined;
+    return Icons.camera_alt_outlined;
+  }
+
+  Widget _liveTransferPanel(EventSummary event) {
+    return ValueListenableBuilder<List<TransferLedgerItem>>(
+      valueListenable: TransferLedgerStorage.items,
+      builder: (context, allItems, _) {
+        final eventItems = allItems
+            .where((item) => item.eventId == event.id)
+            .toList(growable: false);
+        final filtered = eventItems
+            .where((item) {
+              switch (_transferFilter) {
+                case _TransferFilter.uploaded:
+                  return item.isUploaded;
+                case _TransferFilter.notUploaded:
+                  return !item.isUploaded;
+                case _TransferFilter.all:
+                  return true;
+              }
+            })
+            .toList(growable: false);
+        final matchingAlbums = _selectedAlbumId == null
+            ? <AlbumModel>[]
+            : _albums.where((album) => album.id == _selectedAlbumId).toList();
+        final selectedAlbum = matchingAlbums.isEmpty
+            ? null
+            : matchingAlbums.first;
+        final listHeight = (filtered.length * 78.0).clamp(90.0, 520.0);
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Theme.of(context).dividerColor),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    height: 38,
+                    width: 38,
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.photo_library_outlined, size: 21),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          event.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          selectedAlbum?.title ?? 'All categories',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Text(
+                    '${eventItems.length} photos',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _liveConnectionActive
+                          ? Theme.of(context).colorScheme.primaryContainer
+                          : Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(_liveConnectionIcon, size: 14),
+                        const SizedBox(width: 5),
+                        Text(
+                          _liveConnectionText,
+                          style: Theme.of(context).textTheme.labelSmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              SegmentedButton<_TransferFilter>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: _TransferFilter.all, label: Text('All')),
+                  ButtonSegment(
+                    value: _TransferFilter.uploaded,
+                    label: Text('Uploaded'),
+                  ),
+                  ButtonSegment(
+                    value: _TransferFilter.notUploaded,
+                    label: Text('Not uploaded'),
+                  ),
+                ],
+                selected: {_transferFilter},
+                onSelectionChanged: (value) {
+                  if (value.isNotEmpty) {
+                    setState(() => _transferFilter = value.first);
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              if (filtered.isEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 22),
+                  alignment: Alignment.center,
+                  child: Text(
+                    eventItems.isEmpty
+                        ? 'New camera photos will appear here in real time.'
+                        : 'No photos in this filter.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                )
+              else
+                SizedBox(
+                  height: listHeight.toDouble(),
+                  child: ListView.separated(
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) => KeyedSubtree(
+                      key: ValueKey(filtered[index].id),
+                      child: _transferRow(filtered[index]),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _transferRow(TransferLedgerItem item) {
+    return SizedBox(
+      height: 77,
+      child: Row(
+        children: [
+          _transferThumbnail(item),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.filename,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  [
+                    _transferStatusLabel(item.status),
+                    if (item.cameraId?.isNotEmpty == true) item.cameraId!,
+                    item.source,
+                    _transferCategoryLabel(item),
+                    _formatTransferTime(item.updatedAt),
+                    if (item.status == TransferLedgerStatus.uploading &&
+                        item.bytesPerSecond > 0)
+                      _formatTransferRate(item.bytesPerSecond),
+                  ].join('  -  '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                if (item.error != null && item.error!.isNotEmpty)
+                  Text(
+                    item.error!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          _transferStatusWidget(item),
+        ],
+      ),
+    );
+  }
+
+  Widget _transferThumbnail(TransferLedgerItem item) {
+    Widget fallback() => Container(
+      height: 58,
+      width: 58,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Icon(Icons.image_outlined),
+    );
+
+    final lower = item.filename.toLowerCase();
+    final previewable = const [
+      '.jpg',
+      '.jpeg',
+      '.png',
+      '.webp',
+    ].any(lower.endsWith);
+    if (previewable && item.localPath != null) {
+      final file = File(item.localPath!);
+      if (file.existsSync()) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.file(
+            file,
+            height: 58,
+            width: 58,
+            fit: BoxFit.cover,
+            cacheHeight: 180,
+            errorBuilder: (_, _, _) => fallback(),
+          ),
+        );
+      }
+    }
+    if (previewable && item.imageUrl?.isNotEmpty == true) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(
+          item.imageUrl!,
+          height: 58,
+          width: 58,
+          fit: BoxFit.cover,
+          cacheHeight: 180,
+          errorBuilder: (_, _, _) => fallback(),
+        ),
+      );
+    }
+    return fallback();
+  }
+
+  Widget _transferStatusWidget(TransferLedgerItem item) {
+    if (item.status == TransferLedgerStatus.delivered ||
+        item.status == TransferLedgerStatus.published) {
+      return Icon(
+        Icons.check_circle,
+        color: Theme.of(context).colorScheme.primary,
+      );
+    }
+    if (item.status == TransferLedgerStatus.failed) {
+      return IconButton(
+        tooltip: 'Retry now',
+        onPressed: () => UploadQueueService.retryNow(item.id),
+        icon: Icon(Icons.refresh, color: Theme.of(context).colorScheme.error),
+      );
+    }
+    final value =
+        item.status == TransferLedgerStatus.uploading && item.progress > 0
+        ? item.progress / 100
+        : null;
+    return SizedBox(
+      height: 27,
+      width: 27,
+      child: CircularProgressIndicator(value: value, strokeWidth: 2.6),
+    );
+  }
+
+  String _transferCategoryLabel(TransferLedgerItem item) {
+    final albumId = item.albumId;
+    if (albumId == null || albumId.isEmpty) return 'All categories';
+    for (final album in _albums) {
+      if (album.id == albumId) return album.title;
+    }
+    return 'Assigned category';
+  }
+
+  String _formatTransferTime(int milliseconds) {
+    final time = DateTime.fromMillisecondsSinceEpoch(milliseconds);
+    final hour = time.hour.toString().padLeft(2, '0');
+    final minute = time.minute.toString().padLeft(2, '0');
+    final second = time.second.toString().padLeft(2, '0');
+    return '$hour:$minute:$second';
+  }
+
+  String _formatTransferRate(double bytesPerSecond) {
+    if (bytesPerSecond <= 0) return '';
+    if (bytesPerSecond >= 1024 * 1024) {
+      return '${(bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)} MB/s';
+    }
+    if (bytesPerSecond >= 1024) {
+      return '${(bytesPerSecond / 1024).toStringAsFixed(0)} KB/s';
+    }
+    return '${bytesPerSecond.toStringAsFixed(0)} B/s';
+  }
+
+  String _transferStatusLabel(TransferLedgerStatus status) {
+    switch (status) {
+      case TransferLedgerStatus.detected:
+        return 'Detected';
+      case TransferLedgerStatus.stored:
+        return 'Stored';
+      case TransferLedgerStatus.queued:
+        return 'Queued';
+      case TransferLedgerStatus.uploading:
+        return 'Uploading';
+      case TransferLedgerStatus.processing:
+        return 'Processing';
+      case TransferLedgerStatus.published:
+        return 'Published';
+      case TransferLedgerStatus.delivered:
+        return 'Uploaded';
+      case TransferLedgerStatus.failed:
+        return 'Failed';
+    }
   }
 
   Widget _uploadSourceTile({

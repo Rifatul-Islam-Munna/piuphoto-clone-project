@@ -34,9 +34,8 @@ class _EventImagesPageState extends State<EventImagesPage> {
     final data = response.data['data'] as List? ?? [];
     return data
         .map(
-          (item) => EventImageModel.fromJson(
-            Map<String, dynamic>.from(item as Map),
-          ),
+          (item) =>
+              EventImageModel.fromJson(Map<String, dynamic>.from(item as Map)),
         )
         .toList();
   }
@@ -63,11 +62,32 @@ class _EventImagesPageState extends State<EventImagesPage> {
     if (confirmed != true) return;
 
     try {
-      await DioHelper.delete('/eventImage/delete', queryParameters: {'id': image.id});
+      await DioHelper.delete(
+        '/eventImage/delete',
+        queryParameters: {'id': image.id},
+      );
       AppToast.success('Image deleted');
       await _refresh(event);
     } catch (_) {
       AppToast.error('Failed to delete image');
+    }
+  }
+
+  Future<void> _setPublished(
+    EventSummary event,
+    EventImageModel image,
+    bool isPublished,
+  ) async {
+    try {
+      await DioHelper.patch(
+        '/eventImage/publish',
+        data: {'isPublished': isPublished},
+        queryParameters: {'id': image.id},
+      );
+      AppToast.success(isPublished ? 'Image published' : 'Image hidden');
+      await _refresh(event);
+    } catch (_) {
+      AppToast.error('Failed to update publish status');
     }
   }
 
@@ -128,21 +148,40 @@ class _EventImagesPageState extends State<EventImagesPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
+              leading: Icon(
+                image.isPublished
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+              ),
+              title: Text(
+                image.isPublished
+                    ? 'Hide from live gallery'
+                    : 'Publish to live gallery',
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _setPublished(event, image, !image.isPublished);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.share_outlined),
               title: const Text('Share'),
               onTap: () {
                 Navigator.pop(context);
-                SharePlus.instance.share(ShareParams(uri: Uri.parse(image.imageUrl)));
+                SharePlus.instance.share(
+                  ShareParams(uri: Uri.parse(image.imageUrl)),
+                );
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.auto_fix_high),
-              title: const Text('Enhance'),
-              onTap: () {
-                Navigator.pop(context);
-                _enhanceImage(event, image);
-              },
-            ),
+            if (image.mediaType != 'video')
+              ListTile(
+                leading: const Icon(Icons.auto_fix_high),
+                title: const Text('Enhance'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _enhanceImage(event, image);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.red),
               title: const Text('Delete'),
@@ -215,10 +254,10 @@ class _EventImagesPageState extends State<EventImagesPage> {
                       itemCount: images.length,
                       gridDelegate:
                           const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                      ),
+                            crossAxisCount: 2,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                          ),
                       itemBuilder: (context, index) {
                         final image = images[index];
                         return InkWell(
@@ -226,45 +265,72 @@ class _EventImagesPageState extends State<EventImagesPage> {
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(8),
                             child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              Image.network(
-                                image.imageUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => const ColoredBox(
-                                  color: Colors.black12,
-                                  child: Center(
-                                    child: Icon(Icons.broken_image_outlined),
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                left: 8,
-                                right: 8,
-                                bottom: 8,
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black54,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(6),
+                              fit: StackFit.expand,
+                              children: [
+                                image.mediaType == 'video'
+                                    ? const ColoredBox(
+                                        color: Colors.black87,
+                                        child: Center(child: Icon(Icons.videocam_outlined, color: Colors.white, size: 42)),
+                                      )
+                                    : Image.network(
+                                        image.imageUrl,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, _, _) => const ColoredBox(
+                                          color: Colors.black12,
+                                          child: Center(child: Icon(Icons.broken_image_outlined)),
+                                        ),
+                                      ),
+                                Positioned(
+                                  top: 8,
+                                  right: 8,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 7,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: image.isPublished
+                                          ? Colors.green.shade700
+                                          : Colors.black54,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
                                     child: Text(
-                                      image.isEnhanced
-                                          ? 'Enhanced'
-                                          : image.takenBy ?? 'Uploaded',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
+                                      image.isPublished ? 'LIVE' : 'HIDDEN',
                                       style: const TextStyle(
                                         color: Colors.white,
-                                        fontSize: 12,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            ],
-                          ),
+                                Positioned(
+                                  left: 8,
+                                  right: 8,
+                                  bottom: 8,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: Colors.black54,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(6),
+                                      child: Text(
+                                        image.isEnhanced
+                                            ? 'Enhanced'
+                                            : image.takenBy ?? 'Uploaded',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         );
                       },

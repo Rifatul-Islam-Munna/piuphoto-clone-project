@@ -29,16 +29,17 @@ async function bootstrap() {
 
   app.useGlobalFilters(new AllExceptionsFilter());
 
- app.enableCors({
-  origin: true,
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-  credentials: true,
-});
+  app.enableCors({
+    origin: true,
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    credentials: true,
+  });
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('PiuPhoto API')
     .setDescription('The PiuPhoto API description')
     .setVersion('1.0')
+    .addApiKey({ type: 'apiKey', in: 'header', name: 'x-api-key' }, 'x-api-key')
     .addBearerAuth(
       {
         type: 'http',
@@ -72,6 +73,15 @@ async function bootstrap() {
         !req.path.startsWith('/album') &&
         !req.path.startsWith('/event') &&
         !req.path.startsWith('/eventImage') &&
+        !req.path.startsWith('/event-members') &&
+        !req.path.startsWith('/transfer-status') &&
+        !req.path.startsWith('/gallery-access') &&
+        !req.path.startsWith('/guest-gallery') &&
+        !req.path.startsWith('/retouch') &&
+        !req.path.startsWith('/store') &&
+        !req.path.startsWith('/analytics') &&
+        !req.path.startsWith('/api-platform') &&
+        !req.path.startsWith('/v1') &&
         !req.path.startsWith('/image') &&
         !req.path.startsWith('/subscription') &&
         !req.path.startsWith('/subscription-plan') &&

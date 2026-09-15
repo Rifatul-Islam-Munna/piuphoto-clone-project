@@ -33,7 +33,6 @@ export class AuthGuard implements CanActivate {
     const request: ExpressRequest = context.switchToHttp().getRequest();
 
     const token = this.getTokenFromRequest(request);
-    this.logger.log('access_token----->', token);
 
     if (!token) {
       throw new UnauthorizedException('No token found');
@@ -72,7 +71,6 @@ export class AuthGuard implements CanActivate {
   ): Promise<boolean> {
     try {
       const secret = this.configService.get<string>('ACCESS_TOKEN');
-      this.logger.log('🔑 SECRET in Auth:', secret);
 
       const decoded = await this.jwtService.verifyAsync<JwtPayload>(token, {
         secret: secret,
@@ -81,8 +79,6 @@ export class AuthGuard implements CanActivate {
       if (!decoded) {
         throw new Error('Token verification returned no payload');
       }
-
-      this.logger.log('decoded->', decoded);
 
       if (!decoded.id || !decoded.role) {
         throw new Error('Incomplete JWT payload');

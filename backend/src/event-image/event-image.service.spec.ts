@@ -53,6 +53,13 @@ describe('EventImageService FAL webhook', () => {
       configService as never,
       faceVectorService as never,
       qdrantFaceService as never,
+      {} as never,
+      { markPublication: jest.fn() } as never,
+      {} as never,
+      { onPhotoIndexed: jest.fn().mockResolvedValue(undefined) } as never,
+      { queueAnalysis: jest.fn() } as never,
+      { registerIncoming: jest.fn().mockResolvedValue(undefined) } as never,
+      { publish: jest.fn().mockResolvedValue(0) } as never,
     );
 
     return {
@@ -115,6 +122,7 @@ describe('EventImageService FAL webhook', () => {
       userTakenBy: uploaderId,
       albumId,
       isEnhanced: true,
+      isPublished: true,
       falRequestId: 'fal-request-1',
     });
     expect(falEnhancementJobModel.updateOne).toHaveBeenCalledWith(
@@ -163,6 +171,7 @@ describe('EventImageService FAL webhook', () => {
         uploaderId: String(uploaderId),
         ownerId: String(ownerId),
         albumId: String(albumId),
+        isPublished: true,
       },
     );
 
@@ -182,5 +191,41 @@ describe('EventImageService FAL webhook', () => {
         status: FalEnhancementJobStatus.PENDING,
       }),
     );
+  });
+});
+
+
+describe('EventImageService upload idempotency', () => {
+  it('returns the existing photo for the same client transfer id', async () => {
+    const eventId = new Types.ObjectId();
+    const userId = new Types.ObjectId();
+    const existing = { _id: new Types.ObjectId(), eventId, clientTransferId: 'capture-1' };
+    const eventImageModel = {
+      findOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(existing) }),
+      create: jest.fn(),
+    };
+    const eventModel = {
+      findById: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({ _id: eventId, userId, title: 'Event' }),
+        }),
+      }),
+    };
+    const members = { assertCanUpload: jest.fn().mockResolvedValue(undefined) };
+    const service = new EventImageService(
+      eventImageModel as never, eventModel as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, { get: jest.fn() } as never,
+      {} as never, {} as never, members as never, {} as never, {} as never,      {} as never, {} as never, {} as never, {} as never,
+    );
+    const result = await service.create({
+      eventId: String(eventId),
+      imageUrl: 'https://cdn.example/photo.jpg',
+      isEnhanced: false,
+      clientTransferId: 'capture-1',
+    }, String(userId));
+    expect(result.idempotent).toBe(true);
+    expect(result.data).toBe(existing);
+    expect(eventImageModel.create).not.toHaveBeenCalled();
+    expect(members.assertCanUpload).toHaveBeenCalled();
   });
 });

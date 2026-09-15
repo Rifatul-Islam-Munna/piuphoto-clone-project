@@ -10,7 +10,11 @@ import {
   Req,
 } from '@nestjs/common';
 import { EventService } from './event.service';
-import { CreateEventDto, UpdateEventDto, EventFilterDto } from './dto/create-event.dto';
+import {
+  CreateEventDto,
+  UpdateEventDto,
+  EventFilterDto,
+} from './dto/create-event.dto';
 import {
   EventInvitationQueryDto,
   InvitePhotographerDto,
@@ -27,7 +31,8 @@ export class EventController {
   constructor(private readonly eventService: EventService) {}
 
   @Post()
-  @UseGuards(AuthGuard, ThrottlerGuard)
+  @UseGuards(AuthGuard, RolesGuard, ThrottlerGuard)
+  @Roles(UserType.USER, UserType.EDITOR, UserType.ADMIN)
   @Throttle({ default: { limit: 100, ttl: 3600000 } })
   create(@Body() createEventDto: CreateEventDto, @Req() req: ExpressRequest) {
     const targetUserId =
@@ -48,6 +53,7 @@ export class EventController {
       req.user?.id,
       Number(query.page) || 1,
       Number(query.limit) || 10,
+      query.workspace,
     );
   }
 
@@ -101,36 +107,48 @@ export class EventController {
   }
 
   @Get('get-all')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserType.ADMIN)
   findAll(@Query() query: EventFilterDto) {
     return this.eventService.findAll(query);
   }
 
   @Get('get-one')
-  findOne(@Query('id') id: string) {
-    return this.eventService.findOne(id);
+  @UseGuards(AuthGuard)
+  findOne(@Query('id') id: string, @Req() req: ExpressRequest) {
+    return this.eventService.findOne(id, req.user?.id, req.user?.role);
   }
 
   @Patch('update')
   @UseGuards(AuthGuard)
-  update(@Query('id') id: string, @Body() updateEventDto: UpdateEventDto) {
-    return this.eventService.update(id, updateEventDto);
+  update(
+    @Query('id') id: string,
+    @Body() updateEventDto: UpdateEventDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.eventService.update(
+      id,
+      updateEventDto,
+      req.user?.id,
+      req.user?.role,
+    );
   }
 
   @Delete('delete')
   @UseGuards(AuthGuard)
-  remove(@Query('id') id: string) {
-    return this.eventService.remove(id);
+  remove(@Query('id') id: string, @Req() req: ExpressRequest) {
+    return this.eventService.remove(id, req.user?.id, req.user?.role);
   }
 
   @Patch('toggle-active')
   @UseGuards(AuthGuard)
   toggleActive(@Query('id') id: string, @Req() req: ExpressRequest) {
-    return this.eventService.toggleActive(id, req.user?.id);
+    return this.eventService.toggleActive(id, req.user?.id, req.user?.role);
   }
 
   @Patch('toggle-published')
   @UseGuards(AuthGuard)
   togglePublished(@Query('id') id: string, @Req() req: ExpressRequest) {
-    return this.eventService.togglePublished(id, req.user?.id);
+    return this.eventService.togglePublished(id, req.user?.id, req.user?.role);
   }
 }

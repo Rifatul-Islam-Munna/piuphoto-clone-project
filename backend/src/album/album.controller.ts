@@ -1,6 +1,21 @@
-import { Body, Controller, Delete, Get, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { AlbumService } from './album.service';
-import { AlbumFilterDto, AlbumQueryDto, CreateAlbumDto, UpdateAlbumDto } from './dto/album.dto';
+import {
+  AlbumFilterDto,
+  AlbumQueryDto,
+  CreateAlbumDto,
+  UpdateAlbumDto,
+} from './dto/album.dto';
 import { AuthGuard } from '../lib/auth.guard';
 import type { ExpressRequest } from '../lib/auth.guard';
 
@@ -16,13 +31,16 @@ export class AlbumController {
 
   @Get('get-all')
   @UseGuards(AuthGuard)
-  findAll(@Query() query: AlbumFilterDto) {
-    return this.albumService.findAll(query);
+  findAll(@Query() query: AlbumFilterDto, @Req() req: ExpressRequest) {
+    return this.albumService.findAll(query, req.user?.id, req.user?.role);
   }
 
   @Get('public')
-  findPublic(@Query('eventId') eventId: string) {
-    return this.albumService.findPublicByEvent(eventId);
+  findPublic(
+    @Query('eventId') eventId: string,
+    @Query('accessToken') accessToken?: string,
+  ) {
+    return this.albumService.findPublicByEvent(eventId, accessToken);
   }
 
   @Patch('update')
@@ -32,7 +50,12 @@ export class AlbumController {
     @Body() dto: UpdateAlbumDto,
     @Req() req: ExpressRequest,
   ) {
-    return this.albumService.update(query.id, dto, req.user?.id, req.user?.role);
+    return this.albumService.update(
+      query.id,
+      dto,
+      req.user?.id,
+      req.user?.role,
+    );
   }
 
   @Delete('delete')

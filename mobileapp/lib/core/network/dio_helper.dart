@@ -96,6 +96,7 @@ class DioHelper {
     Map<String, dynamic>? queryParameters,
     Options? options,
     CancelToken? cancelToken,
+    ProgressCallback? onSendProgress,
   }) async {
     return await dio.post(
       path,
@@ -103,6 +104,7 @@ class DioHelper {
       queryParameters: queryParameters,
       options: options,
       cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
     );
   }
 

@@ -32,6 +32,12 @@ export class FalEnhancementJob {
   @Prop({ required: true, trim: true })
   sourceImageUrl: string;
 
+  @Prop({ type: Types.ObjectId, ref: 'EventImage' })
+  sourceEventImageId?: Types.ObjectId;
+
+  @Prop({ default: true })
+  isPublished: boolean;
+
   @Prop({ required: true, default: 3 })
   creditsCharged: number;
 

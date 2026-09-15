@@ -32,7 +32,6 @@ class FeatureMapping {
   static const Map<String, String> limits = {
     'credit': 'Plan Credits',
     'photos.monthly': 'Monthly Photo Upload Limit',
-    'photographers.max': 'Max Photographers',
     'events.active': 'Max Active Events',
     'albums.categories': 'Categories Per Album',
     'storage.gb': 'PiuCloud Storage (GB)',
@@ -60,6 +59,7 @@ class FeatureMapping {
       if (perm is Map) {
         final key = perm['key'];
         final value = perm['value'];
+        if (key?.toString() == 'photographers.max') continue;
         if (key != null && value != null) {
           result.add('${getLimitDescription(key.toString())}: $value');
         } else {

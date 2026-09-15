@@ -18,6 +18,8 @@ class _InvitationsPageState extends State<InvitationsPage> {
   late Future<List<EventInvitationModel>> _future;
   final Set<String> _acceptingIds = {};
   final Set<String> _deletingIds = {};
+  final TextEditingController _joinCodeController = TextEditingController();
+  bool _joiningByCode = false;
 
   @override
   void initState() {
@@ -25,10 +27,24 @@ class _InvitationsPageState extends State<InvitationsPage> {
     _future = _loadInvitations();
   }
 
+  @override
+  void dispose() {
+    _joinCodeController.dispose();
+    super.dispose();
+  }
+
   Future<List<EventInvitationModel>> _loadInvitations() async {
-    final response = await DioHelper.get('/event/my-photographer-invitations');
-    final data = response.data['data'] as List? ?? [];
-    final invitations = data
+    final responses = await Future.wait([
+      DioHelper.get('/event-members/mine'),
+      DioHelper.get('/event/my-photographer-invitations'),
+    ]);
+
+    final teamData = responses[0].data['data'] as List? ?? [];
+    final teamInvitations = teamData
+        .where((item) {
+          final role = (item as Map)['role']?.toString();
+          return role == 'photographer' || role == 'assistant_photographer';
+        })
         .map(
           (item) => EventInvitationModel.fromJson(
             Map<String, dynamic>.from(item as Map),
@@ -36,13 +52,24 @@ class _InvitationsPageState extends State<InvitationsPage> {
         )
         .toList();
 
+    final teamEventIds = teamInvitations
+        .map((item) => item.event?.id)
+        .whereType<String>()
+        .toSet();
+    final legacyData = responses[1].data['data'] as List? ?? [];
+    final legacyInvitations = legacyData
+        .map(
+          (item) => EventInvitationModel.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .where((item) => !teamEventIds.contains(item.event?.id));
+
+    final invitations = [...teamInvitations, ...legacyInvitations];
     invitations.sort((a, b) {
-      if (a.isPending != b.isPending) {
-        return a.isPending ? -1 : 1;
-      }
+      if (a.isPending != b.isPending) return a.isPending ? -1 : 1;
       return (b.createdAt ?? '').compareTo(a.createdAt ?? '');
     });
-
     return invitations;
   }
 
@@ -58,7 +85,9 @@ class _InvitationsPageState extends State<InvitationsPage> {
     try {
       final mutation = useCommonMutationApi<Map<String, dynamic>, String>(
         config: MutationConfig<Map<String, dynamic>, String>(
-          url: '/event/accept-invitation',
+          url: invitation.isTeamMembership
+              ? '/event-members/accept'
+              : '/event/accept-invitation',
           method: HttpMethod.patch,
           mutationKey: 'accept-invitation-${invitation.id}',
           successMessage: 'Invitation accepted',
@@ -86,7 +115,9 @@ class _InvitationsPageState extends State<InvitationsPage> {
     try {
       final mutation = useCommonMutationApi<Map<String, dynamic>, String>(
         config: MutationConfig<Map<String, dynamic>, String>(
-          url: '/event/delete-invitation',
+          url: invitation.isTeamMembership
+              ? '/event-members/mine'
+              : '/event/delete-invitation',
           method: HttpMethod.delete,
           mutationKey: 'delete-invitation-${invitation.id}',
           successMessage: 'Invitation deleted',
@@ -106,6 +137,87 @@ class _InvitationsPageState extends State<InvitationsPage> {
         setState(() => _deletingIds.remove(invitation.id));
       }
     }
+  }
+
+  Future<void> _joinWithCode() async {
+    final code = _joinCodeController.text.trim().toUpperCase();
+    if (code.length < 6) {
+      AppToast.error('Enter a valid event join code');
+      return;
+    }
+    setState(() => _joiningByCode = true);
+    try {
+      final response = await DioHelper.post(
+        '/event-members/join',
+        data: {'code': code},
+      );
+      final data = response.data is Map ? response.data['data'] : null;
+      final eventData = data is Map ? data['eventId'] : null;
+      if (eventData is Map) {
+        final event = EventSummary.fromJson(
+          Map<String, dynamic>.from(eventData),
+        );
+        if (event.id.isNotEmpty) {
+          await ActiveEventStorage.saveActiveEvent(event);
+        }
+      }
+      _joinCodeController.clear();
+      AppToast.success('Joined event as photographer');
+      await _refresh();
+    } catch (error) {
+      AppToast.error('Could not join event. Check the code and try again.');
+    } finally {
+      if (mounted) setState(() => _joiningByCode = false);
+    }
+  }
+
+  Widget _joinCodeCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Join event with code',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Paste the code shared by the Event Planner. You will join as a photographer.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _joinCodeController,
+              textCapitalization: TextCapitalization.characters,
+              autocorrect: false,
+              decoration: const InputDecoration(
+                labelText: 'Event code',
+                hintText: 'A1B2C3D4E5',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (_) => _joiningByCode ? null : _joinWithCode(),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _joiningByCode ? null : _joinWithCode,
+                icon: _joiningByCode
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.group_add_outlined),
+                label: Text(_joiningByCode ? 'Joining...' : 'Join event'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _activate(EventInvitationModel invitation) async {
@@ -142,24 +254,17 @@ class _InvitationsPageState extends State<InvitationsPage> {
             }
 
             final invitations = snapshot.data ?? [];
-            if (invitations.isEmpty) {
-              return ListView(
-                padding: const EdgeInsets.all(24),
-                children: const [
-                  Text('No invitations yet.'),
-                ],
-              );
-            }
 
             return ValueListenableBuilder(
               valueListenable: ActiveEventStorage.activeEvent,
               builder: (context, activeEvent, _) {
                 return ListView.separated(
                   padding: const EdgeInsets.all(16),
-                  itemCount: invitations.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemCount: invitations.length + 1,
+                  separatorBuilder: (_, _) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
-                    final invitation = invitations[index];
+                    if (index == 0) return _joinCodeCard();
+                    final invitation = invitations[index - 1];
                     final event = invitation.event;
                     final isActive =
                         activeEvent != null && activeEvent.id == event?.id;
@@ -177,8 +282,9 @@ class _InvitationsPageState extends State<InvitationsPage> {
                                 Expanded(
                                   child: Text(
                                     event?.title ?? 'Untitled event',
-                                    style:
-                                        Theme.of(context).textTheme.titleMedium,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
                                   ),
                                 ),
                                 Chip(label: Text(invitation.status)),

@@ -1,6 +1,12 @@
-import { HttpException, Injectable, Logger } from '@nestjs/common';
+import {
+  HttpException,
+  Injectable,
+  Logger,
+  MessageEvent,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import sharp from 'sharp';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -13,6 +19,8 @@ import { UpdateEventImageDto } from './dto/update-event-image.dto';
 import { EventImage, EventImageDocument } from './entities/event-image.entity';
 import { Event, EventDocument } from '../event/entities/event.entity';
 import { Album, AlbumDocument } from '../album/entities/album.entity';
+import { EventMemberService } from '../event-member/event-member.service';
+import { TransferStatusService } from '../transfer-status/transfer-status.service';
 import {
   EventInvitation,
   EventInvitationDocument,
@@ -27,20 +35,32 @@ import { FaceVectorService } from '../face-search/face-vector.service';
 import { QdrantFaceService } from '../face-search/qdrant-face.service';
 import { createHash, createPublicKey, verify } from 'crypto';
 import type { IncomingHttpHeaders } from 'http';
+import { Observable, Subject, interval, map, merge } from 'rxjs';
 import { FalWebhookDto } from './dto/fal-webhook.dto';
 import {
   FalEnhancementJob,
   FalEnhancementJobDocument,
   FalEnhancementJobStatus,
 } from './entities/fal-enhancement-job.entity';
+import { GalleryAccessService } from '../gallery-access/gallery-access.service';
+import { GuestGalleryService } from '../guest-gallery/guest-gallery.service';
+import { MediaAiService } from './media-ai.service';
+import { RetouchWorkflowService } from '../retouch-workflow/retouch-workflow.service';
+import { WorkflowWebhookPublisherService } from '../external-api/workflow-webhook-publisher.service';
 
 @Injectable()
 export class EventImageService {
   private readonly logger = new Logger(EventImageService.name);
+  private readonly galleryStreams = new Map<
+    string,
+    Subject<Record<string, unknown>>
+  >();
   private activeFaceJobs = 0;
   private readonly faceJobQueue: EventImageDocument[] = [];
-  private falJwksCache: { keys: Array<{ x?: string }>; fetchedAt: number } | null =
-    null;
+  private falJwksCache: {
+    keys: Array<{ x?: string }>;
+    fetchedAt: number;
+  } | null = null;
 
   constructor(
     @InjectModel(EventImage.name)
@@ -60,7 +80,58 @@ export class EventImageService {
     private readonly configService: ConfigService,
     private readonly faceVectorService: FaceVectorService,
     private readonly qdrantFaceService: QdrantFaceService,
+    private readonly eventMemberService: EventMemberService,
+    private readonly transferStatusService: TransferStatusService,
+    private readonly galleryAccessService: GalleryAccessService,
+    private readonly guestGalleryService: GuestGalleryService,
+    private readonly mediaAiService: MediaAiService,
+    private readonly retouchWorkflowService: RetouchWorkflowService,
+    private readonly workflowWebhooks: WorkflowWebhookPublisherService,
   ) {}
+
+  private gallerySubject(eventId: string) {
+    let subject = this.galleryStreams.get(eventId);
+    if (!subject) {
+      subject = new Subject<Record<string, unknown>>();
+      this.galleryStreams.set(eventId, subject);
+    }
+    return subject;
+  }
+
+  private emitGallery(eventId: string, payload: Record<string, unknown>) {
+    this.gallerySubject(eventId).next({
+      ...payload,
+      eventId,
+      at: new Date().toISOString(),
+    });
+  }
+
+  async streamPublic(
+    eventId: string,
+    albumId?: string,
+    accessToken?: string,
+  ): Promise<Observable<MessageEvent>> {
+    await this.galleryAccessService.assertCanView(
+      eventId,
+      albumId,
+      accessToken,
+    );
+    const updates = this.gallerySubject(eventId)
+      .asObservable()
+      .pipe(
+        map((payload) => ({ type: 'gallery', data: payload }) as MessageEvent),
+      );
+    const heartbeat = interval(15000).pipe(
+      map(
+        () =>
+          ({
+            type: 'heartbeat',
+            data: { at: new Date().toISOString() },
+          }) as MessageEvent,
+      ),
+    );
+    return merge(updates, heartbeat);
+  }
 
   private toObjectId(id: string) {
     return new Types.ObjectId(id);
@@ -77,7 +148,7 @@ export class EventImageService {
 
     const event = await this.eventModel
       .findById(eventId)
-      .select('userId title autoEnhanceImages')
+      .select('userId title autoEnhanceImages autoPublishImages requireReview publishPolicy')
       .lean();
 
     if (!event) {
@@ -92,23 +163,36 @@ export class EventImageService {
       return event;
     }
 
-    const invitation = await this.eventInvitationModel
-      .findOne({
-        eventId: this.toObjectId(eventId),
-        photographerId: this.toObjectId(userId),
-        status: EventInvitationStatus.ACCEPTED,
-      })
-      .select('_id')
-      .lean();
-
-    if (!invitation) {
-      throw new HttpException(
-        'Only the owner or an accepted photographer can upload to this event',
-        403,
-      );
-    }
-
+    await this.eventMemberService.assertCanAccess(eventId, userId, role);
     return event;
+  }
+
+  private async resolvePublishPolicy(
+    event: { publishPolicy?: string; autoPublishImages?: boolean; requireReview?: boolean },
+    albumId?: string,
+  ) {
+    let policy = event.publishPolicy ||
+      (event.requireReview || event.autoPublishImages === false ? 'manual' : 'auto_upload');
+    if (albumId && Types.ObjectId.isValid(albumId)) {
+      const album = await this.albumModel.findById(albumId).select('publishPolicy').lean();
+      if (album?.publishPolicy && album.publishPolicy !== 'inherit') policy = album.publishPolicy;
+    }
+    return policy as 'auto_upload' | 'auto_ai' | 'manual';
+  }
+
+  private queuePhotoAutomation(eventImage: EventImageDocument) {
+    if (eventImage.mediaType === 'video') return;
+    this.queueFaceIndex(eventImage);
+    this.mediaAiService.queueAnalysis(eventImage);
+    void this.retouchWorkflowService.registerIncoming(eventImage).catch((error) =>
+      this.logger.warn(`retouch-register-failed ${String(error)}`),
+    );
+  }
+
+  private inferMediaType(url: string, supplied?: 'photo' | 'video') {
+    if (supplied) return supplied;
+    const clean = url.toLowerCase().split('?')[0];
+    return ['.mp4', '.mov', '.m4v', '.webm', '.ogg', '.mkv'].some((ext) => clean.endsWith(ext)) ? 'video' : 'photo';
   }
 
   private defaultEnhancePrompt() {
@@ -231,7 +315,9 @@ export class EventImageService {
   }
 
   private useFalWebhook() {
-    return this.configService.get<string>('IS_WEBHOOK')?.toLowerCase() === 'true';
+    return (
+      this.configService.get<string>('IS_WEBHOOK')?.toLowerCase() === 'true'
+    );
   }
 
   private falWebhookUrl() {
@@ -327,6 +413,8 @@ export class EventImageService {
       uploaderId: string;
       ownerId: string;
       albumId?: string;
+      sourceEventImageId?: string;
+      isPublished: boolean;
     },
   ) {
     const falKey =
@@ -375,6 +463,10 @@ export class EventImageService {
       ownerId: this.toObjectId(context.ownerId),
       albumId: context.albumId ? this.toObjectId(context.albumId) : undefined,
       sourceImageUrl: imageUrl,
+      sourceEventImageId: context.sourceEventImageId
+        ? this.toObjectId(context.sourceEventImageId)
+        : undefined,
+      isPublished: context.isPublished,
       creditsCharged: 3,
       status: FalEnhancementJobStatus.PENDING,
     });
@@ -452,7 +544,10 @@ export class EventImageService {
     });
 
     if (currentCount + uploadCount > meta.monthlyPhotoLimit) {
-      throw new HttpException('Max image upload limit reached for this event', 400);
+      throw new HttpException(
+        'Max image upload limit reached for this event',
+        400,
+      );
     }
   }
 
@@ -463,7 +558,11 @@ export class EventImageService {
     ownerId: string,
     albumId?: string,
     prompt?: string,
-  ): Promise<EventImageDocument | { requestId: string; status: string } | null> {
+    isPublished = true,
+    sourceEventImageId?: string,
+  ): Promise<
+    EventImageDocument | { requestId: string; status: string } | null
+  > {
     const meta = await this.getOwnerPlanMeta(ownerId);
     const customPrompt = prompt?.trim();
     const finalPrompt = meta.hasCustomEnhancer ? customPrompt : undefined;
@@ -488,6 +587,8 @@ export class EventImageService {
           uploaderId,
           ownerId,
           albumId,
+          sourceEventImageId,
+          isPublished,
         });
       }
 
@@ -498,6 +599,10 @@ export class EventImageService {
         userTakenBy: this.toObjectId(uploaderId),
         albumId: albumId ? this.toObjectId(albumId) : undefined,
         isEnhanced: true,
+        enhancedFromId: sourceEventImageId
+          ? this.toObjectId(sourceEventImageId)
+          : undefined,
+        isPublished,
       });
     } catch (error) {
       await this.userModel.findByIdAndUpdate(ownerId, { $inc: { credits: 3 } });
@@ -527,7 +632,9 @@ export class EventImageService {
       .exec();
 
     if (!job) {
-      this.logger.warn(`fal-webhook-job-not-found requestId=${webhook.request_id}`);
+      this.logger.warn(
+        `fal-webhook-job-not-found requestId=${webhook.request_id}`,
+      );
       return { received: true, ignored: true };
     }
 
@@ -544,7 +651,8 @@ export class EventImageService {
         {
           $set: {
             status: FalEnhancementJobStatus.FAILED,
-            error: webhook.error || webhook.payload_error || 'FAL request failed',
+            error:
+              webhook.error || webhook.payload_error || 'FAL request failed',
           },
         },
         { new: true },
@@ -553,6 +661,12 @@ export class EventImageService {
       if (failedJob) {
         await this.userModel.findByIdAndUpdate(job.ownerId, {
           $inc: { credits: job.creditsCharged },
+        });
+        void this.workflowWebhooks.publish(String(job.eventId), 'photo.ai', {
+          sourceEventImageId: job.sourceEventImageId ? String(job.sourceEventImageId) : undefined,
+          requestId: webhook.request_id,
+          status: 'failed',
+          error: webhook.error || webhook.payload_error || 'FAL request failed',
         });
       }
 
@@ -581,17 +695,38 @@ export class EventImageService {
         userTakenBy: job.uploaderId,
         albumId: job.albumId,
         isEnhanced: true,
+        enhancedFromId: job.sourceEventImageId,
+        isPublished: job.isPublished !== false,
         falRequestId: webhook.request_id,
       });
-      this.queueFaceIndex(eventImage);
+      this.queuePhotoAutomation(eventImage);
+      this.emitGallery(String(job.eventId), {
+        type: 'photo.enhanced',
+        imageId: String(eventImage._id),
+        isPublished: eventImage.isPublished !== false,
+      });
     }
 
     await this.falEnhancementJobModel.updateOne(
       { _id: job._id },
-      { $set: { status: FalEnhancementJobStatus.COMPLETED }, $unset: { error: '' } },
+      {
+        $set: { status: FalEnhancementJobStatus.COMPLETED },
+        $unset: { error: '' },
+      },
     );
+    void this.workflowWebhooks.publish(String(job.eventId), 'photo.ai', {
+      imageId: String(eventImage._id),
+      sourceEventImageId: job.sourceEventImageId ? String(job.sourceEventImageId) : undefined,
+      requestId: webhook.request_id,
+      status: 'completed',
+      isPublished: eventImage.isPublished !== false,
+    });
 
-    return { received: true, saved: true, eventImageId: String(eventImage._id) };
+    return {
+      received: true,
+      saved: true,
+      eventImageId: String(eventImage._id),
+    };
   }
 
   private async assertAlbumBelongsToEvent(albumId: string, eventId: string) {
@@ -601,7 +736,7 @@ export class EventImageService {
 
     const album = await this.albumModel
       .findById(albumId)
-      .select('eventId')
+      .select('eventId albumId')
       .lean();
 
     if (!album) {
@@ -646,7 +781,9 @@ export class EventImageService {
   }
 
   private async indexEventImageFaces(eventImage: EventImageDocument) {
-    const vectors = await this.faceVectorService.vectorsFromUrl(eventImage.imageUrl);
+    const vectors = await this.faceVectorService.vectorsFromUrl(
+      eventImage.imageUrl,
+    );
 
     await this.qdrantFaceService.upsertFaces(vectors, {
       eventId: String(eventImage.eventId),
@@ -656,7 +793,13 @@ export class EventImageService {
       albumId: eventImage.albumId ? String(eventImage.albumId) : undefined,
     });
 
-    this.logger.log(`face-indexed image=${eventImage._id} faces=${vectors.length}`);
+    if (vectors.length) {
+      await this.guestGalleryService.onPhotoIndexed(eventImage);
+    }
+
+    this.logger.log(
+      `face-indexed image=${eventImage._id} faces=${vectors.length}`,
+    );
   }
 
   async create(
@@ -669,6 +812,12 @@ export class EventImageService {
       userId,
       role,
     );
+    await this.eventMemberService.assertCanUpload(
+      createEventImageDto.eventId,
+      userId,
+      role,
+      createEventImageDto.albumId,
+    );
 
     if (createEventImageDto.albumId) {
       await this.assertAlbumBelongsToEvent(
@@ -677,25 +826,87 @@ export class EventImageService {
       );
     }
 
+    if (createEventImageDto.clientTransferId) {
+      const existing = await this.eventImageModel
+        .findOne({
+          eventId: this.toObjectId(createEventImageDto.eventId),
+          clientTransferId: createEventImageDto.clientTransferId,
+        })
+        .exec();
+      if (existing) {
+        return {
+          message: 'Event image already received',
+          data: existing,
+          enhancedData: null,
+          enhancementJob: null,
+          idempotent: true,
+        };
+      }
+    }
+
     await this.assertEventUploadLimit(
       createEventImageDto.eventId,
       String(event.userId),
     );
 
-    const eventImage = await this.eventImageModel.create({
-      eventId: this.toObjectId(createEventImageDto.eventId),
-      imageUrl: createEventImageDto.imageUrl,
-      userTakenBy: this.toObjectId(String(userId)),
-      albumId: createEventImageDto.albumId
-        ? this.toObjectId(createEventImageDto.albumId)
-        : undefined,
-      isEnhanced: createEventImageDto.isEnhanced ?? false,
+    const publishPolicy = await this.resolvePublishPolicy(event, createEventImageDto.albumId);
+    const publishOriginal = !event.requireReview &&
+      (createEventImageDto.isEnhanced ? publishPolicy !== 'manual' : publishPolicy === 'auto_upload');
+    const publishEnhanced = !event.requireReview && publishPolicy === 'auto_ai';
+    let eventImage: EventImageDocument;
+    try {
+      eventImage = await this.eventImageModel.create({
+        eventId: this.toObjectId(createEventImageDto.eventId),
+        imageUrl: createEventImageDto.imageUrl,
+        userTakenBy: this.toObjectId(String(userId)),
+        albumId: createEventImageDto.albumId
+          ? this.toObjectId(createEventImageDto.albumId)
+          : undefined,
+        isEnhanced: createEventImageDto.isEnhanced ?? false,
+        mediaType: this.inferMediaType(createEventImageDto.imageUrl, createEventImageDto.mediaType),
+        isPublished: publishOriginal,
+        clientTransferId: createEventImageDto.clientTransferId,
+      });
+    } catch (error) {
+      if (
+        createEventImageDto.clientTransferId &&
+        (error as { code?: number }).code === 11000
+      ) {
+        const existing = await this.eventImageModel
+          .findOne({
+            eventId: this.toObjectId(createEventImageDto.eventId),
+            clientTransferId: createEventImageDto.clientTransferId,
+          })
+          .exec();
+        if (existing) {
+          return {
+            message: 'Event image already received',
+            data: existing,
+            enhancedData: null,
+            enhancementJob: null,
+            idempotent: true,
+          };
+        }
+      }
+      throw error;
+    }
+    this.queuePhotoAutomation(eventImage);
+    this.emitGallery(createEventImageDto.eventId, {
+      type: 'photo.created',
+      imageId: String(eventImage._id),
+      isPublished: eventImage.isPublished !== false,
     });
-    this.queueFaceIndex(eventImage);
+    void this.workflowWebhooks.publish(createEventImageDto.eventId, 'photo.created', {
+      imageId: String(eventImage._id),
+      albumId: createEventImageDto.albumId,
+      clientTransferId: createEventImageDto.clientTransferId,
+      status: eventImage.isPublished !== false ? 'published' : 'processing',
+      isPublished: eventImage.isPublished !== false,
+    });
 
     let enhancedImage: EventImageDocument | null = null;
     let enhancementJob: { requestId: string; status: string } | null = null;
-    if (event.autoEnhanceImages && !createEventImageDto.isEnhanced) {
+    if (event.autoEnhanceImages && !createEventImageDto.isEnhanced && createEventImageDto.mediaType !== 'video') {
       try {
         const enhancement = await this.tryEnhanceForOwner(
           createEventImageDto.imageUrl,
@@ -704,12 +915,16 @@ export class EventImageService {
           String(event.userId),
           createEventImageDto.albumId,
           createEventImageDto.enhancePrompt,
+          publishEnhanced,
+          String(eventImage._id),
         );
         if (enhancement && this.isEnhancementJobResult(enhancement)) {
           enhancementJob = enhancement;
         } else if (enhancement) {
           enhancedImage = enhancement as EventImageDocument;
-          this.queueFaceIndex(enhancedImage);
+          this.queuePhotoAutomation(enhancedImage);
+          this.emitGallery(createEventImageDto.eventId, { type: 'photo.enhanced', imageId: String(enhancedImage._id), isPublished: enhancedImage.isPublished !== false });
+          void this.workflowWebhooks.publish(createEventImageDto.eventId, 'photo.ai', { imageId: String(enhancedImage._id), sourceEventImageId: String(eventImage._id) });
         }
       } catch (error) {
         this.logger.error('image-enhance-failed', error);
@@ -734,6 +949,12 @@ export class EventImageService {
       userId,
       role,
     );
+    await this.eventMemberService.assertCanUpload(
+      createEventImagesBatchDto.eventId,
+      userId,
+      role,
+      createEventImagesBatchDto.albumId,
+    );
 
     if (createEventImagesBatchDto.albumId) {
       await this.assertAlbumBelongsToEvent(
@@ -748,6 +969,10 @@ export class EventImageService {
       createEventImagesBatchDto.imageUrls.length,
     );
 
+    const publishPolicy = await this.resolvePublishPolicy(event, createEventImagesBatchDto.albumId);
+    const publishOriginal = !event.requireReview &&
+      (createEventImagesBatchDto.isEnhanced ? publishPolicy !== 'manual' : publishPolicy === 'auto_upload');
+    const publishEnhanced = !event.requireReview && publishPolicy === 'auto_ai';
     const docs = createEventImagesBatchDto.imageUrls.map((imageUrl) => ({
       eventId: this.toObjectId(createEventImagesBatchDto.eventId),
       imageUrl,
@@ -756,16 +981,31 @@ export class EventImageService {
         ? this.toObjectId(createEventImagesBatchDto.albumId)
         : undefined,
       isEnhanced: createEventImagesBatchDto.isEnhanced ?? false,
+      mediaType: this.inferMediaType(imageUrl, createEventImagesBatchDto.mediaType),
+      isPublished: publishOriginal,
     }));
 
     const eventImages = await this.eventImageModel.insertMany(docs);
-    eventImages.forEach((eventImage) => this.queueFaceIndex(eventImage));
+    eventImages.forEach((eventImage) => {
+      this.queuePhotoAutomation(eventImage);
+      void this.workflowWebhooks.publish(createEventImagesBatchDto.eventId, 'photo.created', {
+        imageId: String(eventImage._id),
+        albumId: createEventImagesBatchDto.albumId,
+        isPublished: eventImage.isPublished !== false,
+      });
+    });
+    this.emitGallery(createEventImagesBatchDto.eventId, {
+      type: 'photos.created',
+      imageIds: eventImages.map((image) => String(image._id)),
+      count: eventImages.length,
+      isPublished: publishOriginal,
+    });
 
     let enhancedImages: EventImageDocument[] = [];
     let enhancementJobs: Array<{ requestId: string; status: string }> = [];
-    if (event.autoEnhanceImages && !createEventImagesBatchDto.isEnhanced) {
+    if (event.autoEnhanceImages && !createEventImagesBatchDto.isEnhanced && createEventImagesBatchDto.mediaType !== 'video') {
       const results = await Promise.allSettled(
-        createEventImagesBatchDto.imageUrls.map((imageUrl) =>
+        createEventImagesBatchDto.imageUrls.map((imageUrl, index) =>
           this.tryEnhanceForOwner(
             imageUrl,
             createEventImagesBatchDto.eventId,
@@ -773,6 +1013,8 @@ export class EventImageService {
             String(event.userId),
             createEventImagesBatchDto.albumId,
             createEventImagesBatchDto.enhancePrompt,
+            publishEnhanced,
+            eventImages[index] ? String(eventImages[index]._id) : undefined,
           ),
         ),
       );
@@ -796,7 +1038,14 @@ export class EventImageService {
           !this.isEnhancementJobResult(enhancement),
       );
 
-      enhancedImages.forEach((eventImage) => this.queueFaceIndex(eventImage));
+      enhancedImages.forEach((eventImage) => {
+        this.queuePhotoAutomation(eventImage);
+        void this.workflowWebhooks.publish(createEventImagesBatchDto.eventId, 'photo.ai', {
+          imageId: String(eventImage._id),
+          sourceEventImageId: eventImage.enhancedFromId ? String(eventImage.enhancedFromId) : undefined,
+        });
+      });
+      if (enhancedImages.length) this.emitGallery(createEventImagesBatchDto.eventId, { type: 'photos.enhanced', imageIds: enhancedImages.map((image) => String(image._id)), count: enhancedImages.length });
     }
 
     return {
@@ -823,28 +1072,21 @@ export class EventImageService {
       if (!query.eventId || !Types.ObjectId.isValid(query.eventId)) {
         throw new HttpException('Invalid event id', 400);
       }
-
-      const event = await this.eventModel
-        .findOne({
-          _id: this.toObjectId(query.eventId),
-          isActive: true,
-          isPublished: true,
-        })
-        .select('_id')
-        .lean();
-
-      if (!event) {
-        throw new HttpException('Event not found', 404);
-      }
+      await this.galleryAccessService.assertFaceSearchAllowed(
+        query.eventId,
+        query.albumId,
+        query.accessToken,
+      );
     } else if (query.eventId) {
       await this.assertCanUseEvent(query.eventId, userId, role);
     }
 
-    const { faces, vectors } = await this.faceVectorService.detectAndVectorFromBuffer(
-      file.buffer,
-      file.originalname || 'image.jpg',
-      file.mimetype || 'image/jpeg',
-    );
+    const { faces, vectors } =
+      await this.faceVectorService.detectAndVectorFromBuffer(
+        file.buffer,
+        file.originalname || 'image.jpg',
+        file.mimetype || 'image/jpeg',
+      );
     if (!faces.length) {
       throw new HttpException('No usable face found in uploaded image', 400);
     }
@@ -858,10 +1100,7 @@ export class EventImageService {
       };
     }
 
-    const limit = Math.min(
-      Math.max(Number(query.limit) || 10000, 1),
-      10000,
-    );
+    const limit = Math.min(Math.max(Number(query.limit) || 10000, 1), 10000);
     const scoreThreshold = Number(query.scoreThreshold) || 0.45;
     const results = (
       await Promise.all(
@@ -895,13 +1134,18 @@ export class EventImageService {
     }
 
     const ids = [...byImageId.keys()]
-      .sort((a, b) => (byImageId.get(b)?.score || 0) - (byImageId.get(a)?.score || 0))
+      .sort(
+        (a, b) =>
+          (byImageId.get(b)?.score || 0) - (byImageId.get(a)?.score || 0),
+      )
       .slice(0, limit);
 
     const data = await this.eventImageModel
       .find({
         _id: { $in: ids.map((id) => this.toObjectId(id)) },
         ...(query.eventId ? { eventId: this.toObjectId(query.eventId) } : {}),
+        ...(query.albumId ? { albumId: this.toObjectId(query.albumId) } : {}),
+        ...(publicAccess ? { isPublished: { $ne: false } } : {}),
       })
       .populate('eventId', 'title description image')
       .populate('albumId', 'title description')
@@ -929,11 +1173,15 @@ export class EventImageService {
     };
   }
 
-  async findAll(query: EventImageFilterDto) {
+  async findAll(query: EventImageFilterDto, userId?: string, role?: string) {
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const filter: Record<string, unknown> = {};
+
+    if (query.eventId) {
+      await this.assertCanUseEvent(query.eventId, userId, role);
+    }
 
     if (query.eventId && Types.ObjectId.isValid(query.eventId)) {
       filter.eventId = this.toObjectId(query.eventId);
@@ -978,23 +1226,40 @@ export class EventImageService {
     };
   }
 
-  async findPublicByEvent(eventId: string, albumId?: string) {
+  async facialBlurList(eventId: string, albumId?: string) {
+    if (!eventId || !Types.ObjectId.isValid(eventId)) throw new HttpException('Invalid event id', 400);
+    await this.galleryAccessService.assertFacialBlurPreview(eventId, albumId);
+    const data = await this.eventImageModel.find({ eventId: this.toObjectId(eventId), isPublished: { $ne: false },
+      mediaType: { $ne: 'video' }, ...(albumId ? { albumId: this.toObjectId(albumId) } : {}) })
+      .select('_id createdAt').sort({ createdAt: -1 }).limit(250).lean();
+    return { data: data.map((image) => ({ _id: String(image._id) })), totalItems: data.length };
+  }
+
+  async facialBlurImage(id: string, eventId: string, albumId?: string) {
+    if (![id, eventId].every(Types.ObjectId.isValid)) throw new HttpException('Invalid preview id', 400);
+    await this.galleryAccessService.assertFacialBlurPreview(eventId, albumId);
+    const row = await this.eventImageModel.findOne({ _id: this.toObjectId(id), eventId: this.toObjectId(eventId),
+      isPublished: { $ne: false }, mediaType: { $ne: 'video' }, ...(albumId ? { albumId: this.toObjectId(albumId) } : {}) })
+      .select('imageUrl').lean();
+    if (!row) throw new HttpException('Preview not found', 404);
+    const response = await axios.get<ArrayBuffer>(row.imageUrl, { responseType: 'arraybuffer', timeout: 30000, maxContentLength: 50 * 1024 * 1024 });
+    return sharp(Buffer.from(response.data)).rotate().resize({ width: 900, withoutEnlargement: true }).blur(24).jpeg({ quality: 48 }).toBuffer();
+  }
+
+  async findPublicByEvent(
+    eventId: string,
+    albumId?: string,
+    accessToken?: string,
+  ) {
     if (!eventId || !Types.ObjectId.isValid(eventId)) {
       throw new HttpException('Invalid event id', 400);
     }
 
-    const event = await this.eventModel
-      .findOne({
-        _id: this.toObjectId(eventId),
-        isActive: true,
-        isPublished: true,
-      })
-      .select('_id')
-      .lean();
-
-    if (!event) {
-      throw new HttpException('Event not found', 404);
-    }
+    await this.galleryAccessService.assertCanView(
+      eventId,
+      albumId,
+      accessToken,
+    );
 
     if (albumId) {
       await this.assertAlbumBelongsToEvent(albumId, eventId);
@@ -1003,6 +1268,7 @@ export class EventImageService {
     const data = await this.eventImageModel
       .find({
         eventId: this.toObjectId(eventId),
+        isPublished: { $ne: false },
         ...(albumId ? { albumId: this.toObjectId(albumId) } : {}),
       })
       .populate('eventId', 'title description image')
@@ -1015,7 +1281,7 @@ export class EventImageService {
     return { data, totalItems: data.length };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, userId?: string, role?: string) {
     if (!Types.ObjectId.isValid(id)) {
       throw new HttpException('Invalid event image id', 400);
     }
@@ -1030,8 +1296,59 @@ export class EventImageService {
     if (!eventImage) {
       throw new HttpException('Event image not found', 400);
     }
+    const eventId =
+      typeof eventImage.eventId === 'object' && eventImage.eventId?._id
+        ? String(eventImage.eventId._id)
+        : String(eventImage.eventId);
+    await this.assertCanUseEvent(eventId, userId, role);
 
     return eventImage;
+  }
+
+  async setPublished(
+    id: string,
+    isPublished: boolean,
+    userId?: string,
+    role?: string,
+  ) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new HttpException('Invalid event image id', 400);
+    }
+    const existing = await this.eventImageModel
+      .findById(id)
+      .select('eventId isPublished')
+      .lean();
+    if (!existing) throw new HttpException('Event image not found', 404);
+
+    await this.eventMemberService.assertCanPublish(
+      String(existing.eventId),
+      userId,
+      role,
+    );
+    const data = await this.eventImageModel
+      .findByIdAndUpdate(id, { $set: { isPublished } }, { new: true })
+      .populate('albumId', 'title description')
+      .populate('userTakenBy', 'name email phone userId role')
+      .lean();
+    await this.transferStatusService.markPublication(
+      String(existing.eventId),
+      id,
+      isPublished,
+    );
+    this.emitGallery(String(existing.eventId), {
+      type: 'photo.visibility',
+      imageId: id,
+      isPublished,
+    });
+    void this.workflowWebhooks.publish(String(existing.eventId), 'photo.status', {
+      imageId: id,
+      status: isPublished ? 'published' : 'hidden',
+      isPublished,
+    });
+    return {
+      message: isPublished ? 'Image published' : 'Image unpublished',
+      data,
+    };
   }
 
   async update(
@@ -1046,7 +1363,7 @@ export class EventImageService {
 
     const existing = await this.eventImageModel
       .findById(id)
-      .select('eventId')
+      .select('eventId albumId')
       .lean();
 
     if (!existing) {
@@ -1055,9 +1372,19 @@ export class EventImageService {
 
     const eventId = updateEventImageDto.eventId ?? String(existing.eventId);
     await this.assertCanUseEvent(eventId, userId, role);
+    await this.eventMemberService.assertCanUpload(
+      eventId,
+      userId,
+      role,
+      updateEventImageDto.albumId ??
+        (existing.albumId ? String(existing.albumId) : undefined),
+    );
 
     if (updateEventImageDto.albumId) {
-      await this.assertAlbumBelongsToEvent(updateEventImageDto.albumId, eventId);
+      await this.assertAlbumBelongsToEvent(
+        updateEventImageDto.albumId,
+        eventId,
+      );
     }
 
     const update: Record<string, unknown> = { ...updateEventImageDto };
@@ -1081,7 +1408,7 @@ export class EventImageService {
 
     const existing = await this.eventImageModel
       .findById(id)
-      .select('eventId')
+      .select('eventId albumId')
       .lean();
 
     if (!existing) {
@@ -1089,6 +1416,12 @@ export class EventImageService {
     }
 
     await this.assertCanUseEvent(String(existing.eventId), userId, role);
+    await this.eventMemberService.assertCanUpload(
+      String(existing.eventId),
+      userId,
+      role,
+      existing.albumId ? String(existing.albumId) : undefined,
+    );
     const eventImage = await this.eventImageModel.findByIdAndDelete(id).lean();
 
     return { message: 'Event image deleted successfully', data: eventImage };
@@ -1106,17 +1439,24 @@ export class EventImageService {
 
     const existing = await this.eventImageModel
       .findById(id)
-      .select('eventId imageUrl albumId isEnhanced')
+      .select('eventId imageUrl albumId isEnhanced isPublished mediaType')
       .lean();
 
     if (!existing) {
       throw new HttpException('Event image not found', 400);
     }
+    if (existing.mediaType === 'video') throw new HttpException('AI photo enhancement is not available for video', 400);
 
     const event = await this.assertCanUseEvent(
       String(existing.eventId),
       userId,
       role,
+    );
+    await this.eventMemberService.assertCanUpload(
+      String(existing.eventId),
+      userId,
+      role,
+      existing.albumId ? String(existing.albumId) : undefined,
     );
 
     const enhancedImage = await this.tryEnhanceForOwner(
@@ -1126,6 +1466,8 @@ export class EventImageService {
       String(event.userId),
       existing.albumId ? String(existing.albumId) : undefined,
       prompt,
+      !event.requireReview && ((await this.resolvePublishPolicy(event, existing.albumId ? String(existing.albumId) : undefined)) === 'auto_ai' || existing.isPublished !== false),
+      String(existing._id),
     );
 
     if (!enhancedImage) {
@@ -1136,10 +1478,184 @@ export class EventImageService {
       };
     }
 
+    if (!this.isEnhancementJobResult(enhancedImage)) {
+      this.queuePhotoAutomation(enhancedImage);
+      this.emitGallery(String(existing.eventId), { type: 'photo.enhanced', imageId: String(enhancedImage._id), isPublished: enhancedImage.isPublished !== false });
+      void this.workflowWebhooks.publish(String(existing.eventId), 'photo.ai', { imageId: String(enhancedImage._id), sourceEventImageId: String(existing._id) });
+    }
+
     return {
       message: 'Image enhanced successfully',
       data: enhancedImage,
       skipped: false,
     };
+  }
+
+  async enhancementJobs(eventId: string, userId?: string, role?: string) {
+    await this.assertCanUseEvent(eventId, userId, role);
+    const data = await this.falEnhancementJobModel.find({ eventId: this.toObjectId(eventId) })
+      .populate('sourceEventImageId', 'imageUrl isPublished').sort({ createdAt: -1 }).limit(500).lean();
+    return { data, totalItems: data.length };
+  }
+
+  async retryEnhancementJob(jobId: string, userId?: string, role?: string) {
+    if (!Types.ObjectId.isValid(jobId)) throw new HttpException('Invalid enhancement job id', 400);
+    const job = await this.falEnhancementJobModel.findById(jobId).lean();
+    if (!job) throw new HttpException('Enhancement job not found', 404);
+    if (job.status !== FalEnhancementJobStatus.FAILED) throw new HttpException('Only failed enhancement jobs can be retried', 400);
+    const event = await this.assertCanUseEvent(String(job.eventId), userId, role);
+    const result = await this.tryEnhanceForOwner(job.sourceImageUrl, String(job.eventId), String(job.uploaderId), String(event.userId),
+      job.albumId ? String(job.albumId) : undefined, undefined, job.isPublished !== false, job.sourceEventImageId ? String(job.sourceEventImageId) : undefined);
+    if (result && !this.isEnhancementJobResult(result)) {
+      this.queuePhotoAutomation(result);
+      this.emitGallery(String(job.eventId), { type: 'photo.enhanced', imageId: String(result._id), isPublished: result.isPublished !== false });
+      void this.workflowWebhooks.publish(String(job.eventId), 'photo.ai', { imageId: String(result._id), sourceEventImageId: job.sourceEventImageId ? String(job.sourceEventImageId) : undefined });
+    }
+    return { message: result ? 'Enhancement retry started' : 'Enhancement retry skipped: insufficient credits', data: result };
+  }
+
+  async publishBatch(
+    ids: string[],
+    isPublished: boolean,
+    userId?: string,
+    role?: string,
+  ) {
+    const validIds = [...new Set(ids)].filter(Types.ObjectId.isValid);
+    const rows = await this.eventImageModel
+      .find({ _id: { $in: validIds.map((id) => this.toObjectId(id)) } })
+      .select('_id eventId')
+      .lean();
+    const eventIds = [...new Set(rows.map((row) => String(row.eventId)))];
+    for (const eventId of eventIds) {
+      await this.eventMemberService.assertCanPublish(eventId, userId, role);
+    }
+    await this.eventImageModel.updateMany(
+      { _id: { $in: rows.map((row) => row._id) } },
+      { $set: { isPublished } },
+    );
+    await Promise.allSettled(
+      rows.map((row) =>
+        this.transferStatusService.markPublication(
+          String(row.eventId),
+          String(row._id),
+          isPublished,
+        ),
+      ),
+    );
+    for (const eventId of eventIds) {
+      const eventRows = rows.filter((row) => String(row.eventId) === eventId);
+      this.emitGallery(eventId, {
+        type: 'photos.visibility',
+        imageIds: eventRows.map((row) => String(row._id)),
+        isPublished,
+      });
+      eventRows.forEach((row) => {
+        void this.workflowWebhooks.publish(eventId, 'photo.status', {
+          imageId: String(row._id),
+          status: isPublished ? 'published' : 'hidden',
+          isPublished,
+        });
+      });
+    }
+    return {
+      message: isPublished ? 'Images published' : 'Images hidden',
+      updated: rows.length,
+    };
+  }
+
+  async enhanceBatch(
+    ids: string[],
+    prompt: string | undefined,
+    userId?: string,
+    role?: string,
+  ) {
+    const validIds = [...new Set(ids)].filter(Types.ObjectId.isValid);
+    const results = await Promise.allSettled(
+      validIds.map((id) => this.enhanceExisting(id, userId, role, prompt)),
+    );
+    return {
+      total: validIds.length,
+      completed: results.filter((result) => result.status === 'fulfilled')
+        .length,
+      failed: results.filter((result) => result.status === 'rejected').length,
+      results: results.map((result, index) => ({
+        id: validIds[index],
+        status: result.status,
+        ...(result.status === 'fulfilled'
+          ? { data: result.value }
+          : { error: String(result.reason) }),
+      })),
+    };
+  }
+
+  async analyzeMedia(ids: string[], userId?: string, role?: string) {
+    const validIds = [...new Set(ids)].filter(Types.ObjectId.isValid);
+    const rows = await this.eventImageModel
+      .find({ _id: { $in: validIds.map((id) => this.toObjectId(id)) } })
+      .select('eventId')
+      .lean();
+    const eventIds = [...new Set(rows.map((row) => String(row.eventId)))];
+    for (const eventId of eventIds) {
+      await this.eventMemberService.assertCanAccess(eventId, userId, role);
+    }
+    return this.mediaAiService.analyzeMany(validIds);
+  }
+
+  async aiSearch(
+    eventId: string,
+    query: string,
+    type: string,
+    limit: number,
+    userId?: string,
+    role?: string,
+  ) {
+    await this.eventMemberService.assertCanAccess(eventId, userId, role);
+    const data = await this.mediaAiService.search(eventId, query, type, limit);
+    return { data, totalItems: data.length, type, query };
+  }
+
+  async reviewOverride(
+    id: string,
+    decision: 'approve' | 'reject' | 'clear',
+    userId?: string,
+    role?: string,
+  ) {
+    if (!Types.ObjectId.isValid(id))
+      throw new HttpException('Invalid image id', 400);
+    const row = await this.eventImageModel
+      .findById(id)
+      .select('eventId')
+      .lean();
+    if (!row) throw new HttpException('Event image not found', 404);
+    await this.eventMemberService.assertCanPublish(
+      String(row.eventId),
+      userId,
+      role,
+    );
+    if (decision === 'clear') {
+      const data = await this.eventImageModel.findByIdAndUpdate(
+        id,
+        {
+          $set: { aiReviewStatus: 'pending' },
+          $unset: { reviewerDecision: '', reviewedBy: '', reviewedAt: '' },
+        },
+        { new: true },
+      );
+      this.mediaAiService.queueAnalysis(data!);
+      return { message: 'AI review restored', data };
+    }
+    const data = await this.eventImageModel.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          reviewerDecision: decision,
+          reviewedBy: this.toObjectId(String(userId)),
+          reviewedAt: new Date(),
+          aiReviewStatus: decision === 'approve' ? 'approved' : 'rejected',
+        },
+      },
+      { new: true },
+    );
+    return { message: 'Review decision saved', data };
   }
 }

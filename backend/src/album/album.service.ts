@@ -3,12 +3,18 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { UserType } from '../user/entities/user.entity';
 import { Event, EventDocument } from '../event/entities/event.entity';
+import { EventMemberService } from '../event-member/event-member.service';
+import { GalleryAccessService } from '../gallery-access/gallery-access.service';
 import {
   EventImage,
   EventImageDocument,
 } from '../event-image/entities/event-image.entity';
 import { Album, AlbumDocument } from './entities/album.entity';
-import { AlbumFilterDto, CreateAlbumDto, UpdateAlbumDto } from './dto/album.dto';
+import {
+  AlbumFilterDto,
+  CreateAlbumDto,
+  UpdateAlbumDto,
+} from './dto/album.dto';
 
 @Injectable()
 export class AlbumService {
@@ -17,6 +23,8 @@ export class AlbumService {
     @InjectModel(Event.name) private eventModel: Model<EventDocument>,
     @InjectModel(EventImage.name)
     private eventImageModel: Model<EventImageDocument>,
+    private readonly eventMemberService: EventMemberService,
+    private readonly galleryAccessService: GalleryAccessService,
   ) {}
 
   private toObjectId(id: string) {
@@ -24,24 +32,7 @@ export class AlbumService {
   }
 
   private async getOwnedEvent(eventId: string, userId?: string, role?: string) {
-    if (!Types.ObjectId.isValid(eventId)) {
-      throw new HttpException('Invalid event id', 400);
-    }
-
-    const event = await this.eventModel
-      .findById(eventId)
-      .select('userId title')
-      .lean();
-
-    if (!event) {
-      throw new HttpException('Event not found', 404);
-    }
-
-    if (role !== UserType.ADMIN && String(event.userId) !== userId) {
-      throw new HttpException('You can only manage your own event albums', 403);
-    }
-
-    return event;
+    return this.eventMemberService.assertCanManage(eventId, userId, role);
   }
 
   async create(dto: CreateAlbumDto, userId?: string, role?: string) {
@@ -56,8 +47,26 @@ export class AlbumService {
     return { message: 'Album created successfully', data: album };
   }
 
-  async findAll(query: AlbumFilterDto) {
+  async findAll(query: AlbumFilterDto, userId?: string, role?: string) {
     const filter: Record<string, unknown> = {};
+
+    if (query.eventId) {
+      await this.eventMemberService.assertCanAccess(
+        query.eventId,
+        userId,
+        role,
+      );
+      const allowedAlbumIds = await this.eventMemberService.allowedAlbumIds(
+        query.eventId,
+        userId,
+        role,
+      );
+      if (allowedAlbumIds) {
+        filter._id = {
+          $in: allowedAlbumIds.map((id) => this.toObjectId(id)),
+        };
+      }
+    }
 
     if (query.eventId && Types.ObjectId.isValid(query.eventId)) {
       filter.eventId = this.toObjectId(query.eventId);
@@ -72,23 +81,16 @@ export class AlbumService {
     return { data: await this.withImageCounts(data), totalItems: data.length };
   }
 
-  async findPublicByEvent(eventId: string) {
+  async findPublicByEvent(eventId: string, accessToken?: string) {
     if (!eventId || !Types.ObjectId.isValid(eventId)) {
       throw new HttpException('Invalid event id', 400);
     }
 
-    const event = await this.eventModel
-      .findOne({
-        _id: this.toObjectId(eventId),
-        isActive: true,
-        isPublished: true,
-      })
-      .select('_id')
-      .lean();
-
-    if (!event) {
-      throw new HttpException('Event not found', 404);
-    }
+    await this.galleryAccessService.assertCanView(
+      eventId,
+      undefined,
+      accessToken,
+    );
 
     const data = await this.albumModel
       .find({ eventId: this.toObjectId(eventId) })
@@ -106,12 +108,17 @@ export class AlbumService {
 
     const ids = albums.map((album) => this.toObjectId(String(album._id)));
     const counts = await this.eventImageModel
-      .aggregate<{ _id: Types.ObjectId; count: number }>([
+      .aggregate<{
+        _id: Types.ObjectId;
+        count: number;
+      }>([
         { $match: { albumId: { $in: ids } } },
         { $group: { _id: '$albumId', count: { $sum: 1 } } },
       ])
       .exec();
-    const countMap = new Map(counts.map((item) => [String(item._id), item.count]));
+    const countMap = new Map(
+      counts.map((item) => [String(item._id), item.count]),
+    );
 
     return albums.map((album) => ({
       ...album,

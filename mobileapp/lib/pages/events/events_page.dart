@@ -104,7 +104,9 @@ class _EventsListViewState extends State<_EventsListView> {
     try {
       final response = await DioHelper.get('/event/my-events');
       final data = response.data['data'] as List? ?? [];
-      return data.map((item) => EventModel.fromJson(Map<String, dynamic>.from(item))).toList();
+      return data
+          .map((item) => EventModel.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
     } catch (e) {
       return [];
     }
@@ -124,10 +126,7 @@ class _EventsListViewState extends State<_EventsListView> {
         title: const Text('My Events'),
         centerTitle: true,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _refresh,
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _refresh),
         ],
       ),
       body: FutureBuilder<List<EventModel>>(
@@ -136,13 +135,13 @@ class _EventsListViewState extends State<_EventsListView> {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          
+
           final events = snapshot.data ?? [];
-          
+
           if (events.isEmpty) {
             return _buildEmptyState(context);
           }
-          
+
           return RefreshIndicator(
             onRefresh: () async => _refresh(),
             child: ListView.builder(
@@ -190,16 +189,18 @@ class _EventsListViewState extends State<_EventsListView> {
             const SizedBox(height: 24),
             Text(
               'No Events Yet',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
               'Create your first event to start\nmanaging photo uploads',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withValues(alpha: 0.7),
               ),
             ),
             const SizedBox(height: 24),
@@ -225,11 +226,13 @@ class _EventsListViewState extends State<_EventsListView> {
   }
 
   void _openEventDetail(BuildContext context, EventModel event) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _EventDetailPage(event: event, onUpdated: _refresh),
-      ),
-    ).then((_) => _refresh());
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => _EventDetailPage(event: event, onUpdated: _refresh),
+          ),
+        )
+        .then((_) => _refresh());
   }
 }
 
@@ -267,17 +270,19 @@ class _EventCardItem extends StatelessWidget {
                       Expanded(
                         child: Text(
                           event.title,
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.bold),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
-                          color: event.isPublished 
+                          color: event.isPublished
                               ? Colors.green.withValues(alpha: 0.1)
                               : Colors.orange.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(12),
@@ -287,7 +292,9 @@ class _EventCardItem extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
-                            color: event.isPublished ? Colors.green : Colors.orange,
+                            color: event.isPublished
+                                ? Colors.green
+                                : Colors.orange,
                           ),
                         ),
                       ),
@@ -298,7 +305,9 @@ class _EventCardItem extends StatelessWidget {
                     Text(
                       event.description!,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: 0.7),
                       ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -307,7 +316,11 @@ class _EventCardItem extends StatelessWidget {
                   const SizedBox(height: 12),
                   Row(
                     children: [
-                      Icon(Icons.photo_library, size: 16, color: Theme.of(context).colorScheme.primary),
+                      Icon(
+                        Icons.photo_library,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
                       const SizedBox(width: 4),
                       Text(
                         '${event.photosCount} photos',
@@ -384,7 +397,7 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
   Future<void> _createEvent() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
-    
+
     try {
       String? imageUrl;
       if (_selectedImagePath != null && _selectedImageName != null) {
@@ -394,14 +407,18 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
         );
       }
 
-      await DioHelper.post('/event', data: {
-        'title': _titleController.text.trim(),
-        'description': _descriptionController.text.trim(),
-        'isPublished': _isPublished,
-        'autoEnhanceImages': _autoEnhanceImages,
-        if (imageUrl != null && imageUrl.isNotEmpty) 'image': {'url': imageUrl},
-      });
-      
+      await DioHelper.post(
+        '/event',
+        data: {
+          'title': _titleController.text.trim(),
+          'description': _descriptionController.text.trim(),
+          'isPublished': _isPublished,
+          'autoEnhanceImages': _autoEnhanceImages,
+          if (imageUrl != null && imageUrl.isNotEmpty)
+            'image': {'url': imageUrl},
+        },
+      );
+
       if (mounted) {
         Navigator.pop(context);
         widget.onCreated();
@@ -411,9 +428,9 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to create event')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Failed to create event')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -434,17 +451,26 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
-                bottom: BorderSide(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2)),
+                bottom: BorderSide(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.outline.withValues(alpha: 0.2),
+                ),
               ),
             ),
             child: Row(
               children: [
                 Text(
                   'Create Event',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
-                IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
               ],
             ),
           ),
@@ -463,10 +489,14 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
                         height: 150,
                         width: double.infinity,
                         decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHighest,
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.outline.withValues(alpha: 0.3),
                             style: BorderStyle.solid,
                           ),
                         ),
@@ -475,11 +505,16 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
                             ? Stack(
                                 fit: StackFit.expand,
                                 children: [
-                                  Image.file(File(_selectedImagePath!), fit: BoxFit.cover),
+                                  Image.file(
+                                    File(_selectedImagePath!),
+                                    fit: BoxFit.cover,
+                                  ),
                                   Align(
                                     alignment: Alignment.bottomCenter,
                                     child: Container(
-                                      color: Colors.black.withValues(alpha: 0.45),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.45,
+                                      ),
                                       padding: const EdgeInsets.all(8),
                                       child: const Text(
                                         'Tap to change cover image',
@@ -495,14 +530,23 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
                                   Icon(
                                     Icons.add_photo_alternate,
                                     size: 48,
-                                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withValues(alpha: 0.5),
                                   ),
                                   const SizedBox(height: 8),
                                   Text(
                                     'Add Event Cover Image',
-                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
-                                    ),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: 0.5),
+                                        ),
                                   ),
                                 ],
                               ),
@@ -514,7 +558,9 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
                       decoration: InputDecoration(
                         labelText: 'Event Title *',
                         hintText: 'Enter event name',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                         prefixIcon: const Icon(Icons.title),
                       ),
                       validator: (value) {
@@ -530,7 +576,9 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
                       decoration: InputDecoration(
                         labelText: 'Description',
                         hintText: 'Enter event description',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                         prefixIcon: const Icon(Icons.description),
                       ),
                       maxLines: 4,
@@ -540,14 +588,18 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
                       title: const Text('Publish immediately'),
                       subtitle: const Text('Guests can see the event'),
                       value: _isPublished,
-                      onChanged: (value) => setState(() => _isPublished = value),
+                      onChanged: (value) =>
+                          setState(() => _isPublished = value),
                       contentPadding: EdgeInsets.zero,
                     ),
                     SwitchListTile(
                       title: const Text('AI image enhance'),
-                      subtitle: const Text('Keep original and add enhanced copy'),
+                      subtitle: const Text(
+                        'Keep original and add enhanced copy',
+                      ),
                       value: _autoEnhanceImages,
-                      onChanged: (value) => setState(() => _autoEnhanceImages = value),
+                      onChanged: (value) =>
+                          setState(() => _autoEnhanceImages = value),
                       contentPadding: EdgeInsets.zero,
                     ),
                     const SizedBox(height: 24),
@@ -560,9 +612,15 @@ class _CreateEventSheetState extends State<_CreateEventSheet> {
                             ? const SizedBox(
                                 height: 20,
                                 width: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
                               )
-                            : const Text('Create Event', style: TextStyle(fontSize: 16)),
+                            : const Text(
+                                'Create Event',
+                                style: TextStyle(fontSize: 16),
+                              ),
                       ),
                     ),
                   ],
@@ -599,19 +657,6 @@ class _EventDetailPageState extends State<_EventDetailPage> {
     _descriptionController.text = _event.description ?? '';
   }
 
-  Future<List<PhotographerModel>> _searchPhotographers(String query) async {
-    try {
-      final response = await DioHelper.get('/user/get-all', queryParameters: {
-        'role': 'photographer',
-        if (query.isNotEmpty) 'search': query,
-      });
-      final data = response.data['data'] as List? ?? [];
-      return data.map((item) => PhotographerModel.fromJson(Map<String, dynamic>.from(item))).toList();
-    } catch (e) {
-      return [];
-    }
-  }
-
   @override
   void dispose() {
     _titleController.dispose();
@@ -645,7 +690,10 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                   ? Stack(
                       fit: StackFit.expand,
                       children: [
-                        ImageLoader.loadImage(_event.imageUrl!, fit: BoxFit.cover),
+                        ImageLoader.loadImage(
+                          _event.imageUrl!,
+                          fit: BoxFit.cover,
+                        ),
                         DecoratedBox(
                           decoration: BoxDecoration(
                             color: Colors.black.withValues(alpha: 0.35),
@@ -665,8 +713,14 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                     ),
             ),
             actions: [
-              IconButton(icon: const Icon(Icons.edit), onPressed: () => _showEditDialog(context)),
-              IconButton(icon: const Icon(Icons.delete), onPressed: () => _deleteEvent(context)),
+              IconButton(
+                icon: const Icon(Icons.edit),
+                onPressed: () => _showEditDialog(context),
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete),
+                onPressed: _deleteEvent,
+              ),
             ],
           ),
           SliverToBoxAdapter(
@@ -680,18 +734,27 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                       Expanded(
                         child: Text(
                           _event.title,
-                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+                          style: Theme.of(context).textTheme.headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.bold),
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
-                          color: _event.isPublished ? Colors.green : Colors.orange,
+                          color: _event.isPublished
+                              ? Colors.green
+                              : Colors.orange,
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
                           _event.isPublished ? 'Published' : 'Draft',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                       if (_event.autoEnhanceImages) ...[
@@ -705,18 +768,29 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                   ),
                   const SizedBox(height: 16),
                   InkWell(
-                    onTap: () => _openEventGallery(context, _event.id, _event.title),
+                    onTap: () =>
+                        _openEventGallery(context, _event.id, _event.title),
                     borderRadius: BorderRadius.circular(8),
                     child: Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primaryContainer.withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3)),
+                        border: Border.all(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.3),
+                        ),
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.photo_library, color: Theme.of(context).colorScheme.primary, size: 28),
+                          Icon(
+                            Icons.photo_library,
+                            color: Theme.of(context).colorScheme.primary,
+                            size: 28,
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -724,14 +798,19 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                               children: [
                                 Text(
                                   'Photo Gallery',
-                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.bold),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   '${_event.photosCount} photos',
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
-                                  ),
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withValues(alpha: 0.7),
+                                      ),
                                 ),
                               ],
                             ),
@@ -747,12 +826,20 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                   ),
                   if (_event.description?.isNotEmpty ?? false) ...[
                     const SizedBox(height: 16),
-                    Text(_event.description!, style: Theme.of(context).textTheme.bodyLarge),
+                    Text(
+                      _event.description!,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
                   ],
                   const SizedBox(height: 32),
                   _EventAlbumsSection(eventId: _event.id),
                   const SizedBox(height: 32),
-                  Text('Invite Photographers', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                  Text(
+                    'Invite Photographers',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   const SizedBox(height: 12),
                   _InvitePhotographersSection(eventId: _event.id),
                 ],
@@ -764,10 +851,15 @@ class _EventDetailPageState extends State<_EventDetailPage> {
     );
   }
 
-  void _openEventGallery(BuildContext context, String eventId, String eventTitle) {
+  void _openEventGallery(
+    BuildContext context,
+    String eventId,
+    String eventTitle,
+  ) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => EventGalleryPage(eventId: eventId, albumTitle: eventTitle),
+        builder: (_) =>
+            EventGalleryPage(eventId: eventId, albumTitle: eventTitle),
       ),
     );
   }
@@ -775,7 +867,7 @@ class _EventDetailPageState extends State<_EventDetailPage> {
   void _showEditDialog(BuildContext context) {
     _titleController.text = _event.title;
     _descriptionController.text = _event.description ?? '';
-    
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -792,14 +884,17 @@ class _EventDetailPageState extends State<_EventDetailPage> {
     );
   }
 
-  Future<void> _deleteEvent(BuildContext context) async {
+  Future<void> _deleteEvent() async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Event'),
         content: const Text('Are you sure? This cannot be undone.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
@@ -807,8 +902,9 @@ class _EventDetailPageState extends State<_EventDetailPage> {
         ],
       ),
     );
-    
+
     if (confirm == true) {
+      if (!mounted) return;
       try {
         await DioHelper.delete('/event/delete?id=${_event.id}');
         if (mounted) {
@@ -817,7 +913,9 @@ class _EventDetailPageState extends State<_EventDetailPage> {
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to delete')));
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Failed to delete')));
         }
       }
     }
@@ -830,10 +928,12 @@ class _InvitePhotographersSection extends StatefulWidget {
   const _InvitePhotographersSection({required this.eventId});
 
   @override
-  State<_InvitePhotographersSection> createState() => _InvitePhotographersSectionState();
+  State<_InvitePhotographersSection> createState() =>
+      _InvitePhotographersSectionState();
 }
 
-class _InvitePhotographersSectionState extends State<_InvitePhotographersSection> {
+class _InvitePhotographersSectionState
+    extends State<_InvitePhotographersSection> {
   final _searchController = TextEditingController();
   List<PhotographerModel> _photographers = [];
   bool _isSearching = false;
@@ -847,13 +947,21 @@ class _InvitePhotographersSectionState extends State<_InvitePhotographersSection
   Future<void> _searchPhotographers(String query) async {
     setState(() => _isSearching = true);
     try {
-      final response = await DioHelper.get('/user/get-all', queryParameters: {
-        'role': 'photographer',
-        if (query.isNotEmpty) 'query': query,
-      });
+      final response = await DioHelper.get(
+        '/user/get-all',
+        queryParameters: {
+          'role': 'photographer',
+          if (query.isNotEmpty) 'query': query,
+        },
+      );
       final data = response.data['data'] as List? ?? [];
       setState(() {
-        _photographers = data.map((item) => PhotographerModel.fromJson(Map<String, dynamic>.from(item))).toList();
+        _photographers = data
+            .map(
+              (item) =>
+                  PhotographerModel.fromJson(Map<String, dynamic>.from(item)),
+            )
+            .toList();
       });
     } catch (e) {
       // handle error
@@ -864,10 +972,10 @@ class _InvitePhotographersSectionState extends State<_InvitePhotographersSection
 
   Future<void> _invitePhotographer(PhotographerModel photographer) async {
     try {
-      await DioHelper.post('/event/invite-photographer', data: {
-        'eventId': widget.eventId,
-        'photographerId': photographer.id,
-      });
+      await DioHelper.post(
+        '/event/invite-photographer',
+        data: {'eventId': widget.eventId, 'photographerId': photographer.id},
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Invited ${photographer.displayName}')),
@@ -875,7 +983,9 @@ class _InvitePhotographersSectionState extends State<_InvitePhotographersSection
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to invite')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Failed to invite')));
       }
     }
   }
@@ -898,7 +1008,9 @@ class _InvitePhotographersSectionState extends State<_InvitePhotographersSection
               controller: _searchController,
               decoration: InputDecoration(
                 hintText: 'Search photographers...',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 prefixIcon: const Icon(Icons.search),
                 suffixIcon: _searchController.text.isNotEmpty
                     ? IconButton(
@@ -926,11 +1038,18 @@ class _InvitePhotographersSectionState extends State<_InvitePhotographersSection
                   final photographer = _photographers[index];
                   return ListTile(
                     leading: CircleAvatar(
-                      backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                      child: Icon(Icons.person, color: Theme.of(context).colorScheme.primary),
+                      backgroundColor: Theme.of(
+                        context,
+                      ).colorScheme.primaryContainer,
+                      child: Icon(
+                        Icons.person,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
                     ),
                     title: Text(photographer.displayName),
-                    subtitle: Text(photographer.email ?? photographer.phone ?? ''),
+                    subtitle: Text(
+                      photographer.email ?? photographer.phone ?? '',
+                    ),
                     trailing: IconButton(
                       icon: const Icon(Icons.person_add),
                       onPressed: () => _invitePhotographer(photographer),
@@ -990,10 +1109,8 @@ class _EventAlbumsSectionState extends State<_EventAlbumsSection> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => _CreateAlbumSheet(
-        eventId: widget.eventId,
-        onCreated: _loadAlbums,
-      ),
+      builder: (context) =>
+          _CreateAlbumSheet(eventId: widget.eventId, onCreated: _loadAlbums),
     );
   }
 
@@ -1014,7 +1131,9 @@ class _EventAlbumsSectionState extends State<_EventAlbumsSection> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Album'),
-        content: Text('Delete "${album.title}"? Images will stay in event gallery.'),
+        content: Text(
+          'Delete "${album.title}"? Images will stay in event gallery.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -1048,10 +1167,9 @@ class _EventAlbumsSectionState extends State<_EventAlbumsSection> {
           children: [
             Text(
               'Albums',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.bold),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const Spacer(),
             TextButton.icon(
@@ -1104,10 +1222,7 @@ class _EventAlbumsSectionState extends State<_EventAlbumsSection> {
 }
 
 class _CreateAlbumSheet extends StatefulWidget {
-  const _CreateAlbumSheet({
-    required this.eventId,
-    required this.onCreated,
-  });
+  const _CreateAlbumSheet({required this.eventId, required this.onCreated});
 
   final String eventId;
   final VoidCallback onCreated;
@@ -1131,26 +1246,29 @@ class _CreateAlbumSheetState extends State<_CreateAlbumSheet> {
   Future<void> _create() async {
     final title = _titleController.text.trim();
     if (title.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Album title is required')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Album title is required')));
       return;
     }
 
     setState(() => _saving = true);
     try {
-      await DioHelper.post('/album', data: {
-        'eventId': widget.eventId,
-        'title': title,
-        'description': _descriptionController.text.trim(),
-      });
+      await DioHelper.post(
+        '/album',
+        data: {
+          'eventId': widget.eventId,
+          'title': title,
+          'description': _descriptionController.text.trim(),
+        },
+      );
       widget.onCreated();
       if (mounted) Navigator.pop(context);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to create album')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Failed to create album')));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -1172,10 +1290,9 @@ class _CreateAlbumSheetState extends State<_CreateAlbumSheet> {
           children: [
             Text(
               'Create Album',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.bold),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -1268,23 +1385,29 @@ class _EditEventSheetState extends State<_EditEventSheet> {
         );
       }
 
-      final response = await DioHelper.patch('/event/update?id=${widget.event.id}', data: {
-        'title': widget.titleController.text.trim(),
-        'description': widget.descriptionController.text.trim(),
-        'isPublished': _isPublished,
-        'autoEnhanceImages': _autoEnhanceImages,
-        if (imageUrl != null && imageUrl.isNotEmpty) 'image': {'url': imageUrl},
-      });
+      final response = await DioHelper.patch(
+        '/event/update?id=${widget.event.id}',
+        data: {
+          'title': widget.titleController.text.trim(),
+          'description': widget.descriptionController.text.trim(),
+          'isPublished': _isPublished,
+          'autoEnhanceImages': _autoEnhanceImages,
+          if (imageUrl != null && imageUrl.isNotEmpty)
+            'image': {'url': imageUrl},
+        },
+      );
 
       final updated = EventModel.fromJson(
         Map<String, dynamic>.from(response.data['data'] as Map),
       );
-      
+
       widget.onSave(updated);
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to update')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Failed to update')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -1305,14 +1428,26 @@ class _EditEventSheetState extends State<_EditEventSheet> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
-                bottom: BorderSide(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2)),
+                bottom: BorderSide(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.outline.withValues(alpha: 0.2),
+                ),
               ),
             ),
             child: Row(
               children: [
-                Text('Edit Event', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                Text(
+                  'Edit Event',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                ),
                 const Spacer(),
-                IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
               ],
             ),
           ),
@@ -1329,7 +1464,9 @@ class _EditEventSheetState extends State<_EditEventSheet> {
                       height: 150,
                       width: double.infinity,
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(12),
                       ),
                       clipBehavior: Clip.antiAlias,
@@ -1337,7 +1474,10 @@ class _EditEventSheetState extends State<_EditEventSheet> {
                           ? Stack(
                               fit: StackFit.expand,
                               children: [
-                                Image.file(File(_selectedImagePath!), fit: BoxFit.cover),
+                                Image.file(
+                                  File(_selectedImagePath!),
+                                  fit: BoxFit.cover,
+                                ),
                                 Align(
                                   alignment: Alignment.bottomCenter,
                                   child: Container(
@@ -1352,30 +1492,50 @@ class _EditEventSheetState extends State<_EditEventSheet> {
                               ],
                             )
                           : (widget.event.imageUrl != null &&
-                                  widget.event.imageUrl!.isNotEmpty)
-                              ? ImageLoader.loadImage(
-                                  widget.event.imageUrl,
-                                  fit: BoxFit.cover,
-                                )
-                              : Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.add_photo_alternate, size: 48, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
-                                    const SizedBox(height: 8),
-                                    Text('Change Cover Image', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
-                                  ],
+                                widget.event.imageUrl!.isNotEmpty)
+                          ? ImageLoader.loadImage(
+                              widget.event.imageUrl,
+                              fit: BoxFit.cover,
+                            )
+                          : Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.add_photo_alternate,
+                                  size: 48,
+                                  color: Theme.of(context).colorScheme.onSurface
+                                      .withValues(alpha: 0.5),
                                 ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Change Cover Image',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withValues(alpha: 0.5),
+                                      ),
+                                ),
+                              ],
+                            ),
                     ),
                   ),
                   const SizedBox(height: 24),
                   TextField(
                     controller: widget.titleController,
-                    decoration: const InputDecoration(labelText: 'Title', border: OutlineInputBorder()),
+                    decoration: const InputDecoration(
+                      labelText: 'Title',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
                   const SizedBox(height: 16),
                   TextField(
                     controller: widget.descriptionController,
-                    decoration: const InputDecoration(labelText: 'Description', border: OutlineInputBorder()),
+                    decoration: const InputDecoration(
+                      labelText: 'Description',
+                      border: OutlineInputBorder(),
+                    ),
                     maxLines: 3,
                   ),
                   const SizedBox(height: 16),
@@ -1387,9 +1547,12 @@ class _EditEventSheetState extends State<_EditEventSheet> {
                   ),
                   SwitchListTile(
                     title: const Text('AI image enhance'),
-                    subtitle: const Text('New uploads keep original and add enhanced copy'),
+                    subtitle: const Text(
+                      'New uploads keep original and add enhanced copy',
+                    ),
                     value: _autoEnhanceImages,
-                    onChanged: (value) => setState(() => _autoEnhanceImages = value),
+                    onChanged: (value) =>
+                        setState(() => _autoEnhanceImages = value),
                     contentPadding: EdgeInsets.zero,
                   ),
                   const SizedBox(height: 24),
@@ -1398,7 +1561,9 @@ class _EditEventSheetState extends State<_EditEventSheet> {
                     height: 50,
                     child: FilledButton(
                       onPressed: _isLoading ? null : _saveEvent,
-                      child: _isLoading ? const CircularProgressIndicator(strokeWidth: 2) : const Text('Save Changes'),
+                      child: _isLoading
+                          ? const CircularProgressIndicator(strokeWidth: 2)
+                          : const Text('Save Changes'),
                     ),
                   ),
                 ],

@@ -50,14 +50,13 @@ function parseAxiosError(error: AxiosError): ApiError {
 
   let message = "Something went wrong";
 
-  if (res?.message) {
-    if (Array.isArray(res.message?.message)) {
-      message = res.message.message[0];
-    } else if (typeof res.message === "string") {
-      message = res.message;
-    } else if (typeof res.message?.message === "string") {
-      message = res.message.message;
-    }
+  const rawMessage = res?.message;
+  if (typeof rawMessage === "string") {
+    message = rawMessage;
+  } else if (rawMessage && Array.isArray(rawMessage.message)) {
+    message = rawMessage.message[0] || message;
+  } else if (rawMessage && typeof rawMessage.message === "string") {
+    message = rawMessage.message;
   }
 
   return { message, statusCode };

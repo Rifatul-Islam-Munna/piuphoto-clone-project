@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { EventService } from './event.service';
 import { EventController } from './event.controller';
+import { EventMemberModule } from '../event-member/event-member.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Event, EventSchema } from './entities/event.entity';
 import {
@@ -19,6 +20,7 @@ import {
 
 @Module({
   imports: [
+    EventMemberModule,
     MongooseModule.forFeature([
       { name: Event.name, schema: EventSchema },
       { name: EventInvitation.name, schema: EventInvitationSchema },
