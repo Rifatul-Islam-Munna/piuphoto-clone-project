@@ -27,6 +27,8 @@ export class StoreSettings {
   @Prop({ trim: true }) stripeAccountLabel?: string;
   @Prop({ type: [Types.ObjectId], ref: 'Album', default: [] })
   saleAlbumIds: Types.ObjectId[];
+  @Prop({ trim: true, maxlength: 160 }) coverTitle?: string;
+  @Prop({ trim: true }) coverImageUrl?: string;
   @Prop({ trim: true }) termsText?: string;
 }
 export const StoreSettingsSchema = SchemaFactory.createForClass(StoreSettings);

@@ -1,7 +1,13 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
+import {
+  HashRouter,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+} from "react-router-dom";
 import { ReactNode } from "react";
 import QueryClint from "../lib/QueryClint";
 import Index from "./pages/Index";
@@ -42,13 +48,19 @@ import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsAndConditions from "./pages/TermsAndConditions";
 import { useWorkspaceAccess } from "./hooks/use-workspace-access";
 
+const loginPathFor = (pathname: string, search: string) =>
+  `/login?next=${encodeURIComponent(`${pathname}${search}`)}`;
+
 const ProtectedAdminRoute = ({ children }: { children: ReactNode }) => {
+  const location = useLocation();
   const token = localStorage.getItem("access_token");
   const userStr = localStorage.getItem("user");
   const user = userStr ? JSON.parse(userStr) : null;
 
   if (!token) {
-    return <Navigate to="/login" replace />;
+    return (
+      <Navigate to={loginPathFor(location.pathname, location.search)} replace />
+    );
   }
 
   if (user?.role !== "admin") {
@@ -59,12 +71,15 @@ const ProtectedAdminRoute = ({ children }: { children: ReactNode }) => {
 };
 
 const ProtectedUserRoute = ({ children }: { children: ReactNode }) => {
+  const location = useLocation();
   const token = localStorage.getItem("access_token");
   const userStr = localStorage.getItem("user");
   const user = userStr ? JSON.parse(userStr) : null;
 
   if (!token) {
-    return <Navigate to="/login" replace />;
+    return (
+      <Navigate to={loginPathFor(location.pathname, location.search)} replace />
+    );
   }
 
   if (user?.role === "admin") {
@@ -83,15 +98,24 @@ const WorkspaceRoute = ({
   workspace: WorkspaceName | WorkspaceName[];
   children: ReactNode;
 }) => {
+  const location = useLocation();
   const token = localStorage.getItem("access_token");
   const userStr = localStorage.getItem("user");
   const user = userStr ? JSON.parse(userStr) : null;
   const access = useWorkspaceAccess();
 
-  if (!token) return <Navigate to="/login" replace />;
+  if (!token) {
+    return (
+      <Navigate to={loginPathFor(location.pathname, location.search)} replace />
+    );
+  }
   if (user?.role === "admin") return <Navigate to="/admin/dashboard" replace />;
   if (access.isLoading) {
-    return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Loading workspace...</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        Loading workspace...
+      </div>
+    );
   }
 
   const requested = Array.isArray(workspace) ? workspace : [workspace];
@@ -271,11 +295,19 @@ const App = () => (
             <Route
               path="/retouch"
               element={
-                <WorkspaceRoute workspace={["planner", "photographer", "retoucher", "reviewer"]}>
+                <WorkspaceRoute
+                  workspace={[
+                    "planner",
+                    "photographer",
+                    "retoucher",
+                    "reviewer",
+                  ]}
+                >
                   <RetouchConsole />
                 </WorkspaceRoute>
               }
-            />            <Route
+            />{" "}
+            <Route
               path="/planner/settings"
               element={
                 <WorkspaceRoute workspace={["planner", "photographer"]}>
@@ -316,13 +348,63 @@ const App = () => (
                 </WorkspaceRoute>
               }
             />
-            <Route path="/photographer/gallery" element={<WorkspaceRoute workspace="photographer"><Phase2Gallery /></WorkspaceRoute>} />
-            <Route path="/photographer/store" element={<WorkspaceRoute workspace="photographer"><StoreManager /></WorkspaceRoute>} />
-            <Route path="/photographer/analytics" element={<WorkspaceRoute workspace="photographer"><AnalyticsDashboard /></WorkspaceRoute>} />
-            <Route path="/photographer/api" element={<WorkspaceRoute workspace="photographer"><ApiPlatform /></WorkspaceRoute>} />
-            <Route path="/photographer/settings" element={<WorkspaceRoute workspace="photographer"><UserSettings /></WorkspaceRoute>} />
-            <Route path="/photographer/retouch" element={<WorkspaceRoute workspace="photographer"><RetouchConsole /></WorkspaceRoute>} />
-            <Route path="/photographer/event/:eventId/experience" element={<WorkspaceRoute workspace="photographer"><Phase2Settings /></WorkspaceRoute>} />            <Route
+            <Route
+              path="/photographer/gallery"
+              element={
+                <WorkspaceRoute workspace="photographer">
+                  <Phase2Gallery />
+                </WorkspaceRoute>
+              }
+            />
+            <Route
+              path="/photographer/store"
+              element={
+                <WorkspaceRoute workspace="photographer">
+                  <StoreManager />
+                </WorkspaceRoute>
+              }
+            />
+            <Route
+              path="/photographer/analytics"
+              element={
+                <WorkspaceRoute workspace="photographer">
+                  <AnalyticsDashboard />
+                </WorkspaceRoute>
+              }
+            />
+            <Route
+              path="/photographer/api"
+              element={
+                <WorkspaceRoute workspace="photographer">
+                  <ApiPlatform />
+                </WorkspaceRoute>
+              }
+            />
+            <Route
+              path="/photographer/settings"
+              element={
+                <WorkspaceRoute workspace="photographer">
+                  <UserSettings />
+                </WorkspaceRoute>
+              }
+            />
+            <Route
+              path="/photographer/retouch"
+              element={
+                <WorkspaceRoute workspace="photographer">
+                  <RetouchConsole />
+                </WorkspaceRoute>
+              }
+            />
+            <Route
+              path="/photographer/event/:eventId/experience"
+              element={
+                <WorkspaceRoute workspace="photographer">
+                  <Phase2Settings />
+                </WorkspaceRoute>
+              }
+            />{" "}
+            <Route
               path="/user/dashboard"
               element={
                 <WorkspaceRoute workspace="planner">

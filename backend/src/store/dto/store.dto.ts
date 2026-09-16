@@ -64,6 +64,8 @@ export class StoreSettingsDto {
   @ArrayMaxSize(200)
   @IsMongoId({ each: true })
   saleAlbumIds?: string[];
+  @IsOptional() @IsString() @MaxLength(160) coverTitle?: string;
+  @IsOptional() @IsString() @MaxLength(2000) coverImageUrl?: string;
   @IsOptional() @IsString() @MaxLength(2000) termsText?: string;
 }
 export class StoreAccountSettingsDto {

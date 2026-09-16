@@ -8,10 +8,12 @@ import {
   Save,
   Send,
   ShoppingBag,
+  Trash2,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import WorkspaceLayout from "@/components/WorkspaceLayout";
-import { PatchRequestAxios } from "@/api-hooks/api-hooks";
+import { PatchRequestAxios, PostRequestAxios } from "@/api-hooks/api-hooks";
 import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -53,6 +55,8 @@ type StoreSettings = {
   stripeWebhookSecret?: string;
   customStripeConfigured?: boolean;
   customStripeWebhookConfigured?: boolean;
+  coverTitle?: string;
+  coverImageUrl?: string;
   termsText?: string;
   saleAlbumIds?: string[];
 };
@@ -82,11 +86,12 @@ export default function StoreManager() {
   const qc = useQueryClient();
   const eventsQ = useQueryWrapper<{ data: EventRow[] }>(
     ["store-events"],
-    "/event/my-events?page=1&limit=100",
+    "/event/my-events?workspace=planner&page=1&limit=100",
     { withToken: true, withCredentials: true },
   );
   const events = eventsQ.data?.data || [];
   const [eventId, setEventId] = useState("");
+  const [coverUploading, setCoverUploading] = useState(false);
   const selected = eventId || events[0]?._id || "";
   const settingsQ = useQueryWrapper<{ data: StoreSettings }>(
     ["store-settings", selected],
@@ -127,6 +132,8 @@ export default function StoreManager() {
     useCustomStripe: false,
     stripeSecretKey: "",
     stripeWebhookSecret: "",
+    coverTitle: "",
+    coverImageUrl: "",
     termsText: "",
     saleAlbumIds: [],
   });
@@ -141,6 +148,8 @@ export default function StoreManager() {
         useCustomStripe: Boolean(data.useCustomStripe),
         stripeSecretKey: "",
         stripeWebhookSecret: "",
+        coverTitle: data.coverTitle || "",
+        coverImageUrl: data.coverImageUrl || "",
         termsText: data.termsText || "",
         saleAlbumIds: normalIds(data.saleAlbumIds),
       });
@@ -149,6 +158,33 @@ export default function StoreManager() {
     qc.invalidateQueries({ queryKey: ["store-settings"] });
     qc.invalidateQueries({ queryKey: ["store-sale-photos"] });
     qc.invalidateQueries({ queryKey: ["store-orders"] });
+  };
+  const uploadCover = async (file: File) => {
+    setCoverUploading(true);
+    try {
+      const payload = new FormData();
+      payload.append("file", file);
+      const [response, error] = await PostRequestAxios<{ url?: string }>(
+        "/image/upload",
+        payload,
+        {
+          withToken: true,
+          withCredentials: true,
+          headers: { "Content-Type": "multipart/form-data" },
+        },
+      );
+      if (error || !response?.url) {
+        throw new Error(error?.message || "Cover upload failed");
+      }
+      setForm((current) => ({ ...current, coverImageUrl: response.url }));
+      toast.success("Cover uploaded - save the store to publish it");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Cover upload failed",
+      );
+    } finally {
+      setCoverUploading(false);
+    }
   };
   const save = useMutation({
     mutationFn: async () => {
@@ -182,7 +218,8 @@ export default function StoreManager() {
   const toggleAlbum = (id: string) =>
     setForm((current) => {
       const ids = new Set(current.saleAlbumIds || []);
-      ids.has(id) ? ids.delete(id) : ids.add(id);
+      if (ids.has(id)) ids.delete(id);
+      else ids.add(id);
       return { ...current, saleAlbumIds: [...ids] };
     });
   const paid = (ordersQ.data?.data || []).filter((o) => o.status === "paid");
@@ -277,6 +314,77 @@ export default function StoreManager() {
             <CardTitle>{event?.title || "Store settings"}</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 md:grid-cols-2">
+            <div className="md:col-span-2 space-y-4 rounded-2xl border bg-muted/20 p-4">
+              <div>
+                <p className="font-semibold">Store cover</p>
+                <p className="text-xs text-muted-foreground">
+                  This title and image appear at the top of the public store.
+                </p>
+              </div>
+              {form.coverImageUrl ? (
+                <div className="group relative aspect-[3/1] overflow-hidden rounded-xl border bg-muted">
+                  <img
+                    src={form.coverImageUrl}
+                    alt={form.coverTitle || event?.title || "Store cover"}
+                    className="h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/5 to-transparent" />
+                  <p className="absolute bottom-4 left-4 right-16 truncate text-xl font-bold text-white">
+                    {form.coverTitle || event?.title || "Store title"}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="icon"
+                    className="absolute right-3 top-3"
+                    onClick={() =>
+                      setForm((current) => ({
+                        ...current,
+                        coverImageUrl: "",
+                      }))
+                    }
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : null}
+              <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+                <div className="space-y-2">
+                  <Label htmlFor="store-cover-title">Cover title</Label>
+                  <Input
+                    id="store-cover-title"
+                    maxLength={160}
+                    value={form.coverTitle || ""}
+                    placeholder={event?.title || "Your event store"}
+                    onChange={(e) =>
+                      setForm((current) => ({
+                        ...current,
+                        coverTitle: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <label className="inline-flex h-10 cursor-pointer items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium hover:bg-accent hover:text-accent-foreground">
+                  {coverUploading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Upload className="mr-2 h-4 w-4" />
+                  )}
+                  {form.coverImageUrl ? "Replace cover" : "Upload cover"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={coverUploading || !selected}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (file) void uploadCover(file);
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
             <Toggle
               label="Enable public store"
               checked={form.enabled}
@@ -466,7 +574,7 @@ export default function StoreManager() {
             </div>
             <div className="md:col-span-2 flex justify-end">
               <Button
-                disabled={!selected || save.isPending}
+                disabled={!selected || save.isPending || coverUploading}
                 onClick={() => save.mutate()}
               >
                 {save.isPending ? (

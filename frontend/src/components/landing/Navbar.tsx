@@ -1,7 +1,14 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Menu, X, ChevronDown, Globe, LogOut, LayoutDashboard, User } from "lucide-react";
+import {
+  Menu,
+  X,
+  ChevronDown,
+  Globe,
+  LogOut,
+  LayoutDashboard,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -26,7 +33,14 @@ const Navbar = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { settings, language, setLanguage, t } = useSiteSettings();
-  const brandLetter = settings.site.title?.trim()?.charAt(0)?.toLowerCase() || "n";
+  const brandLetter =
+    settings.site.title?.trim()?.charAt(0)?.toLowerCase() || "n";
+  const dashboardPath =
+    user?.role === "admin"
+      ? "/admin/dashboard"
+      : user?.role === "photographer"
+        ? "/photographer/dashboard"
+        : "/planner/dashboard";
 
   useEffect(() => {
     const token = localStorage.getItem("access_token");
@@ -49,7 +63,12 @@ const Navbar = () => {
 
   const getInitials = (name: string | undefined, email: string) => {
     if (name) {
-      return name.split(" ").map((item) => item[0]).join("").toUpperCase().slice(0, 2);
+      return name
+        .split(" ")
+        .map((item) => item[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2);
     }
     return email[0].toUpperCase();
   };
@@ -86,14 +105,18 @@ const Navbar = () => {
               />
             ) : (
               <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                <span className="text-primary-foreground font-bold text-lg">{brandLetter}</span>
+                <span className="text-primary-foreground font-bold text-lg">
+                  {brandLetter}
+                </span>
               </div>
             )}
-            <span className="font-bold text-xl text-foreground">{settings.site.title}</span>
+            <span className="font-bold text-xl text-foreground">
+              {settings.site.title}
+            </span>
           </a>
 
           <div className="hidden lg:flex items-center gap-1">
-            {settings.navbar.menuItems.map((item) => (
+            {settings.navbar.menuItems.map((item) =>
               item.href.startsWith("#") ? (
                 <a
                   key={`${item.href}-${item.label.en}`}
@@ -114,8 +137,8 @@ const Navbar = () => {
                 >
                   {t(item.label)}
                 </Link>
-              )
-            ))}
+              ),
+            )}
           </div>
 
           <div className="hidden lg:flex items-center gap-4">
@@ -128,8 +151,12 @@ const Navbar = () => {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => setLanguage("en")}>EN</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setLanguage("gr")}>GR</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLanguage("en")}>
+                  EN
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLanguage("gr")}>
+                  GR
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             {user ? (
@@ -145,22 +172,23 @@ const Navbar = () => {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
                   <div className="px-3 py-2">
-                    <p className="text-sm font-medium">{user.name || user.email}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
+                    <p className="text-sm font-medium">
+                      {user.name || user.email}
+                    </p>
+                    <p className="text-xs text-muted-foreground capitalize">
+                      {user.role}
+                    </p>
                   </div>
                   <DropdownMenuSeparator />
-                  {user.role === "admin" && (
-                    <DropdownMenuItem onClick={() => navigate("/admin/dashboard")}>
-                      <LayoutDashboard className="mr-2 h-4 w-4" />
-                      {t(settings.navbar.dashboardLabel)}
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem onClick={() => navigate("/user/dashboard")}>
-                    <User className="mr-2 h-4 w-4" />
-                    {t(settings.navbar.profileLabel)}
+                  <DropdownMenuItem onClick={() => navigate(dashboardPath)}>
+                    <LayoutDashboard className="mr-2 h-4 w-4" />
+                    {t(settings.navbar.dashboardLabel)}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600">
+                  <DropdownMenuItem
+                    onClick={handleLogout}
+                    className="text-red-600 focus:text-red-600"
+                  >
                     <LogOut className="mr-2 h-4 w-4" />
                     {t(settings.navbar.logoutLabel)}
                   </DropdownMenuItem>
@@ -189,7 +217,7 @@ const Navbar = () => {
           )}
         >
           <div className="flex flex-col gap-2 pt-4">
-            {settings.navbar.menuItems.map((item) => (
+            {settings.navbar.menuItems.map((item) =>
               item.href.startsWith("#") ? (
                 <a
                   key={`${item.href}-${item.label.en}`}
@@ -211,8 +239,8 @@ const Navbar = () => {
                 >
                   {t(item.label)}
                 </Link>
-              )
-            ))}
+              ),
+            )}
             <div className="flex items-center gap-4 px-4 pt-4 border-t border-border mt-2">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -223,8 +251,12 @@ const Navbar = () => {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
-                  <DropdownMenuItem onClick={() => setLanguage("en")}>EN</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setLanguage("gr")}>GR</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setLanguage("en")}>
+                    EN
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setLanguage("gr")}>
+                    GR
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
               {user ? (
@@ -236,16 +268,24 @@ const Navbar = () => {
                       </AvatarFallback>
                     </Avatar>
                     <div className="flex-1">
-                      <p className="text-sm font-medium">{user.name || user.email}</p>
-                      <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
+                      <p className="text-sm font-medium">
+                        {user.name || user.email}
+                      </p>
+                      <p className="text-xs text-muted-foreground capitalize">
+                        {user.role}
+                      </p>
                     </div>
                   </div>
-                  {user.role === "admin" && (
-                    <Button variant="outline" onClick={() => { navigate("/admin/dashboard"); setIsOpen(false); }}>
-                      <LayoutDashboard className="mr-2 h-4 w-4" />
-                      {t(settings.navbar.dashboardLabel)}
-                    </Button>
-                  )}
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      navigate(dashboardPath);
+                      setIsOpen(false);
+                    }}
+                  >
+                    <LayoutDashboard className="mr-2 h-4 w-4" />
+                    {t(settings.navbar.dashboardLabel)}
+                  </Button>
                   <Button variant="destructive" onClick={handleLogout}>
                     <LogOut className="mr-2 h-4 w-4" />
                     {t(settings.navbar.logoutLabel)}

@@ -350,6 +350,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
         wholeEventPrice: config.wholeEventPrice || 0,
         bundlePrice: config.bundlePrice,
         bundleMinPhotos: config.bundleMinPhotos,
+        coverTitle: config.coverTitle || event.title,
+        coverImageUrl: config.coverImageUrl || event.branding?.coverUrl || '',
         termsText: config.termsText,
       },
       data: rows.map((row) => ({
@@ -1000,7 +1002,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
       set.storeStripeAccountLabel = dto.stripeAccountLabel.trim();
     if (dto.stripeSecretKey?.trim())
       set.storeStripeSecretCipher = this.encrypt(dto.stripeSecretKey.trim());
-    const user = await this.users.findByIdAndUpdate(userId, { $set: set }, { new: true }).lean();
+    const user = await this.users
+      .findByIdAndUpdate(userId, { $set: set }, { new: true })
+      .lean();
     if (!user) throw new HttpException('User not found', 404);
     return this.accountSettings(userId);
   }
@@ -1035,6 +1039,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
       'previewQuality',
       'useCustomStripe',
       'stripeAccountLabel',
+      'coverTitle',
+      'coverImageUrl',
       'termsText',
       'saleAlbumIds',
     ] as const) {

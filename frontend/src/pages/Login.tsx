@@ -43,14 +43,21 @@ const Login = () => {
       }
 
       const nextPath = searchParams.get("next");
-      if (data?.user?.role !== "admin" && nextPath?.startsWith("/join/")) {
-        navigate(nextPath);
+      const safeNextPath =
+        nextPath?.startsWith("/") &&
+        !nextPath.startsWith("//") &&
+        !nextPath.startsWith("/login")
+          ? nextPath
+          : null;
+
+      if (safeNextPath) {
+        navigate(safeNextPath, { replace: true });
       } else if (data?.user?.role === "admin") {
-        navigate("/admin/dashboard");
+        navigate("/admin/dashboard", { replace: true });
       } else if (data?.user?.role === "photographer") {
-        navigate("/photographer/dashboard");
+        navigate("/photographer/dashboard", { replace: true });
       } else {
-        navigate("/planner/dashboard");
+        navigate("/planner/dashboard", { replace: true });
       }
     },
   });

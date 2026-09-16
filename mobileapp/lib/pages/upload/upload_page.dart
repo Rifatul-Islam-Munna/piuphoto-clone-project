@@ -2038,7 +2038,29 @@ class _UploadPageState extends State<UploadPage> {
         }
 
         return Scaffold(
-          appBar: AppBar(title: const Text('Upload')),
+          appBar: AppBar(
+            title: const Text('Upload'),
+            actions: [
+              if (activeEvent != null)
+                TextButton.icon(
+                  onPressed: _connectionSheetOpen
+                      ? null
+                      : () => _showConnectedSessionSheet(activeEvent),
+                  icon: Icon(
+                    _liveConnectionActive
+                        ? Icons.camera_alt
+                        : Icons.keyboard_arrow_up,
+                    color: Colors.white,
+                    size: 19,
+                  ),
+                  label: const Text(
+                    'Session',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              const SizedBox(width: 6),
+            ],
+          ),
           body: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             children: [

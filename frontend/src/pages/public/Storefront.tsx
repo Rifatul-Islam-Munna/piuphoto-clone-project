@@ -22,6 +22,8 @@ type Catalog = {
     wholeEventPrice: number;
     bundlePrice: number;
     bundleMinPhotos: number;
+    coverTitle?: string;
+    coverImageUrl?: string;
     termsText?: string;
   };
   data: Array<{ _id: string; previewUrl: string }>;
@@ -148,6 +150,9 @@ export default function Storefront() {
       </div>
     );
   const branding = catalog.event.branding || {};
+  const coverTitle = catalog.settings.coverTitle?.trim() || catalog.event.title;
+  const coverImageUrl =
+    catalog.settings.coverImageUrl?.trim() || branding.coverUrl;
   return (
     <div className="min-h-screen bg-muted/20">
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
@@ -176,13 +181,17 @@ export default function Storefront() {
           </div>
         </div>
       </header>
-      {branding.coverUrl ? (
-        <div className="relative h-56 overflow-hidden">
-          <img src={branding.coverUrl} className="h-full w-full object-cover" />
+      {coverImageUrl ? (
+        <div className="relative h-64 overflow-hidden sm:h-72">
+          <img
+            src={coverImageUrl}
+            alt={coverTitle}
+            className="h-full w-full object-cover"
+          />
           <div className="absolute inset-0 bg-black/45" />
           <div className="absolute inset-0 flex items-end">
             <div className="mx-auto w-full max-w-[1500px] px-4 pb-8 text-white sm:px-6">
-              <h1 className="text-3xl font-bold">{catalog.event.title}</h1>
+              <h1 className="text-3xl font-bold sm:text-4xl">{coverTitle}</h1>
               <p className="mt-1 text-white/80">
                 Choose the photos you want to own.
               </p>
@@ -191,7 +200,7 @@ export default function Storefront() {
         </div>
       ) : (
         <div className="mx-auto max-w-[1500px] px-4 py-8 sm:px-6">
-          <h1 className="text-3xl font-bold">{catalog.event.title}</h1>
+          <h1 className="text-3xl font-bold">{coverTitle}</h1>
           <p className="mt-1 text-muted-foreground">
             Choose the photos you want to own.
           </p>

@@ -14,9 +14,7 @@ const runtimeProcess = globalThis as typeof globalThis & {
 };
 
 const baseUrl =
-  import.meta.env.VITE_BASE_URL ??
-  runtimeProcess.process?.env?.BASE_URL ??
-  "";
+  import.meta.env.VITE_BASE_URL ?? runtimeProcess.process?.env?.BASE_URL ?? "";
 
 const getToken = () => {
   if (typeof window === "undefined") {
@@ -37,15 +35,19 @@ const getToken = () => {
 };
 
 const redirectToLogin = () => {
-  if (typeof window !== "undefined") {
-    window.location.href = `${window.location.origin}${window.location.pathname}#/login`;
-  }
+  if (typeof window === "undefined") return;
+
+  const currentRoute = window.location.hash.replace(/^#/, "") || "/";
+  const next =
+    currentRoute.startsWith("/") && !currentRoute.startsWith("/login")
+      ? `?next=${encodeURIComponent(currentRoute)}`
+      : "";
+  window.location.href = `${window.location.origin}${window.location.pathname}#/login${next}`;
 };
 
 function parseAxiosError(error: AxiosError): ApiError {
   const res = error.response?.data as
-    | { message?: string | { message?: string | string[] } }
-    | undefined;
+    { message?: string | { message?: string | string[] } } | undefined;
   const statusCode = error.response?.status ?? 500;
 
   let message = "Something went wrong";
@@ -89,7 +91,9 @@ async function handleAxiosRequest<T>(
     if (axios.isAxiosError(error)) {
       const status = error.response?.status;
 
-      if (options?.redirectOnUnauthorized !== false && (status === 401 || status === 403)) {
+      // A 403 means the user is authenticated but cannot perform this action.
+      // Sending it to login creates a redirect loop and loses the requested page.
+      if (options?.redirectOnUnauthorized !== false && status === 401) {
         redirectToLogin();
       }
 
