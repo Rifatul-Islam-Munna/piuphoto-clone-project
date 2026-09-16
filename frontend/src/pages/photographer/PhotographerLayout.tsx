@@ -29,12 +29,12 @@ const items = [
   { icon: CalendarDays, label: "My sessions", href: "/photographer/sessions" },
   { icon: CreditCard, label: "Plans & billing", href: "/photographer/plans" },
   { icon: Inbox, label: "Invitations", href: "/photographer/invitations" },
-  { icon: Images, label: "Galleries", href: "/planner/gallery" },
-  { icon: Scissors, label: "Retouch", href: "/retouch" },
-  { icon: ShoppingBag, label: "Store", href: "/planner/store" },
-  { icon: BarChart3, label: "Analytics", href: "/planner/analytics" },
-  { icon: KeyRound, label: "API", href: "/planner/api" },
-  { icon: Settings, label: "Settings", href: "/planner/settings" },
+  { icon: Images, label: "Galleries", href: "/photographer/gallery" },
+  { icon: Scissors, label: "Retouch", href: "/photographer/retouch" },
+  { icon: ShoppingBag, label: "Store", href: "/photographer/store" },
+  { icon: BarChart3, label: "Analytics", href: "/photographer/analytics" },
+  { icon: KeyRound, label: "API", href: "/photographer/api" },
+  { icon: Settings, label: "Settings", href: "/photographer/settings" },
 ];
 
 export default function PhotographerLayout({ children }: Props) {

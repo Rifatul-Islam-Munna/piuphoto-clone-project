@@ -594,7 +594,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           subtitle: 'Event QR',
           color: Colors.purple,
           isDisabled: false,
-          onTap: () {},
+          onTap: () => Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => const EventQrScanPage())),
+        ),
+        _ActionTile(
+          icon: Icons.workspace_premium_outlined,
+          title: 'Plans',
+          subtitle: 'Buy or upgrade plan',
+          color: Colors.indigo,
+          isDisabled: false,
+          onTap: () => context.router.root.push(const PlansRoute()),
         ),
       ],
     );

@@ -27,6 +27,8 @@ import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/pages/upload/transfer_list_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 class _CameraProbe {
   const _CameraProbe({
@@ -89,6 +91,7 @@ class _UploadPageState extends State<UploadPage> {
   bool _disposed = false;
   bool _resolvingSoloEvent = false;
   bool _soloEventResolved = false;
+  bool _connectionSheetOpen = false;
   int _wirelessGeneration = 0;
   int _otgGeneration = 0;
   int _galleryGeneration = 0;
@@ -1079,6 +1082,7 @@ class _UploadPageState extends State<UploadPage> {
       }
       unawaited(_pollWirelessCamera(event, generation));
     });
+    unawaited(_showConnectedSessionSheet(event));
   }
 
   Future<void> _saveWirelessBytes({
@@ -1698,6 +1702,7 @@ class _UploadPageState extends State<UploadPage> {
           }
           unawaited(_pollOtgSource(event, generation));
         });
+        unawaited(_showConnectedSessionSheet(event));
         return;
       }
 
@@ -1725,6 +1730,7 @@ class _UploadPageState extends State<UploadPage> {
         }
         unawaited(_pollOtgSource(event, generation));
       });
+      unawaited(_showConnectedSessionSheet(event));
       await _pollOtgSource(event, generation);
     } on MissingPluginException {
       _safeSetState(
@@ -2114,8 +2120,15 @@ class _UploadPageState extends State<UploadPage> {
 
               const SizedBox(height: 8),
 
-              if (activeEvent != null) ...[
-                _liveTransferPanel(activeEvent),
+              if (activeEvent != null && _liveConnectionActive) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => _showConnectedSessionSheet(activeEvent),
+                    icon: const Icon(Icons.camera_alt_outlined),
+                    label: const Text('Open live camera session'),
+                  ),
+                ),
                 const SizedBox(height: 10),
               ],
 
@@ -2449,6 +2462,114 @@ class _UploadPageState extends State<UploadPage> {
         );
       },
     );
+  }
+
+  String _guestQrPayload(EventSummary event) => 'mobile:${event.id}\nface:1';
+
+  Future<void> _showGuestQr(EventSummary event) async {
+    final payload = _guestQrPayload(event);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Guest face-delivery QR'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            QrImageView(data: payload, size: 230),
+            const SizedBox(height: 12),
+            const Text(
+              'Guests scan this in Airpix, take 2-5 selfies, then receive their matching photos.',
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () => SharePlus.instance.share(
+              ShareParams(text: 'Airpix face delivery\n$payload'),
+            ),
+            icon: const Icon(Icons.share_outlined),
+            label: const Text('Share'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showConnectedSessionSheet(EventSummary event) async {
+    if (!mounted || _connectionSheetOpen) return;
+    _connectionSheetOpen = true;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        builder: (sheetContext) => SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.94,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.camera_alt_outlined),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Live Camera Session',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Text(
+                            event.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(sheetContext),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => _showGuestQr(event),
+                    icon: const Icon(Icons.qr_code_2),
+                    label: const Text('Share guest QR'),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  child: _liveTransferPanel(event),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      _connectionSheetOpen = false;
+    }
   }
 
   String get _liveConnectionText {

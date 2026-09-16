@@ -5,6 +5,7 @@ import {
   IsArray,
   IsBoolean,
   IsEmail,
+  IsIn,
   IsInt,
   IsMongoId,
   IsNumber,
@@ -23,6 +24,11 @@ export class StoreSettingsDto {
   @IsNumber()
   @Min(0)
   singlePhotoPrice?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  wholeEventPrice?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) bundlePrice?: number;
   @IsOptional()
   @Type(() => Number)
@@ -62,11 +68,15 @@ export class StoreSettingsDto {
 }
 export class StoreCheckoutDto {
   @IsMongoId() eventId: string;
+  @IsOptional() @IsIn(['selected', 'event']) purchaseMode?:
+    | 'selected'
+    | 'event';
+  @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(100)
+  @ArrayMaxSize(1000)
   @IsMongoId({ each: true })
-  imageIds: string[];
+  imageIds?: string[];
   @IsEmail() @MaxLength(180) email: string;
   @IsOptional() @IsString() @MaxLength(40) whatsapp?: string;
   @IsOptional() @IsString() @MaxLength(120) idempotencyKey?: string;

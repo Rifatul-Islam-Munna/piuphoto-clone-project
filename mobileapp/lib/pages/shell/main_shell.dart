@@ -21,12 +21,14 @@ class MainShellPage extends StatelessWidget {
                       const HomeRoute(),
                       const EventsRoute(),
                       const UploadRoute(),
+                      const PlansRoute(),
                       const InvitationsRoute(),
                       const ProfileRoute(),
                     ]
                   : [
                       const HomeRoute(),
                       const UploadRoute(),
+                      const PlansRoute(),
                       const InvitationsRoute(),
                       const ProfileRoute(),
                     ])

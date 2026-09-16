@@ -316,7 +316,13 @@ const App = () => (
                 </WorkspaceRoute>
               }
             />
-            <Route
+            <Route path="/photographer/gallery" element={<WorkspaceRoute workspace="photographer"><Phase2Gallery /></WorkspaceRoute>} />
+            <Route path="/photographer/store" element={<WorkspaceRoute workspace="photographer"><StoreManager /></WorkspaceRoute>} />
+            <Route path="/photographer/analytics" element={<WorkspaceRoute workspace="photographer"><AnalyticsDashboard /></WorkspaceRoute>} />
+            <Route path="/photographer/api" element={<WorkspaceRoute workspace="photographer"><ApiPlatform /></WorkspaceRoute>} />
+            <Route path="/photographer/settings" element={<WorkspaceRoute workspace="photographer"><UserSettings /></WorkspaceRoute>} />
+            <Route path="/photographer/retouch" element={<WorkspaceRoute workspace="photographer"><RetouchConsole /></WorkspaceRoute>} />
+            <Route path="/photographer/event/:eventId/experience" element={<WorkspaceRoute workspace="photographer"><Phase2Settings /></WorkspaceRoute>} />            <Route
               path="/user/dashboard"
               element={
                 <WorkspaceRoute workspace="planner">

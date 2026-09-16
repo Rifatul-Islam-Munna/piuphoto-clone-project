@@ -14,6 +14,7 @@ export class StoreSettings {
   @Prop({ default: false, index: true }) enabled: boolean;
   @Prop({ trim: true, uppercase: true, default: 'USD' }) currency: string;
   @Prop({ default: 5, min: 0 }) singlePhotoPrice: number;
+  @Prop({ default: 0, min: 0 }) wholeEventPrice: number;
   @Prop({ default: 0, min: 0 }) bundlePrice: number;
   @Prop({ default: 10, min: 2 }) bundleMinPhotos: number;
   @Prop({ default: 72, min: 1, max: 720 }) downloadExpiresHours: number;

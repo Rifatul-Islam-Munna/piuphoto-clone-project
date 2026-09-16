@@ -1,8 +1,16 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CreditCard, ExternalLink, Image as ImageIcon, Loader2, Save, Send, ShoppingBag } from "lucide-react";
+import {
+  CreditCard,
+  ExternalLink,
+  Image as ImageIcon,
+  Loader2,
+  Save,
+  Send,
+  ShoppingBag,
+} from "lucide-react";
 import { toast } from "sonner";
-import PlannerLayout from "./PlannerLayout";
+import WorkspaceLayout from "@/components/WorkspaceLayout";
 import { PatchRequestAxios } from "@/api-hooks/api-hooks";
 import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +40,7 @@ type StoreSettings = {
   enabled: boolean;
   currency: string;
   singlePhotoPrice: number;
+  wholeEventPrice: number;
   bundlePrice: number;
   bundleMinPhotos: number;
   downloadExpiresHours: number;
@@ -108,6 +117,7 @@ export default function StoreManager() {
     enabled: false,
     currency: "USD",
     singlePhotoPrice: 5,
+    wholeEventPrice: 0,
     bundlePrice: 0,
     bundleMinPhotos: 10,
     downloadExpiresHours: 72,
@@ -125,6 +135,7 @@ export default function StoreManager() {
     if (data)
       setForm({
         ...data,
+        wholeEventPrice: data.wholeEventPrice || 0,
         previewMaxWidth: data.previewMaxWidth || 1200,
         previewQuality: data.previewQuality || 64,
         useCustomStripe: Boolean(data.useCustomStripe),
@@ -178,7 +189,7 @@ export default function StoreManager() {
   const revenue = paid.reduce((sum, o) => sum + Number(o.amount || 0), 0);
   const event = events.find((e) => e._id === selected);
   return (
-    <PlannerLayout>
+    <WorkspaceLayout>
       <div className="space-y-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -187,8 +198,9 @@ export default function StoreManager() {
             </p>
             <h1 className="text-2xl font-bold">Online Store</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Choose categories/photos to sell, collect payment, then deliver
-              the purchased originals automatically.
+              Choose photos to sell, set a per-photo or whole-event price,
+              collect payment, then deliver the purchased originals
+              automatically.
             </p>
           </div>
           <div className="flex gap-2">
@@ -237,12 +249,20 @@ export default function StoreManager() {
             <DeliveryStep
               icon={<ImageIcon className="h-5 w-5" />}
               title="1. Preview"
-              text={form.watermarkedPreview ? "Low-resolution, watermarked previews protect the originals." : "Optimized previews are shown before purchase."}
+              text={
+                form.watermarkedPreview
+                  ? "Low-resolution, watermarked previews protect the originals."
+                  : "Optimized previews are shown before purchase."
+              }
             />
             <DeliveryStep
               icon={<CreditCard className="h-5 w-5" />}
               title="2. Purchase"
-              text={form.useCustomStripe ? "Payment goes through this event's connected Stripe account." : "Payment goes through the platform Stripe checkout."}
+              text={
+                form.useCustomStripe
+                  ? "Payment goes through this event's connected Stripe account."
+                  : "Payment goes through the platform Stripe checkout."
+              }
             />
             <DeliveryStep
               icon={<Send className="h-5 w-5" />}
@@ -282,6 +302,14 @@ export default function StoreManager() {
               value={String(form.singlePhotoPrice)}
               onChange={(v) =>
                 setForm((f) => ({ ...f, singlePhotoPrice: Number(v) || 0 }))
+              }
+            />
+            <Field
+              label="Whole event price (0 disables)"
+              type="number"
+              value={String(form.wholeEventPrice)}
+              onChange={(v) =>
+                setForm((f) => ({ ...f, wholeEventPrice: Number(v) || 0 }))
               }
             />
             <Field
@@ -345,7 +373,11 @@ export default function StoreManager() {
                 className="mt-3"
                 onClick={() =>
                   selected &&
-                  (window.location.hash = `#/planner/event/${selected}/experience`)
+                  (window.location.hash =
+                    JSON.parse(localStorage.getItem("user") || "{}").role ===
+                    "photographer"
+                      ? `#/photographer/event/${selected}/experience`
+                      : `#/planner/event/${selected}/experience`)
                 }
               >
                 Watermark position, opacity & size
@@ -536,7 +568,7 @@ export default function StoreManager() {
           </CardContent>
         </Card>
       </div>
-    </PlannerLayout>
+    </WorkspaceLayout>
   );
 }
 function DeliveryStep({

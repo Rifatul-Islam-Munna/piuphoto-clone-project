@@ -1,4 +1,4 @@
-﻿import axios from 'axios';
+import axios from 'axios';
 import { Types } from 'mongoose';
 import { StoreService } from './store.service';
 import { StoreOrderStatus } from './entities/store-order.entity';
@@ -21,13 +21,19 @@ describe('StoreService checkout idempotency', () => {
     };
     const settingsModel = {
       findOneAndUpdate: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue(settings),
       }),
     };
     const images = {
       find: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnValue({          lean: jest.fn().mockResolvedValue([{ _id: photoA }, { _id: photoB }]),
-        }),
+        select: jest
+          .fn()
+          .mockReturnValue({
+            lean: jest
+              .fn()
+              .mockResolvedValue([{ _id: photoA }, { _id: photoB }]),
+          }),
       }),
     };
     const order = {
@@ -54,7 +60,10 @@ describe('StoreService checkout idempotency', () => {
       images as never,
       {} as never,
       { get: jest.fn() } as never,
-      { emailConfigured: jest.fn().mockReturnValue(false), whatsappConfigured: jest.fn().mockReturnValue(false) } as never,
+      {
+        emailConfigured: jest.fn().mockReturnValue(false),
+        whatsappConfigured: jest.fn().mockReturnValue(false),
+      } as never,
     );
     const stripe = jest.spyOn(axios, 'post');
     const result = await service.checkout({
@@ -70,7 +79,6 @@ describe('StoreService checkout idempotency', () => {
     expect(stripe).not.toHaveBeenCalled();
   });
 });
-
 
 describe('StoreService without Stripe webhook secret', () => {
   it('falls back to Stripe API reconciliation instead of failing', async () => {

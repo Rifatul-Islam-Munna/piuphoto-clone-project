@@ -274,6 +274,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
           enabled: false,
           currency: 'USD',
           singlePhotoPrice: 5,
+          wholeEventPrice: 0,
           bundlePrice: 0,
           bundleMinPhotos: 10,
           downloadExpiresHours: 72,
@@ -307,6 +308,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
         eventId: this.oid(eventId),
         isPublished: { $ne: false },
         isForSale: { $ne: false },
+        isEnhanced: { $ne: true },
         mediaType: { $ne: 'video' },
         ...(albumId
           ? { albumId: this.oid(albumId) }
@@ -328,6 +330,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
       settings: {
         currency: config.currency,
         singlePhotoPrice: config.singlePhotoPrice,
+        wholeEventPrice: config.wholeEventPrice || 0,
         bundlePrice: config.bundlePrice,
         bundleMinPhotos: config.bundleMinPhotos,
         termsText: config.termsText,
@@ -451,29 +454,47 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
   async checkout(dto: StoreCheckoutDto) {
     const config = await this.getSettings(dto.eventId, true);
     if (!config?.enabled) throw new HttpException('Store is disabled', 400);
-    const unique = [...new Set(dto.imageIds)];
+    const purchaseMode: 'selected' | 'event' =
+      dto.purchaseMode === 'event' ? 'event' : 'selected';
+    const requested = [...new Set(dto.imageIds || [])];
+    if (purchaseMode === 'selected' && requested.length === 0)
+      throw new HttpException('Choose at least one photo', 400);
+    if (purchaseMode === 'event' && Number(config.wholeEventPrice || 0) <= 0)
+      throw new HttpException('Whole-event purchase is not enabled', 400);
+
     const allowedAlbums = (config.saleAlbumIds || []).map(String);
-    const rows = await this.images
-      .find({
-        _id: { $in: unique.map((id) => this.oid(id)) },
-        eventId: this.oid(dto.eventId),
-        isPublished: { $ne: false },
-        isForSale: { $ne: false },
-        mediaType: { $ne: 'video' },
-        ...(allowedAlbums.length
-          ? { albumId: { $in: allowedAlbums.map((id) => this.oid(id)) } }
-          : {}),
-      })
-      .select('_id')
-      .lean();
-    if (rows.length !== unique.length)
+    const saleFilter: any = {
+      eventId: this.oid(dto.eventId),
+      isPublished: { $ne: false },
+      isForSale: { $ne: false },
+      isEnhanced: { $ne: true },
+      mediaType: { $ne: 'video' },
+      ...(allowedAlbums.length
+        ? { albumId: { $in: allowedAlbums.map((id) => this.oid(id)) } }
+        : {}),
+    };
+    if (purchaseMode === 'selected')
+      saleFilter._id = { $in: requested.map((id) => this.oid(id)) };
+
+    const rows = await this.images.find(saleFilter).select('_id').lean();
+    if (purchaseMode === 'selected' && rows.length !== requested.length)
       throw new HttpException('One or more photos are unavailable', 400);
-    const amount = this.price(config, rows.length);
+    if (rows.length === 0)
+      throw new HttpException(
+        'No original photos are available for purchase',
+        400,
+      );
+
+    const amount =
+      purchaseMode === 'event'
+        ? Number(config.wholeEventPrice)
+        : this.price(config, rows.length);
     if (amount <= 0) throw new HttpException('Invalid store price', 400);
     const orderSeed = {
       orderNo: `ORD-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString('hex').toUpperCase()}`,
       eventId: this.oid(dto.eventId),
       imageIds: rows.map((x) => x._id),
+      purchaseMode,
       email: dto.email.trim().toLowerCase(),
       whatsapp: dto.whatsapp?.trim(),
       amount,
@@ -512,6 +533,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
         String(order.eventId) !== dto.eventId ||
         order.email !== dto.email.trim().toLowerCase() ||
         Number(order.amount) !== Number(amount) ||
+        (order.purchaseMode || 'selected') !== purchaseMode ||
         existingIds !== requestedIds
       ) {
         throw new HttpException(
@@ -573,7 +595,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     );
     params.append(
       'line_items[0][price_data][product_data][name]',
-      `${rows.length} digital event photo${rows.length === 1 ? '' : 's'}`,
+      purchaseMode === 'event'
+        ? `Complete event gallery - ${rows.length} original photos`
+        : `${rows.length} original event photo${rows.length === 1 ? '' : 's'}`,
     );
     params.append(
       'line_items[0][price_data][unit_amount]',
@@ -904,20 +928,37 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
       );
     const image = await this.images
       .findOne({ _id: this.oid(imageId), eventId: order.eventId })
-      .select('imageUrl')
+      .select('imageUrl isEnhanced enhancedFromId')
       .lean();
     if (!image) throw new HttpException('Purchased photo not found', 404);
-    const response = await axios.get<ArrayBuffer>(image.imageUrl, {
+
+    let original: any = image;
+    if (image.isEnhanced && image.enhancedFromId) {
+      const source = await this.images
+        .findOne({ _id: image.enhancedFromId, eventId: order.eventId })
+        .select('imageUrl')
+        .lean();
+      if (source?.imageUrl) original = source;
+    }
+    const response = await axios.get<ArrayBuffer>(original.imageUrl, {
       responseType: 'arraybuffer',
       timeout: 60000,
       maxContentLength: 256 * 1024 * 1024,
     });
+    const sourcePath = (() => {
+      try {
+        return new URL(original.imageUrl).pathname;
+      } catch {
+        return '';
+      }
+    })();
+    const sourceName = sourcePath.split('/').filter(Boolean).pop();
     return {
       buffer: Buffer.from(response.data),
       contentType: String(
         response.headers['content-type'] || 'application/octet-stream',
       ),
-      filename: `photo-${String(image._id).slice(-8)}`,
+      filename: sourceName || `photo-${String(image._id).slice(-8)}`,
     };
   }
   async settingsForPlanner(eventId: string, userId?: string, role?: string) {
@@ -941,6 +982,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
       'enabled',
       'currency',
       'singlePhotoPrice',
+      'wholeEventPrice',
       'bundlePrice',
       'bundleMinPhotos',
       'downloadExpiresHours',
@@ -991,6 +1033,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
       .find({
         eventId: this.oid(eventId),
         isPublished: { $ne: false },
+        isEnhanced: { $ne: true },
         mediaType: { $ne: 'video' },
       })
       .select('_id imageUrl albumId isForSale createdAt')

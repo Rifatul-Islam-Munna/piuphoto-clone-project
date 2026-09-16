@@ -13,7 +13,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { toast } from "sonner";
-import PlannerLayout from "./PlannerLayout";
+import WorkspaceLayout from "@/components/WorkspaceLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -347,7 +347,7 @@ export default function Phase2Gallery() {
   };
 
   return (
-    <PlannerLayout>
+    <WorkspaceLayout>
       <div className="space-y-6">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
@@ -388,7 +388,8 @@ export default function Phase2Gallery() {
               disabled={!selectedEventId}
               onClick={() => {
                 if (selectedEventId) {
-                  window.location.hash = `#/planner/event/${selectedEventId}/experience`;
+                  const role = JSON.parse(localStorage.getItem("user") || "{}").role;
+                  window.location.hash = role === "photographer" ? `#/photographer/event/${selectedEventId}/experience` : `#/planner/event/${selectedEventId}/experience`;
                 }
               }}
             >
@@ -729,7 +730,7 @@ export default function Phase2Gallery() {
           number/semantic/outfit metadata and reviewer overrides.
         </div>
       </div>
-    </PlannerLayout>
+    </WorkspaceLayout>
   );
 }
 

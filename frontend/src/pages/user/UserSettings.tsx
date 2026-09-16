@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import PlannerLayout from "../planner/PlannerLayout";
+import WorkspaceLayout from "@/components/WorkspaceLayout";
 import {
   GetRequestAxios,
   PatchRequestAxios,
@@ -180,11 +180,11 @@ export default function UserSettings() {
 
   if (isLoading) {
     return (
-      <PlannerLayout>
+      <WorkspaceLayout>
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
-      </PlannerLayout>
+      </WorkspaceLayout>
     );
   }
 
@@ -211,7 +211,7 @@ export default function UserSettings() {
   };
 
   return (
-    <PlannerLayout>
+    <WorkspaceLayout>
       <div className="space-y-6 max-w-3xl mx-auto">
         <div>
           <h1 className="text-2xl font-bold">Settings</h1>
@@ -366,6 +366,6 @@ export default function UserSettings() {
           </CardContent>
         </Card>
       </div>
-    </PlannerLayout>
+    </WorkspaceLayout>
   );
 }

@@ -92,7 +92,7 @@ export default function PhotographerSessions() {
                   <p className="min-h-10 text-sm text-muted-foreground">{session.description || "Independent photo session"}</p>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <Button variant="outline" onClick={() => showQr(session)}><QrCode className="mr-2 h-4 w-4" />Share QRs</Button>
-                    <Button variant="outline" onClick={() => navigate(`/planner/event/${session._id}/experience`)}><Settings2 className="mr-2 h-4 w-4" />Delivery settings</Button>
+                    <Button variant="outline" onClick={() => navigate(`/photographer/event/${session._id}/experience`)}><Settings2 className="mr-2 h-4 w-4" />Delivery settings</Button>
                   </div>
                   <Button className="w-full" onClick={() => window.open(`${window.location.origin}${window.location.pathname}#/event/${session._id}`, "_blank")}>
                     Open public gallery

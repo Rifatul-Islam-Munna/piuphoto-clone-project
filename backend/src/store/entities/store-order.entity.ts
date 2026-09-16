@@ -1,18 +1,35 @@
-﻿import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
-export enum StoreOrderStatus { PENDING='pending', PAID='paid', FAILED='failed', REFUNDED='refunded' }
+export enum StoreOrderStatus {
+  PENDING = 'pending',
+  PAID = 'paid',
+  FAILED = 'failed',
+  REFUNDED = 'refunded',
+}
 export type StoreOrderDocument = HydratedDocument<StoreOrder>;
 @Schema({ timestamps: true, autoIndex: true })
 export class StoreOrder {
-  @Prop({ required: true, unique: true, index: true, trim: true }) orderNo: string;
-  @Prop({ type: Types.ObjectId, ref: 'Event', required: true, index: true }) eventId: Types.ObjectId;
-  @Prop({ type: [Types.ObjectId], ref: 'EventImage', required: true }) imageIds: Types.ObjectId[];
-  @Prop({ required: true, lowercase: true, trim: true, index: true }) email: string;
+  @Prop({ required: true, unique: true, index: true, trim: true })
+  orderNo: string;
+  @Prop({ type: Types.ObjectId, ref: 'Event', required: true, index: true })
+  eventId: Types.ObjectId;
+  @Prop({ type: [Types.ObjectId], ref: 'EventImage', required: true })
+  imageIds: Types.ObjectId[];
+  @Prop({ enum: ['selected', 'event'], default: 'selected', index: true })
+  purchaseMode: 'selected' | 'event';
+  @Prop({ required: true, lowercase: true, trim: true, index: true })
+  email: string;
   @Prop({ trim: true }) whatsapp?: string;
   @Prop({ required: true, min: 0 }) amount: number;
   @Prop({ required: true, uppercase: true, trim: true }) currency: string;
-  @Prop({ enum: StoreOrderStatus, default: StoreOrderStatus.PENDING, index: true }) status: StoreOrderStatus;
-  @Prop({ unique: true, sparse: true, trim: true, index: true }) checkoutIdempotencyKey?: string;
+  @Prop({
+    enum: StoreOrderStatus,
+    default: StoreOrderStatus.PENDING,
+    index: true,
+  })
+  status: StoreOrderStatus;
+  @Prop({ unique: true, sparse: true, trim: true, index: true })
+  checkoutIdempotencyKey?: string;
   @Prop({ unique: true, sparse: true, trim: true }) stripeSessionId?: string;
   @Prop({ trim: true }) stripeCheckoutUrl?: string;
   @Prop({ trim: true, index: true }) paymentIntentId?: string;

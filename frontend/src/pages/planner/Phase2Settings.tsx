@@ -39,7 +39,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import WatermarkEditor from "@/components/gallery/WatermarkEditor";
-import PlannerLayout from "./PlannerLayout";
+import WorkspaceLayout from "@/components/WorkspaceLayout";
 
 type Branding = {
   logoUrl?: string;
@@ -100,6 +100,9 @@ const accessModes = [
 
 export default function Phase2Settings() {
   const { eventId = "" } = useParams();
+  const userRaw = localStorage.getItem("user");
+  const isPhotographer = userRaw ? JSON.parse(userRaw)?.role === "photographer" : false;
+  const backHref = isPhotographer ? "/photographer/sessions" : `/planner/live/${eventId}`;
   const queryClient = useQueryClient();
   const settingsQuery = useQueryWrapper<{ data: EventSettings }>(
     ["phase2-settings", eventId],
@@ -324,12 +327,12 @@ export default function Phase2Settings() {
   ).reduce((sum, value) => sum + Number(value || 0), 0);
 
   return (
-    <PlannerLayout>
+    <WorkspaceLayout>
       <div className="space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
             <Button variant="outline" size="icon" asChild>
-              <Link to={`/planner/live/${eventId}`}>
+              <Link to={backHref}>
                 <ArrowLeft className="h-4 w-4" />
               </Link>
             </Button>
@@ -835,7 +838,7 @@ export default function Phase2Settings() {
           </CardContent>
         </Card>
       </div>
-    </PlannerLayout>
+    </WorkspaceLayout>
   );
 }
 
