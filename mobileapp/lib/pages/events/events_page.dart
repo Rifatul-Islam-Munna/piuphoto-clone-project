@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
@@ -987,6 +988,7 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
   final _bundlePriceController = TextEditingController(text: '0');
   final _bundleMinController = TextEditingController(text: '10');
   final _stripeLabelController = TextEditingController();
+  final _stripePublishableController = TextEditingController();
   final _stripeSecretController = TextEditingController();
   final _stripeWebhookController = TextEditingController();
   String _mode = 'public';
@@ -1026,6 +1028,7 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
     _bundlePriceController.dispose();
     _bundleMinController.dispose();
     _stripeLabelController.dispose();
+    _stripePublishableController.dispose();
     _stripeSecretController.dispose();
     _stripeWebhookController.dispose();
     super.dispose();
@@ -1104,6 +1107,8 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
             ((data['bundleMinPhotos'] as num?)?.toInt() ?? 10).toString();
         _stripeLabelController.text =
             data['stripeAccountLabel']?.toString() ?? '';
+        _stripePublishableController.text =
+            data['stripePublishableKey']?.toString() ?? '';
       });
     } catch (_) {
       AppToast.error('Could not load store settings');
@@ -1153,6 +1158,32 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
       AppToast.error('Check store prices and bundle minimum');
       return;
     }
+    final publishableKey = _stripePublishableController.text.trim();
+    final secretKey = _stripeSecretController.text.trim();
+    final webhookSecret = _stripeWebhookController.text.trim();
+    if (_useCustomStripe &&
+        !RegExp(r'^pk_(test|live)_').hasMatch(publishableKey)) {
+      AppToast.error('Enter a valid Stripe publishable key');
+      return;
+    }
+    if (secretKey.isNotEmpty &&
+        !RegExp(r'^sk_(test|live)_').hasMatch(secretKey)) {
+      AppToast.error('Enter a valid Stripe secret key');
+      return;
+    }
+    if (_useCustomStripe && !_customStripeConfigured && secretKey.isEmpty) {
+      AppToast.error('Enter your Stripe secret key');
+      return;
+    }
+    if (webhookSecret.isNotEmpty && !webhookSecret.startsWith('whsec_')) {
+      AppToast.error('Enter a valid Stripe webhook signing secret');
+      return;
+    }
+    if (secretKey.isNotEmpty &&
+        publishableKey.contains('_live_') != secretKey.contains('_live_')) {
+      AppToast.error('Stripe public and secret keys must use the same mode');
+      return;
+    }
     setState(() => _storeSaving = true);
     try {
       final data = <String, dynamic>{
@@ -1166,18 +1197,26 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
         'watermarkedPreview': _watermarkedPreview,
         'useCustomStripe': _useCustomStripe,
         'stripeAccountLabel': _stripeLabelController.text.trim(),
+        'stripePublishableKey': publishableKey,
       };
-      if (_stripeSecretController.text.trim().isNotEmpty) {
-        data['stripeSecretKey'] = _stripeSecretController.text.trim();
-      }
-      if (_stripeWebhookController.text.trim().isNotEmpty) {
-        data['stripeWebhookSecret'] = _stripeWebhookController.text.trim();
+      if (secretKey.isNotEmpty) data['stripeSecretKey'] = secretKey;
+      if (webhookSecret.isNotEmpty) {
+        data['stripeWebhookSecret'] = webhookSecret;
       }
       await DioHelper.patch('/store/settings', data: data);
       _stripeSecretController.clear();
       _stripeWebhookController.clear();
       AppToast.success('Store settings saved');
       await _loadStore();
+    } on DioException catch (error) {
+      final body = error.response?.data;
+      final detail = body is Map ? body['message'] : null;
+      final message = detail is List ? detail.join(', ') : detail?.toString();
+      AppToast.error(
+        message?.trim().isNotEmpty == true
+            ? message!
+            : 'Could not update store settings',
+      );
     } catch (_) {
       AppToast.error('Could not update store settings');
     } finally {
@@ -1463,6 +1502,18 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
                   controller: _stripeLabelController,
                   decoration: const InputDecoration(
                     labelText: 'Stripe account label',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _stripePublishableController,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: const InputDecoration(
+                    labelText: 'Stripe publishable key',
+                    hintText: 'pk_live_... or pk_test_...',
+                    helperText: 'Use the same Stripe mode as the secret key.',
                     border: OutlineInputBorder(),
                   ),
                 ),

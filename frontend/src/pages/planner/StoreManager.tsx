@@ -51,6 +51,7 @@ type StoreSettings = {
   previewQuality: number;
   useCustomStripe: boolean;
   stripeAccountLabel?: string;
+  stripePublishableKey?: string;
   stripeSecretKey?: string;
   stripeWebhookSecret?: string;
   customStripeConfigured?: boolean;
@@ -130,6 +131,7 @@ export default function StoreManager() {
     previewMaxWidth: 1200,
     previewQuality: 64,
     useCustomStripe: false,
+    stripePublishableKey: "",
     stripeSecretKey: "",
     stripeWebhookSecret: "",
     coverTitle: "",
@@ -156,6 +158,7 @@ export default function StoreManager() {
       previewQuality: Number(data.previewQuality ?? 64),
       useCustomStripe: Boolean(data.useCustomStripe),
       stripeAccountLabel: data.stripeAccountLabel || "",
+      stripePublishableKey: data.stripePublishableKey || "",
       stripeSecretKey: "",
       stripeWebhookSecret: "",
       customStripeConfigured: Boolean(data.customStripeConfigured),
@@ -202,7 +205,7 @@ export default function StoreManager() {
   };
   const save = useMutation({
     mutationFn: async () => {
-      const payload = {
+      const payload: Record<string, unknown> = {
         eventId: selected,
         enabled: form.enabled,
         currency: form.currency,
@@ -216,13 +219,16 @@ export default function StoreManager() {
         previewQuality: form.previewQuality,
         useCustomStripe: form.useCustomStripe,
         stripeAccountLabel: form.stripeAccountLabel || "",
-        stripeSecretKey: form.stripeSecretKey || "",
-        stripeWebhookSecret: form.stripeWebhookSecret || "",
+        stripePublishableKey: form.stripePublishableKey || "",
         coverTitle: form.coverTitle || "",
         coverImageUrl: form.coverImageUrl || "",
         termsText: form.termsText || "",
         saleAlbumIds: form.saleAlbumIds || [],
       };
+      if (form.stripeSecretKey?.trim())
+        payload.stripeSecretKey = form.stripeSecretKey.trim();
+      if (form.stripeWebhookSecret?.trim())
+        payload.stripeWebhookSecret = form.stripeWebhookSecret.trim();
       const [r, e] = await PatchRequestAxios("/store/settings", payload, {
         withToken: true,
         withCredentials: true,
@@ -541,6 +547,24 @@ export default function StoreManager() {
                     }
                   />
                   <div className="space-y-2">
+                    <Label>Stripe publishable key</Label>
+                    <Input
+                      value={form.stripePublishableKey || ""}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          stripePublishableKey: e.target.value,
+                        }))
+                      }
+                      placeholder="pk_live_... or pk_test_..."
+                      autoComplete="off"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Use the key from the same Stripe mode and account as the
+                      secret key.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
                     <Label>Stripe secret key</Label>
                     <Input
                       type="password"
@@ -576,7 +600,7 @@ export default function StoreManager() {
                       }
                     />
                   </div>
-                  <div className="rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
+                  <div className="rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground md:col-span-2">
                     <p className="font-medium text-foreground">
                       Webhook endpoint
                     </p>

@@ -1,5 +1,9 @@
+import 'reflect-metadata';
 import axios from 'axios';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { Types } from 'mongoose';
+import { StoreSettingsDto } from './dto/store.dto';
 import { StoreService } from './store.service';
 import { StoreOrderStatus } from './entities/store-order.entity';
 
@@ -125,6 +129,7 @@ describe('StoreService planner settings response', () => {
       coverTitle: 'Conference Store',
       coverImageUrl: 'https://example.com/cover.jpg',
       saleAlbumIds: [],
+      stripePublishableKey: 'pk_test_example',
       stripeSecretCipher: 'encrypted',
     };
     const settingsModel = {
@@ -160,6 +165,7 @@ describe('StoreService planner settings response', () => {
       enabled: true,
       coverTitle: 'Conference Store',
       coverImageUrl: 'https://example.com/cover.jpg',
+      stripePublishableKey: 'pk_test_example',
       customStripeConfigured: true,
     });
     expect(result.data).not.toHaveProperty('property_id');
@@ -169,5 +175,69 @@ describe('StoreService planner settings response', () => {
     expect(result.data).not.toHaveProperty('updatedAt');
     expect(result.data).not.toHaveProperty('__v');
     expect(result.data).not.toHaveProperty('stripeSecretCipher');
+  });
+});
+
+describe('StoreSettingsDto backwards compatibility', () => {
+  it('accepts response-only Stripe status flags from cached clients', async () => {
+    const dto = plainToInstance(StoreSettingsDto, {
+      eventId: String(new Types.ObjectId()),
+      enabled: true,
+      customStripeConfigured: true,
+      customStripeWebhookConfigured: true,
+      stripePublishableKey: 'pk_test_example',
+      stripeSecretKey: '',
+      stripeWebhookSecret: '',
+    });
+
+    const errors = await validate(dto, {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+
+    expect(errors).toHaveLength(0);
+  });
+});
+
+describe('StoreService custom Stripe validation', () => {
+  it('rejects publishable and secret keys from different Stripe modes', async () => {
+    const eventId = String(new Types.ObjectId());
+    const settingsModel = {
+      findOneAndUpdate: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({ useCustomStripe: false }),
+      }),
+    };
+    const members = {
+      assertCanManage: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new StoreService(
+      settingsModel as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      members as never,
+      { get: jest.fn().mockReturnValue(undefined) } as never,
+      {
+        emailConfigured: jest.fn().mockReturnValue(false),
+        whatsappConfigured: jest.fn().mockReturnValue(false),
+      } as never,
+    );
+
+    await expect(
+      service.updateSettings(
+        {
+          eventId,
+          useCustomStripe: true,
+          stripePublishableKey: 'pk_test_example',
+          stripeSecretKey: 'sk_live_example',
+        },
+        String(new Types.ObjectId()),
+        'photographer',
+      ),
+    ).rejects.toThrow(
+      'Stripe publishable and secret keys must both use test mode or both use live mode',
+    );
   });
 });

@@ -1026,6 +1026,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
         previewQuality: Number(settings.previewQuality ?? 64),
         useCustomStripe: Boolean(settings.useCustomStripe),
         stripeAccountLabel: settings.stripeAccountLabel || '',
+        stripePublishableKey: settings.stripePublishableKey || '',
         coverTitle: settings.coverTitle || '',
         coverImageUrl: settings.coverImageUrl || '',
         termsText: settings.termsText || '',
@@ -1067,21 +1068,54 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
               ? (dto.saleAlbumIds || []).map((id) => this.oid(id))
               : dto[key];
     }
-    if (dto.stripeSecretKey?.trim())
-      set.stripeSecretCipher = this.encrypt(dto.stripeSecretKey.trim());
-    if (dto.stripeWebhookSecret?.trim())
-      set.stripeWebhookSecretCipher = this.encrypt(
-        dto.stripeWebhookSecret.trim(),
-      );
-    if (
-      dto.useCustomStripe === true &&
-      !dto.stripeSecretKey?.trim() &&
-      !current?.stripeSecretCipher
-    )
-      throw new HttpException(
-        'Add your Stripe secret key before enabling custom Stripe',
-        400,
-      );
+    const publishableKey = dto.stripePublishableKey?.trim();
+    const secretKey = dto.stripeSecretKey?.trim();
+    const webhookSecret = dto.stripeWebhookSecret?.trim();
+    if (publishableKey && !/^pk_(test|live)_/.test(publishableKey))
+      throw new HttpException('Invalid Stripe publishable key', 400);
+    if (secretKey && !/^sk_(test|live)_/.test(secretKey))
+      throw new HttpException('Invalid Stripe secret key', 400);
+    if (webhookSecret && !/^whsec_/.test(webhookSecret))
+      throw new HttpException('Invalid Stripe webhook signing secret', 400);
+    if (publishableKey) set.stripePublishableKey = publishableKey;
+    if (secretKey) set.stripeSecretCipher = this.encrypt(secretKey);
+    if (webhookSecret)
+      set.stripeWebhookSecretCipher = this.encrypt(webhookSecret);
+
+    const useCustomStripe =
+      dto.useCustomStripe !== undefined
+        ? dto.useCustomStripe
+        : current?.useCustomStripe === true;
+    if (useCustomStripe) {
+      const configuredPublishableKey =
+        publishableKey || String(current?.stripePublishableKey || '').trim();
+      const configuredSecretKey =
+        secretKey ||
+        (current?.stripeSecretCipher
+          ? this.decrypt(String(current.stripeSecretCipher))
+          : '');
+      if (!configuredPublishableKey)
+        throw new HttpException(
+          'Add your Stripe publishable key before enabling custom Stripe',
+          400,
+        );
+      if (!configuredSecretKey)
+        throw new HttpException(
+          'Add your Stripe secret key before enabling custom Stripe',
+          400,
+        );
+      const publishableMode = configuredPublishableKey.startsWith('pk_live_')
+        ? 'live'
+        : 'test';
+      const secretMode = configuredSecretKey.startsWith('sk_live_')
+        ? 'live'
+        : 'test';
+      if (publishableMode !== secretMode)
+        throw new HttpException(
+          'Stripe publishable and secret keys must both use test mode or both use live mode',
+          400,
+        );
+    }
     await this.settings
       .findOneAndUpdate(
         { eventId: this.oid(dto.eventId) },

@@ -56,9 +56,14 @@ export class StoreSettingsDto {
   @Max(90)
   previewQuality?: number;
   @IsOptional() @IsBoolean() useCustomStripe?: boolean;
+  @IsOptional() @IsString() @MaxLength(240) stripePublishableKey?: string;
   @IsOptional() @IsString() @MaxLength(240) stripeSecretKey?: string;
   @IsOptional() @IsString() @MaxLength(240) stripeWebhookSecret?: string;
   @IsOptional() @IsString() @MaxLength(120) stripeAccountLabel?: string;
+  // Accepted for backwards compatibility with older clients. These response-only
+  // flags are deliberately ignored by StoreService.updateSettings.
+  @IsOptional() @IsBoolean() customStripeConfigured?: boolean;
+  @IsOptional() @IsBoolean() customStripeWebhookConfigured?: boolean;
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(200)

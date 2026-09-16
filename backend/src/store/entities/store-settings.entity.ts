@@ -22,6 +22,7 @@ export class StoreSettings {
   @Prop({ default: 1200, min: 400, max: 2400 }) previewMaxWidth: number;
   @Prop({ default: 64, min: 30, max: 90 }) previewQuality: number;
   @Prop({ default: false }) useCustomStripe: boolean;
+  @Prop({ trim: true }) stripePublishableKey?: string;
   @Prop({ select: false }) stripeSecretCipher?: string;
   @Prop({ select: false }) stripeWebhookSecretCipher?: string;
   @Prop({ trim: true }) stripeAccountLabel?: string;
