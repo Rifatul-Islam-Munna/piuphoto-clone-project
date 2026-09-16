@@ -5,7 +5,9 @@ import 'package:mobileapp/core/constants/feature_mapping.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/models/user_model.dart';
+import 'package:mobileapp/widgets/app_ui.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
 @RoutePage()
@@ -290,17 +292,21 @@ class _ToggleButton extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
         decoration: BoxDecoration(
-          color: isSelected ? Theme.of(context).colorScheme.primary : Colors.transparent,
-          borderRadius: BorderRadius.circular(25),
+          color: isSelected ? AppColors.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: isSelected ? AppColors.primary : AppColors.border,
+          ),
         ),
         child: Text(
           label,
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: isSelected ? Colors.white : Theme.of(context).colorScheme.onSurface,
-            fontWeight: FontWeight.w600,
+            color: isSelected ? Colors.white : AppColors.mutedForeground,
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
           ),
         ),
       ),
@@ -336,13 +342,22 @@ class _PlanCard extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(20),
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
         border: isPopular
-            ? Border.all(color: Theme.of(context).colorScheme.primary, width: 2)
-            : Border.all(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.15)),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 4))],
+            ? Border.all(color: AppColors.primary, width: 1.6)
+            : Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: isPopular
+                ? AppColors.primary.withValues(alpha: 0.18)
+                : AppColors.primary.withValues(alpha: 0.06),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
       child: Column(
         children: [
@@ -350,14 +365,18 @@ class _PlanCard extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: tierColor.withValues(alpha: 0.1),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+              border: Border(
+                bottom: BorderSide(color: AppColors.border),
+              ),
             ),
             child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(color: tierColor.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)),
-                  child: Icon(Icons.workspace_premium, color: tierColor, size: 24),
+                AppIconTile(
+                  icon: Icons.workspace_premium,
+                  size: 46,
+                  iconSize: 23,
+                  background: tierColor.withValues(alpha: 0.18),
+                  foreground: tierColor,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -370,9 +389,19 @@ class _PlanCard extends StatelessWidget {
                           if (isPopular) ...[
                             const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(8)),
-                              child: const Text('Popular', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                              decoration: BoxDecoration(
+                                gradient: AppGradients.brand,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: const Text(
+                                'Popular',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
                             ),
                           ],
                         ],
@@ -381,11 +410,14 @@ class _PlanCard extends StatelessWidget {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Text('\$$price', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold, color: tierColor)),
-                          Text(isYearly ? '/year' : '/month', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6))),
+                          Text('\$$price', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: tierColor, letterSpacing: -0.5)),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 3),
+                            child: Text(isYearly ? '/year' : '/month', style: const TextStyle(fontSize: 12, color: AppColors.mutedForeground)),
+                          ),
                           if (originalPrice != null) ...[
                             const SizedBox(width: 8),
-                            Text('\$$originalPrice', style: Theme.of(context).textTheme.bodyMedium?.copyWith(decoration: TextDecoration.lineThrough, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
+                            Text('\$$originalPrice', style: const TextStyle(fontSize: 12, decoration: TextDecoration.lineThrough, color: AppColors.mutedForeground)),
                           ],
                         ],
                       ),
@@ -400,12 +432,22 @@ class _PlanCard extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: allItems.map((item) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.only(bottom: 10),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Icon(Icons.check_circle, size: 18, color: tierColor),
                       const SizedBox(width: 10),
-                      Expanded(child: Text(item, style: Theme.of(context).textTheme.bodyMedium)),
+                      Expanded(
+                        child: Text(
+                          item,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            height: 1.4,
+                            color: AppColors.foreground,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 )).toList(),
@@ -415,14 +457,19 @@ class _PlanCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: SizedBox(
               width: double.infinity,
+              height: 50,
               child: FilledButton(
                 onPressed: onBuy,
                 style: FilledButton.styleFrom(
-                  backgroundColor: isPopular ? Theme.of(context).colorScheme.primary : tierColor,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  backgroundColor: isPopular ? AppColors.primary : tierColor,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
                 ),
-                child: const Text('Buy Now', style: TextStyle(fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'Choose plan',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
               ),
             ),
           ),
@@ -463,13 +510,22 @@ class _DefaultPlanCard extends StatelessWidget {
     
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(20),
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
         border: isPopular
-            ? Border.all(color: Theme.of(context).colorScheme.primary, width: 2)
-            : Border.all(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.15)),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 4))],
+            ? Border.all(color: AppColors.primary, width: 1.6)
+            : Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: isPopular
+                ? AppColors.primary.withValues(alpha: 0.18)
+                : AppColors.primary.withValues(alpha: 0.06),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
       child: Column(
         children: [
@@ -477,14 +533,18 @@ class _DefaultPlanCard extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: tierColor.withValues(alpha: 0.1),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+              border: Border(
+                bottom: BorderSide(color: AppColors.border),
+              ),
             ),
             child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(color: tierColor.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)),
-                  child: Icon(Icons.workspace_premium, color: tierColor, size: 24),
+                AppIconTile(
+                  icon: Icons.workspace_premium,
+                  size: 46,
+                  iconSize: 23,
+                  background: tierColor.withValues(alpha: 0.18),
+                  foreground: tierColor,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -497,9 +557,19 @@ class _DefaultPlanCard extends StatelessWidget {
                           if (isPopular) ...[
                             const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(8)),
-                              child: const Text('Popular', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                              decoration: BoxDecoration(
+                                gradient: AppGradients.brand,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: const Text(
+                                'Popular',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
                             ),
                           ],
                         ],
@@ -537,14 +607,19 @@ class _DefaultPlanCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: SizedBox(
               width: double.infinity,
+              height: 50,
               child: FilledButton(
                 onPressed: onBuy,
                 style: FilledButton.styleFrom(
-                  backgroundColor: isPopular ? Theme.of(context).colorScheme.primary : tierColor,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  backgroundColor: isPopular ? AppColors.primary : tierColor,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
                 ),
-                child: const Text('Buy Now', style: TextStyle(fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'Choose plan',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
               ),
             ),
           ),

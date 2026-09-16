@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/models/event_image_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
+import 'package:mobileapp/widgets/app_ui.dart';
 
 @RoutePage()
 class EventImagesPage extends StatefulWidget {
@@ -244,8 +246,14 @@ class _EventImagesPageState extends State<EventImagesPage> {
 
                     final images = snapshot.data ?? [];
                     if (images.isEmpty) {
-                      return const Center(
-                        child: Text('No images uploaded for this event.'),
+                      return const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: AppEmptyState(
+                          icon: Icons.photo_library_outlined,
+                          title: 'No photos yet',
+                          message:
+                              'Photos you upload for this event will appear here.',
+                        ),
                       );
                     }
 
@@ -262,8 +270,9 @@ class _EventImagesPageState extends State<EventImagesPage> {
                         final image = images[index];
                         return InkWell(
                           onTap: () => _openImageActions(activeEvent, image),
+                          borderRadius: BorderRadius.circular(AppRadius.md),
                           child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(AppRadius.md),
                             child: Stack(
                               fit: StackFit.expand,
                               children: [
@@ -292,7 +301,7 @@ class _EventImagesPageState extends State<EventImagesPage> {
                                       color: image.isPublished
                                           ? Colors.green.shade700
                                           : Colors.black54,
-                                      borderRadius: BorderRadius.circular(12),
+                                      borderRadius: BorderRadius.circular(999),
                                     ),
                                     child: Text(
                                       image.isPublished ? 'LIVE' : 'HIDDEN',
@@ -310,11 +319,14 @@ class _EventImagesPageState extends State<EventImagesPage> {
                                   bottom: 8,
                                   child: DecoratedBox(
                                     decoration: BoxDecoration(
-                                      color: Colors.black54,
-                                      borderRadius: BorderRadius.circular(6),
+                                      color: Colors.black.withValues(alpha: 0.6),
+                                      borderRadius: BorderRadius.circular(999),
                                     ),
                                     child: Padding(
-                                      padding: const EdgeInsets.all(6),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 6,
+                                      ),
                                       child: Text(
                                         image.isEnhanced
                                             ? 'Enhanced'
@@ -323,7 +335,8 @@ class _EventImagesPageState extends State<EventImagesPage> {
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
                                           color: Colors.white,
-                                          fontSize: 12,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
                                         ),
                                       ),
                                     ),

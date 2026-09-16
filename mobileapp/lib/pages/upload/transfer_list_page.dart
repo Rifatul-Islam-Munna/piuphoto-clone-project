@@ -2,8 +2,10 @@ import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
+import 'package:mobileapp/widgets/app_ui.dart';
 
 enum TransferListFilter { all, uploaded, notUploaded }
 
@@ -46,23 +48,11 @@ class TransferListPage extends StatelessWidget {
           if (items.isEmpty) {
             return Center(
               child: Padding(
-                padding: const EdgeInsets.all(28),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.photo_library_outlined, size: 52),
-                    const SizedBox(height: 12),
-                    Text(
-                      'No $title yet',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      eventTitle,
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
+                padding: const EdgeInsets.all(24),
+                child: AppEmptyState(
+                  icon: Icons.photo_library_outlined,
+                  title: 'No $title yet',
+                  message: eventTitle,
                 ),
               ),
             );
@@ -74,9 +64,16 @@ class TransferListPage extends StatelessWidget {
             separatorBuilder: (_, _) => const SizedBox(height: 10),
             itemBuilder: (context, index) {
               final item = items[index];
-              return Card(
-                margin: EdgeInsets.zero,
+              return Container(
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                  border: Border.all(color: AppColors.border),
+                ),
                 child: ListTile(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                  ),
                   contentPadding: const EdgeInsets.all(10),
                   leading: _thumbnail(context, item),
                   title: Text(

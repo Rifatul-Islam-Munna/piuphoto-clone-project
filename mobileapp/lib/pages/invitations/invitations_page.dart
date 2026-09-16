@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/network/mutation_wrapper.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
+import 'package:mobileapp/widgets/app_ui.dart';
 
 @RoutePage()
 class InvitationsPage extends StatefulWidget {
@@ -172,51 +174,40 @@ class _InvitationsPageState extends State<InvitationsPage> {
   }
 
   Widget _joinCodeCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Join event with code',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Paste the code shared by the Event Planner. You will join as a photographer.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _joinCodeController,
-              textCapitalization: TextCapitalization.characters,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'Event code',
-                hintText: 'A1B2C3D4E5',
-                border: OutlineInputBorder(),
-              ),
-              onSubmitted: (_) => _joiningByCode ? null : _joinWithCode(),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: _joiningByCode ? null : _joinWithCode,
-                icon: _joiningByCode
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.group_add_outlined),
-                label: Text(_joiningByCode ? 'Joining...' : 'Join event'),
-              ),
-            ),
-          ],
+    return AppSectionCard(
+      title: 'Join event with code',
+      icon: Icons.group_add_outlined,
+      subtitle:
+          'Paste the code shared by the Event Planner to join as a photographer.',
+      children: [
+        TextField(
+          controller: _joinCodeController,
+          textCapitalization: TextCapitalization.characters,
+          autocorrect: false,
+          decoration: const InputDecoration(
+            labelText: 'Event code',
+            hintText: 'A1B2C3D4E5',
+            prefixIcon: Icon(Icons.qr_code_2_outlined, size: 20),
+          ),
+          onSubmitted: (_) => _joiningByCode ? null : _joinWithCode(),
         ),
-      ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: FilledButton.icon(
+            onPressed: _joiningByCode ? null : _joinWithCode,
+            icon: _joiningByCode
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.group_add_outlined),
+            label: Text(_joiningByCode ? 'Joining...' : 'Join event'),
+          ),
+        ),
+      ],
     );
   }
 
@@ -271,75 +262,140 @@ class _InvitationsPageState extends State<InvitationsPage> {
                     final isAccepting = _acceptingIds.contains(invitation.id);
                     final isDeleting = _deletingIds.contains(invitation.id);
 
-                    return Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    event?.title ?? 'Untitled event',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleMedium,
-                                  ),
-                                ),
-                                Chip(label: Text(invitation.status)),
-                              ],
+                    return Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppColors.card,
+                        borderRadius: BorderRadius.circular(AppRadius.xl),
+                        border: Border.all(
+                          color: isActive
+                              ? AppColors.primary.withValues(alpha: 0.45)
+                              : AppColors.border,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(
+                              alpha: isActive ? 0.12 : 0.05,
                             ),
-                            if (event?.description?.isNotEmpty ?? false) ...[
-                              const SizedBox(height: 8),
-                              Text(event!.description!),
-                            ],
-                            if (invitation.inviterName != null) ...[
-                              const SizedBox(height: 8),
-                              Text('From: ${invitation.inviterName}'),
-                            ],
-                            const SizedBox(height: 12),
-                            if (invitation.isPending)
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton(
-                                  onPressed: isAccepting
-                                      ? null
-                                      : () => _accept(invitation),
-                                  child: isAccepting
-                                      ? const CircularProgressIndicator()
-                                      : const Text('Accept invitation'),
-                                ),
-                              )
-                            else if (invitation.isAccepted)
-                              SizedBox(
-                                width: double.infinity,
-                                child: FilledButton.tonal(
-                                  onPressed: isActive
-                                      ? null
-                                      : () => _activate(invitation),
-                                  child: Text(
-                                    isActive
-                                        ? 'Active upload event'
-                                        : 'Make active event',
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              AppIconTile(
+                                icon: Icons.event_outlined,
+                                size: 42,
+                                iconSize: 21,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  event?.title ?? 'Untitled event',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.foreground,
                                   ),
                                 ),
                               ),
-                            const SizedBox(height: 8),
-                            SizedBox(
-                              width: double.infinity,
-                              child: TextButton.icon(
-                                onPressed: isDeleting
-                                    ? null
-                                    : () => _delete(invitation),
-                                icon: const Icon(Icons.delete_outline),
-                                label: isDeleting
-                                    ? const Text('Deleting...')
-                                    : const Text('Delete invitation'),
+                              const SizedBox(width: 8),
+                              AppPill(
+                                label: invitation.status,
+                                icon: invitation.isPending
+                                    ? Icons.schedule
+                                    : invitation.isAccepted
+                                    ? Icons.check_circle_outline
+                                    : Icons.info_outline,
+                                color: invitation.isPending
+                                    ? AppColors.secondary
+                                    : invitation.isAccepted
+                                    ? Colors.green
+                                    : AppColors.mutedForeground,
+                              ),
+                            ],
+                          ),
+                          if (event?.description?.isNotEmpty ?? false) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              event!.description!,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                height: 1.45,
+                                color: AppColors.mutedForeground,
                               ),
                             ),
                           ],
-                        ),
+                          if (invitation.inviterName != null) ...[
+                            const SizedBox(height: 10),
+                            const Divider(height: 1),
+                            AppInfoRow(
+                              icon: Icons.person_outline,
+                              label: 'Invited by',
+                              value: invitation.inviterName!,
+                            ),
+                          ],
+                          const SizedBox(height: 8),
+                          if (invitation.isPending)
+                            SizedBox(
+                              width: double.infinity,
+                              height: 50,
+                              child: FilledButton(
+                                onPressed: isAccepting
+                                    ? null
+                                    : () => _accept(invitation),
+                                child: isAccepting
+                                    ? const SizedBox(
+                                        height: 20,
+                                        width: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Text('Accept invitation'),
+                              ),
+                            )
+                          else if (invitation.isAccepted)
+                            SizedBox(
+                              width: double.infinity,
+                              height: 50,
+                              child: FilledButton.tonal(
+                                onPressed: isActive
+                                    ? null
+                                    : () => _activate(invitation),
+                                child: Text(
+                                  isActive
+                                      ? 'Active upload event'
+                                      : 'Make active event',
+                                ),
+                              ),
+                            ),
+                          const SizedBox(height: 4),
+                          SizedBox(
+                            width: double.infinity,
+                            child: TextButton.icon(
+                              onPressed: isDeleting
+                                  ? null
+                                  : () => _delete(invitation),
+                              style: TextButton.styleFrom(
+                                foregroundColor: AppColors.destructive,
+                              ),
+                              icon: const Icon(Icons.delete_outline, size: 18),
+                              label: isDeleting
+                                  ? const Text('Deleting...')
+                                  : const Text('Delete invitation'),
+                            ),
+                          ),
+                        ],
                       ),
                     );
                   },

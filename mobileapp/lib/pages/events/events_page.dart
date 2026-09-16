@@ -10,8 +10,10 @@ import 'package:mobileapp/core/utils/image_loader.dart';
 import 'package:mobileapp/core/utils/image_upload_helper.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/pages/event_gallery/event_gallery_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
+import 'package:mobileapp/widgets/app_ui.dart';
 
 class EventModel {
   final String id;
@@ -121,13 +123,30 @@ class _EventsListViewState extends State<_EventsListView> {
 
   @override
   Widget build(BuildContext context) {
-    final canCreateEvents =
-        UserStorage.currentUser.value?.hasPlannerAccess ?? false;
+    final user = UserStorage.currentUser.value;
+    final canCreateEvents = user?.hasPlannerAccess ?? false;
+    final isPhotographer = user?.isPhotographer ?? false;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('My Events'),
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(isPhotographer ? 'Shoots' : 'My events'),
+            Text(
+              isPhotographer
+                  ? 'Events you are assigned to'
+                  : 'Events you manage',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: Colors.white.withValues(alpha: 0.82),
+              ),
+            ),
+          ],
+        ),
         centerTitle: true,
+        toolbarHeight: 68,
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _refresh),
         ],
@@ -171,49 +190,18 @@ class _EventsListViewState extends State<_EventsListView> {
   }
 
   Widget _buildEmptyState(BuildContext context) {
+    final canCreate =
+        UserStorage.currentUser.value?.hasPlannerAccess ?? false;
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.event_note,
-                size: 64,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'No Events Yet',
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Create your first event to start\nmanaging photo uploads',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withValues(alpha: 0.7),
-              ),
-            ),
-            const SizedBox(height: 24),
-            if (UserStorage.currentUser.value?.hasPlannerAccess ?? false)
-              FilledButton.icon(
-                onPressed: () => _showCreateEventDialog(context),
-                icon: const Icon(Icons.add),
-                label: const Text('Create Event'),
-              ),
-          ],
+        padding: const EdgeInsets.all(24),
+        child: AppEmptyState(
+          icon: Icons.event_note,
+          title: 'No events yet',
+          message:
+              'Create your first event to start managing photo uploads, guests and galleries.',
+          action: canCreate ? () => _showCreateEventDialog(context) : null,
+          actionLabel: 'Create event',
         ),
       ),
     );
@@ -247,108 +235,142 @@ class _EventCardItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    return Container(
       margin: const EdgeInsets.only(bottom: 16),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AspectRatio(
-              aspectRatio: 16 / 9,
-              child: ImageLoader.loadImage(
-                event.imageUrl,
-                fit: BoxFit.cover,
-                errorWidget: _buildPlaceholder(context),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          event.title,
-                          style: Theme.of(context).textTheme.titleLarge
-                              ?.copyWith(fontWeight: FontWeight.bold),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.07),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ImageLoader.loadImage(
+                      event.imageUrl,
+                      fit: BoxFit.cover,
+                      errorWidget: _buildPlaceholder(context),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        height: 70,
                         decoration: BoxDecoration(
-                          color: event.isPublished
-                              ? Colors.green.withValues(alpha: 0.1)
-                              : Colors.orange.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          event.isPublished ? 'Published' : 'Draft',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: event.isPublished
-                                ? Colors.green
-                                : Colors.orange,
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.black.withValues(alpha: 0),
+                              Colors.black.withValues(alpha: 0.45),
+                            ],
                           ),
                         ),
                       ),
-                    ],
-                  ),
-                  if (event.description?.isNotEmpty ?? false) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      event.description!,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 11,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: event.isPublished
+                              ? Colors.green.withValues(alpha: 0.92)
+                              : Colors.orange.withValues(alpha: 0.92),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          event.isPublished ? 'Published' : 'Draft',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.photo_library,
-                        size: 16,
-                        color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      event.title,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.foreground,
+                        letterSpacing: -0.2,
                       ),
-                      const SizedBox(width: 4),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (event.description?.isNotEmpty ?? false) ...[
+                      const SizedBox(height: 6),
                       Text(
-                        '${event.photosCount} photos',
-                        style: Theme.of(context).textTheme.bodySmall,
+                        event.description!,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          height: 1.45,
+                          color: AppColors.mutedForeground,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        AppPill(
+                          icon: Icons.photo_library_outlined,
+                          label: '${event.photosCount} photos',
+                        ),
+                        const Spacer(),
+                        const Icon(
+                          Icons.chevron_right_rounded,
+                          size: 20,
+                          color: AppColors.mutedForeground,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildPlaceholder(BuildContext context) {
-    return Container(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+    return const ColoredBox(
+      color: AppColors.cream,
       child: Center(
-        child: Icon(
-          Icons.image,
-          size: 64,
-          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
-        ),
+        child: Icon(Icons.image_outlined, size: 54, color: AppColors.primaryLight),
       ),
     );
   }

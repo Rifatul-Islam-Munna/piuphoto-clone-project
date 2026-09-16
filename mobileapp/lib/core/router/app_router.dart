@@ -115,11 +115,18 @@ Future<void> popOrHome(BuildContext context) async {
   }
 }
 
+/// Bottom navigation for the active workspace.
+///
+/// Photographers get a studio-oriented bar (shoot, upload, deliver) while
+/// event planners get an events-oriented bar (overview, events, plans).
 List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
   if (user?.isPhotographer ?? false) {
     if (user?.hasPlannerAccess ?? false) {
       return const [
-        BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: 'Home'),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.camera_roll_outlined),
+          label: 'Studio',
+        ),
         BottomNavigationBarItem(
           icon: Icon(Icons.event_outlined),
           label: 'Events',
@@ -143,10 +150,13 @@ List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
       ];
     }
     return const [
-      BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: 'Home'),
+      BottomNavigationBarItem(
+        icon: Icon(Icons.camera_roll_outlined),
+        label: 'Studio',
+      ),
       BottomNavigationBarItem(
         icon: Icon(Icons.cloud_upload_outlined),
-        label: 'Upload',
+        label: 'Deliver',
       ),
       BottomNavigationBarItem(
         icon: Icon(Icons.workspace_premium_outlined),
@@ -161,7 +171,10 @@ List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
   }
 
   return const [
-    BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: 'Home'),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.space_dashboard_outlined),
+      label: 'Overview',
+    ),
     BottomNavigationBarItem(icon: Icon(Icons.event_outlined), label: 'Events'),
     BottomNavigationBarItem(
       icon: Icon(Icons.workspace_premium_outlined),

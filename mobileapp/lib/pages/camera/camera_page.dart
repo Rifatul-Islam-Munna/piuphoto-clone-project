@@ -1,5 +1,6 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
+import 'package:mobileapp/widgets/app_ui.dart';
 
 @RoutePage()
 class CameraPage extends StatelessWidget {
@@ -8,8 +9,16 @@ class CameraPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
-      body: Center(child: Text('Camera / upload page')),
+      body: Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: AppEmptyState(
+            icon: Icons.camera_alt_outlined,
+            title: 'Camera',
+            message: 'Camera capture is available from the upload workspace.',
+          ),
+        ),
+      ),
     );
   }
 }
-

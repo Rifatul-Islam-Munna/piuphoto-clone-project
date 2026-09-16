@@ -20,6 +20,7 @@ import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/storage/uploaded_gallery_storage.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
@@ -27,6 +28,7 @@ import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/pages/upload/transfer_list_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
+import 'package:mobileapp/widgets/app_ui.dart';
 import 'package:mobileapp/widgets/intrinsic_qr_image.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -2611,17 +2613,21 @@ class _UploadPageState extends State<UploadPage> {
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
-        backgroundColor: Theme.of(context).colorScheme.surface,
+        backgroundColor: AppColors.card,
         builder: (sheetContext) => SizedBox(
           height: MediaQuery.sizeOf(sheetContext).height * 0.94,
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
                 child: Row(
                   children: [
-                    const Icon(Icons.camera_alt_outlined),
-                    const SizedBox(width: 10),
+                    const AppIconTile(
+                      icon: Icons.camera_alt_outlined,
+                      size: 42,
+                      iconSize: 21,
+                    ),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2629,14 +2635,21 @@ class _UploadPageState extends State<UploadPage> {
                           const Text(
                             'Live Camera Session',
                             style: TextStyle(
-                              fontSize: 18,
+                              fontSize: 17,
                               fontWeight: FontWeight.w700,
+                              color: AppColors.foreground,
+                              letterSpacing: -0.2,
                             ),
                           ),
+                          const SizedBox(height: 2),
                           Text(
                             event.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.mutedForeground,
+                            ),
                           ),
                         ],
                       ),
@@ -2653,6 +2666,7 @@ class _UploadPageState extends State<UploadPage> {
                 padding: const EdgeInsets.all(16),
                 child: SizedBox(
                   width: double.infinity,
+                  height: 50,
                   child: FilledButton.icon(
                     onPressed: () => _showGuestQr(event),
                     icon: const Icon(Icons.qr_code_2),
@@ -2717,29 +2731,23 @@ class _UploadPageState extends State<UploadPage> {
 
         return Container(
           width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+          padding: const EdgeInsets.fromLTRB(15, 14, 15, 15),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Theme.of(context).dividerColor),
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: AppColors.border),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Container(
-                    height: 38,
-                    width: 38,
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.photo_library_outlined, size: 21),
+                  const AppIconTile(
+                    icon: Icons.photo_library_outlined,
+                    size: 42,
+                    iconSize: 21,
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2749,56 +2757,44 @@ class _UploadPageState extends State<UploadPage> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontSize: 16,
+                            fontSize: 15,
                             fontWeight: FontWeight.w700,
+                            color: AppColors.foreground,
                           ),
                         ),
+                        const SizedBox(height: 2),
                         Text(
                           selectedAlbum?.title ?? 'All categories',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.mutedForeground,
+                          ),
                         ),
                       ],
                     ),
                   ),
-                  const Icon(Icons.chevron_right),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.mutedForeground,
+                  ),
                 ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
               Row(
                 children: [
-                  Text(
-                    '${eventItems.length} photos',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
+                  AppPill(
+                    icon: Icons.photo_library_outlined,
+                    label: '${eventItems.length} photos',
                   ),
                   const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _liveConnectionActive
-                          ? Theme.of(context).colorScheme.primaryContainer
-                          : Theme.of(
-                              context,
-                            ).colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(_liveConnectionIcon, size: 14),
-                        const SizedBox(width: 5),
-                        Text(
-                          _liveConnectionText,
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                      ],
-                    ),
+                  AppPill(
+                    icon: _liveConnectionIcon,
+                    label: _liveConnectionText,
+                    color: _liveConnectionActive
+                        ? AppColors.primary
+                        : AppColors.mutedForeground,
                   ),
                 ],
               ),

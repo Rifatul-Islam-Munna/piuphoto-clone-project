@@ -11,6 +11,7 @@ import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/pages/event_gallery/event_qr_scan_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
+import 'package:mobileapp/widgets/app_ui.dart';
 
 @RoutePage()
 class HomePage extends StatefulWidget {
@@ -287,21 +288,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         children: [
                           Text(
                             isPhotographer
-                                ? 'Photographer'
+                                ? 'Photographer studio'
                                 : (user.displayLabel ?? 'Welcome'),
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.2,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                           if (!isPhotographer && isLoggedIn)
                             Text(
-                              '${user.credits ?? 0} Credits',
+                              'Event planner · ${user.credits ?? 0} credits',
                               style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.8),
+                                color: Colors.white.withValues(alpha: 0.82),
                                 fontSize: 12,
                               ),
                             ),
@@ -348,19 +350,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSectionTitle(context, 'Dashboard'),
+            _buildPhotographerWorkspaceHero(context, activeEvent),
+            const SizedBox(height: 22),
+            _buildSectionTitle(context, 'Studio overview'),
             const SizedBox(height: 12),
             _buildStatsRow(),
             const SizedBox(height: 24),
-            _buildSectionTitle(context, 'Assigned Event'),
+            _buildSectionTitle(context, 'Active assignment'),
             const SizedBox(height: 12),
             _buildEventCard(context, activeEvent),
             const SizedBox(height: 24),
-            _buildSectionTitle(context, 'Quick Actions'),
+            _buildSectionTitle(context, 'Shoot toolkit'),
             const SizedBox(height: 12),
             _buildActionsGrid(context, activeEvent),
             const SizedBox(height: 24),
-            _buildSectionTitle(context, 'How It Works'),
+            _buildSectionTitle(context, 'Connection guide'),
             const SizedBox(height: 12),
             _buildHowItWorks(context),
           ],
@@ -369,23 +373,209 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  /// Photographer identity panel — the studio cockpit for a shoot day.
+  Widget _buildPhotographerWorkspaceHero(
+    BuildContext context,
+    dynamic activeEvent,
+  ) {
+    final user = UserStorage.currentUser.value;
+    final name = user?.displayLabel ?? 'Photographer';
+
+    return AppGradientHero(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.camera_roll_outlined,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Photographer studio',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        height: 1.15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontSize: 12.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              AppGlassPill(
+                label: activeEvent == null ? 'Idle' : 'On shoot',
+                icon: activeEvent == null
+                    ? Icons.pause_circle_outline
+                    : Icons.radio_button_checked,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            activeEvent == null
+                ? 'Pick or create an event to start shooting, syncing and delivering photos live.'
+                : 'Shooting ${activeEvent.title} — photos sync and deliver while the event runs.',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.88),
+              fontSize: 12.5,
+              height: 1.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildUserHome(BuildContext context, dynamic user) {
     final isLoggedIn = user != null;
     if (!isLoggedIn) return _buildGuestHome(context);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildUserQuickActions(context),
-        const SizedBox(height: 24),
-        _buildSectionTitle(context, 'Your Plans'),
-        const SizedBox(height: 12),
-        _buildPlansSection(context),
-        const SizedBox(height: 24),
-        _buildSectionTitle(context, 'Credit Addons'),
-        const SizedBox(height: 12),
-        _buildAddonsSection(context),
-      ],
+    return ValueListenableBuilder(
+      valueListenable: ActiveEventStorage.activeEvent,
+      builder: (context, activeEvent, _) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildPlannerWorkspaceHeader(context, activeEvent),
+            const SizedBox(height: 22),
+            _buildSectionTitle(context, 'Active event'),
+            const SizedBox(height: 12),
+            _buildEventCard(context, activeEvent),
+            const SizedBox(height: 24),
+            _buildSectionTitle(context, 'Manage'),
+            const SizedBox(height: 12),
+            _buildUserQuickActions(context),
+            const SizedBox(height: 24),
+            _buildSectionTitle(context, 'Your plans'),
+            const SizedBox(height: 12),
+            _buildPlansSection(context),
+            const SizedBox(height: 24),
+            _buildSectionTitle(context, 'Credit addons'),
+            const SizedBox(height: 12),
+            _buildAddonsSection(context),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Planner identity panel — event management workspace.
+  Widget _buildPlannerWorkspaceHeader(
+    BuildContext context,
+    dynamic activeEvent,
+  ) {
+    final user = UserStorage.currentUser.value;
+    final name = user?.displayLabel ?? 'Event planner';
+    final credits = user?.credits ?? 0;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.07),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const AppIconTile(
+                icon: Icons.event_available_outlined,
+                size: 46,
+                iconSize: 23,
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Event planner workspace',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              AppPill(
+                label: 'Planner',
+                icon: Icons.workspace_premium_outlined,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              AppPill(
+                label: '$credits credits',
+                icon: Icons.toll_outlined,
+              ),
+              const SizedBox(width: 8),
+              AppPill(
+                label: activeEvent == null ? 'No active event' : activeEvent.title,
+                icon: activeEvent == null
+                    ? Icons.event_busy_outlined
+                    : Icons.event_available_outlined,
+                color: activeEvent == null
+                    ? AppColors.mutedForeground
+                    : AppColors.primary,
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -415,12 +605,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildSectionTitle(BuildContext context, String title) {
-    return Text(
-      title,
-      style: Theme.of(
-        context,
-      ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-    );
+    return AppSectionTitle(title: title);
   }
 
   Widget _buildStatsRow() {
@@ -458,8 +643,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Widget _buildEventCard(BuildContext context, dynamic event) {
     final hasEvent = event != null;
+    final isSolo =
+        UserStorage.currentUser.value?.hasPlannerAccess ?? false;
     return Container(
-      padding: const EdgeInsets.all(20),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: hasEvent
@@ -468,77 +655,111 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: (hasEvent ? Colors.green : Colors.grey).withValues(
+              alpha: 0.22,
             ),
-            child: Icon(
-              hasEvent ? Icons.event_available : Icons.event_busy,
-              color: Colors.white,
-              size: 32,
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            right: -34,
+            top: -50,
+            child: Container(
+              width: 150,
+              height: 150,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.08),
+                shape: BoxShape.circle,
+              ),
             ),
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
               children: [
-                Text(
-                  hasEvent
-                      ? event.title
-                      : (UserStorage.currentUser.value?.hasPlannerAccess ??
-                            false)
-                      ? 'Solo Photographer'
-                      : 'No Active Event',
-                  style: const TextStyle(
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(
+                    hasEvent ? Icons.event_available : Icons.event_busy,
                     color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+                    size: 30,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  hasEvent
-                      ? '${event.photosCount} photos'
-                      : (UserStorage.currentUser.value?.hasPlannerAccess ??
-                            false)
-                      ? 'Solo mode ready - no planner invitation needed'
-                      : 'Accept an invitation first',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.8),
-                    fontSize: 14,
+                const SizedBox(width: 15),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        hasEvent
+                            ? event.title
+                            : isSolo
+                            ? 'Solo Photographer'
+                            : 'No Active Event',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          height: 1.15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        hasEvent
+                            ? '${event.photosCount} photos'
+                            : isSolo
+                            ? 'Solo mode ready - no planner invitation needed'
+                            : 'Accept an invitation first',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.85),
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 13,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Text(
+                    hasEvent
+                        ? 'Active'
+                        : isSolo
+                        ? 'Solo'
+                        : 'None',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              hasEvent
-                  ? 'Active'
-                  : (UserStorage.currentUser.value?.hasPlannerAccess ?? false)
-                  ? 'Solo'
-                  : 'None',
-              style: TextStyle(
-                color:
-                    hasEvent ||
-                        (UserStorage.currentUser.value?.hasPlannerAccess ??
-                            false)
-                    ? Colors.green
-                    : Colors.grey,
-                fontWeight: FontWeight.bold,
-              ),
             ),
           ),
         ],
@@ -1464,34 +1685,57 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildBottomCTA(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(16),
-      ),
+    return AppGradientHero(
+      padding: const EdgeInsets.all(22),
       child: Column(
         children: [
-          const Icon(Icons.photo_camera, size: 40),
-          const SizedBox(height: 12),
-          Text(
-            'Ready to get started?',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(
+              Icons.photo_camera_outlined,
+              size: 28,
+              color: Colors.white,
+            ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 14),
+          const Text(
+            'Ready to get started?',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 6),
           Text(
             'Join thousands of photographers and event guests',
-            style: Theme.of(context).textTheme.bodySmall,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.85),
+              fontSize: 13,
+              height: 1.5,
+            ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           SizedBox(
             width: double.infinity,
+            height: 50,
             child: FilledButton(
               onPressed: () => context.router.root.push(const RegisterRoute()),
-              child: const Text('Create Account'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: AppColors.primary,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+              ),
+              child: const Text('Create account'),
             ),
           ),
         ],
@@ -1515,34 +1759,40 @@ class _StatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: theme.colorScheme.outline.withValues(alpha: 0.15),
-        ),
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.border),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: theme.colorScheme.primary, size: 28),
-          const SizedBox(height: 8),
+          AppIconTile(
+            icon: icon,
+            size: 42,
+            iconSize: 21,
+            background: color.withValues(alpha: 0.12),
+            foreground: color,
+          ),
+          const SizedBox(height: 9),
           Text(
             value,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: theme.colorScheme.onSurface,
+              fontWeight: FontWeight.w800,
+              color: AppColors.foreground,
             ),
           ),
           const SizedBox(height: 2),
           Text(
             label,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: AppColors.mutedForeground,
             ),
           ),
         ],
@@ -1570,26 +1820,25 @@ class _ActionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tint = isDisabled ? AppColors.mutedForeground : color;
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Theme.of(
-                context,
-              ).colorScheme.outline.withValues(alpha: 0.2),
-            ),
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: AppColors.border),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 2),
+                color: AppColors.primary.withValues(
+                  alpha: isDisabled ? 0 : 0.06,
+                ),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
               ),
             ],
           ),
@@ -1597,33 +1846,32 @@ class _ActionTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: isDisabled
-                      ? color.withValues(alpha: 0.3)
-                      : color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  icon,
-                  color: isDisabled ? color.withValues(alpha: 0.5) : color,
-                  size: 24,
-                ),
+              AppIconTile(
+                icon: icon,
+                size: 42,
+                iconSize: 21,
+                background: tint.withValues(alpha: isDisabled ? 0.08 : 0.13),
+                foreground: tint,
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 11),
               Text(
                 title,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.foreground,
+                ),
               ),
+              const SizedBox(height: 2),
               Text(
                 subtitle,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withValues(alpha: 0.6),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.mutedForeground,
                 ),
               ),
             ],
@@ -1647,31 +1895,31 @@ class _QuickActionBtn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 16),
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 10),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: theme.colorScheme.outline.withValues(alpha: 0.15),
-            ),
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: AppColors.border),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: theme.colorScheme.primary, size: 28),
-              const SizedBox(height: 8),
+              AppIconTile(icon: icon, size: 42, iconSize: 21),
+              const SizedBox(height: 9),
               Text(
                 label,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: theme.colorScheme.onSurface,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.foreground,
                 ),
               ),
             ],
@@ -1696,22 +1944,11 @@ class _FeatureRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 14),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              icon,
-              color: Theme.of(context).colorScheme.primary,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 16),
+          AppIconTile(icon: icon, size: 42, iconSize: 21),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1720,9 +1957,15 @@ class _FeatureRow extends StatelessWidget {
                   title,
                   style: Theme.of(
                     context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
-                Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 1),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    height: 1.4,
+                  ),
+                ),
               ],
             ),
           ),

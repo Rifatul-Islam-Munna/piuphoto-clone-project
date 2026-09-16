@@ -6,10 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/platform/image_downloads.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/core/utils/image_loader.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_image_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
+import 'package:mobileapp/widgets/app_ui.dart';
 
 class EventGalleryPage extends StatefulWidget {
   const EventGalleryPage({
@@ -675,25 +677,23 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    _requiresPassword
+                  AppIconTile(
+                    icon: _requiresPassword
                         ? Icons.lock_outline
                         : _requiresFaceSearch
                         ? Icons.face_retouching_natural_outlined
                         : Icons.shield_outlined,
-                    size: 42,
-                    color: theme.colorScheme.primary,
+                    size: 58,
+                    iconSize: 27,
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
                   Text(
                     _requiresPassword
                         ? 'Password protected gallery'
                         : _requiresFaceSearch
                         ? 'Find your photos'
                         : 'Private gallery',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: theme.textTheme.titleLarge,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
@@ -704,7 +704,10 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
                         ? 'Take a selfie to see only the photos that match you.'
                         : 'This gallery can only be opened with the secure private link shared by the photographer.',
                     textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: AppColors.mutedForeground,
+                      height: 1.5,
+                    ),
                   ),
                   if (_requiresPassword) ...[
                     const SizedBox(height: 20),
@@ -717,12 +720,13 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
                       },
                       decoration: const InputDecoration(
                         labelText: 'Gallery password',
-                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.lock_outline, size: 20),
                       ),
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
+                      height: 50,
                       child: FilledButton.icon(
                         onPressed: _unlocking ? null : _unlockGallery,
                         icon: _unlocking
@@ -744,6 +748,7 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
                     const SizedBox(height: 20),
                     SizedBox(
                       width: double.infinity,
+                      height: 50,
                       child: FilledButton.icon(
                         onPressed: _faceSearching ? null : _findMyPictures,
                         icon: const Icon(Icons.camera_alt_outlined),
@@ -828,15 +833,23 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
           : _error != null
           ? Center(child: Text(_error!))
           : _allImages.isEmpty
-          ? const Center(child: Text('No photos found.'))
+          ? const Padding(
+              padding: EdgeInsets.all(24),
+              child: AppEmptyState(
+                icon: Icons.photo_library_outlined,
+                title: 'No photos found',
+                message:
+                    'Photos appear here as soon as the photographer publishes them.',
+              ),
+            )
           : GridView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.all(12),
               itemCount: visible.length,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
-                mainAxisSpacing: 10,
-                crossAxisSpacing: 10,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
               ),
               itemBuilder: (context, index) {
                 final image = visible[index];
@@ -854,22 +867,41 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
                     fit: StackFit.expand,
                     children: [
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
                         child: ImageLoader.loadImage(
                           image.imageUrl,
                           fit: BoxFit.cover,
                         ),
                       ),
+                      if (selected)
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(AppRadius.md),
+                            border: Border.all(
+                              color: AppColors.primary,
+                              width: 2,
+                            ),
+                          ),
+                        ),
                       Positioned(
                         top: 8,
                         right: 8,
-                        child: CircleAvatar(
-                          radius: 14,
-                          backgroundColor: selected
-                              ? Theme.of(context).colorScheme.primary
-                              : Colors.black54,
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? AppColors.primary
+                                : Colors.black.withValues(alpha: 0.45),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.9),
+                              width: 1.5,
+                            ),
+                          ),
                           child: Icon(
-                            selected ? Icons.check : Icons.circle,
+                            selected ? Icons.check : Icons.add,
                             size: 16,
                             color: Colors.white,
                           ),

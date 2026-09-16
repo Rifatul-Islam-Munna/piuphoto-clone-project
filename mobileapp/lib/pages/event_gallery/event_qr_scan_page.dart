@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:mobileapp/core/guest/guest_qr_payload.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/pages/event_gallery/event_gallery_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -151,11 +152,45 @@ class _EventQrScanPageState extends State<EventQrScanPage>
         IgnorePointer(
           child: Center(
             child: Container(
-              width: 260,
-              height: 260,
+              width: 264,
+              height: 264,
               decoration: BoxDecoration(
-                border: Border.all(color: Colors.white, width: 3),
-                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: AppColors.primaryLight,
+                  width: 3,
+                ),
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    blurRadius: 30,
+                    spreadRadius: 400,
+                  ),
+                ],
+              ),
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 26),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'Align the guest QR',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -188,12 +223,18 @@ class _EventQrScanPageState extends State<EventQrScanPage>
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: _scanError == null
-                    ? Colors.black.withValues(alpha: 0.72)
+                    ? Colors.black.withValues(alpha: 0.7)
                     : Theme.of(context).colorScheme.errorContainer,
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.12),
+                ),
               ),
               child: Padding(
-                padding: const EdgeInsets.all(14),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 13,
+                ),
                 child: Text(
                   _scanError ?? 'Place the AirPix guest QR inside the frame.',
                   textAlign: TextAlign.center,
@@ -201,6 +242,7 @@ class _EventQrScanPageState extends State<EventQrScanPage>
                     color: _scanError == null
                         ? Colors.white
                         : Theme.of(context).colorScheme.onErrorContainer,
+                    fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -243,10 +285,18 @@ class _ScannerControlButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return IconButton.filledTonal(
-      tooltip: tooltip,
-      onPressed: onPressed,
-      icon: Icon(icon),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.45),
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+      ),
+      child: IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        color: Colors.white,
+        icon: Icon(icon),
+      ),
     );
   }
 }
