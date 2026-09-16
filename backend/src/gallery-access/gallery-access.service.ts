@@ -8,6 +8,10 @@ import { Album, AlbumDocument } from '../album/entities/album.entity';
 import { EventMemberService } from '../event-member/event-member.service';
 import { Event, EventDocument } from '../event/entities/event.entity';
 import {
+  StoreSettings,
+  StoreSettingsDocument,
+} from '../store/entities/store-settings.entity';
+import {
   FacialPrivacyMode,
   GalleryAccessMode,
   GalleryLinkDto,
@@ -43,6 +47,8 @@ export class GalleryAccessService {
     @InjectModel(Album.name) private readonly albumModel: Model<AlbumDocument>,
     @InjectModel(GalleryAccessAudit.name)
     private readonly auditModel: Model<GalleryAccessAuditDocument>,
+    @InjectModel(StoreSettings.name)
+    private readonly storeSettingsModel: Model<StoreSettingsDocument>,
     private readonly members: EventMemberService,
     private readonly config: ConfigService,
   ) {}
@@ -91,6 +97,41 @@ export class GalleryAccessService {
 
   tokenHash(token: string) {
     return createHash('sha256').update(token).digest('hex');
+  }
+
+  async protectStoreOriginals(
+    eventId: string,
+    rows: Array<Record<string, any>>,
+  ) {
+    const settings = await this.storeSettingsModel
+      .findOne({ eventId: this.objectId(eventId) })
+      .select('enabled saleAlbumIds')
+      .lean();
+    if (!settings?.enabled) return { data: rows, storeEnabled: false };
+
+    const allowedAlbums = new Set((settings.saleAlbumIds || []).map(String));
+    const data = rows.map((image) => {
+      if (image.mediaType === 'video') {
+        return { ...image, purchaseRequired: false };
+      }
+      const albumId = String(image.albumId?._id || image.albumId || '');
+      const albumAllowed = !allowedAlbums.size || allowedAlbums.has(albumId);
+      const purchaseRequired = albumAllowed && image.isForSale !== false;
+      if (!purchaseRequired) return { ...image, purchaseRequired: false };
+
+      const storeImageId = String(
+        image.isEnhanced && image.enhancedFromId
+          ? image.enhancedFromId
+          : image._id,
+      );
+      return {
+        ...image,
+        imageUrl: `/store/public/preview?eventId=${encodeURIComponent(eventId)}&imageId=${encodeURIComponent(storeImageId)}`,
+        storeImageId,
+        purchaseRequired: true,
+      };
+    });
+    return { data, storeEnabled: true };
   }
 
   private async effective(

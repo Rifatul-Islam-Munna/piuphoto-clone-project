@@ -75,6 +75,12 @@ export class User {
 
   @Prop({ type: Object })
   profileImage?: { url: string; key: string };
+
+  @Prop({ trim: true })
+  storeStripeAccountLabel?: string;
+
+  @Prop({ select: false })
+  storeStripeSecretCipher?: string;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

@@ -399,9 +399,14 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
       albumId,
       accessTokenHours,
     );
+    const protectedRows = await this.galleryAccess.protectStoreOriginals(
+      query.eventId,
+      data as Array<Record<string, any>>,
+    );
     return {
-      data,
-      totalItems: data.length,
+      data: protectedRows.data,
+      totalItems: protectedRows.data.length,
+      storeEnabled: protectedRows.storeEnabled,
       accessToken,
       expiresAt: registration.expiresAt,
       notificationPreferences: {

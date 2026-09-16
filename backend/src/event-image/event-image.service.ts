@@ -1166,11 +1166,17 @@ export class EventImageService {
       })
       .filter(Boolean);
 
-    return {
+    const response = {
       data: sortedData,
       totalItems: sortedData.length,
       faces,
     };
+    if (!publicAccess || !query.eventId) return response;
+    const protectedRows = await this.galleryAccessService.protectStoreOriginals(
+      query.eventId,
+      sortedData as Array<Record<string, any>>,
+    );
+    return { ...response, ...protectedRows };
   }
 
   async findAll(query: EventImageFilterDto, userId?: string, role?: string) {
@@ -1278,7 +1284,11 @@ export class EventImageService {
       .lean()
       .exec();
 
-    return { data, totalItems: data.length };
+    const protectedRows = await this.galleryAccessService.protectStoreOriginals(
+      eventId,
+      data as Array<Record<string, any>>,
+    );
+    return { ...protectedRows, totalItems: protectedRows.data.length };
   }
 
   async findOne(id: string, userId?: string, role?: string) {

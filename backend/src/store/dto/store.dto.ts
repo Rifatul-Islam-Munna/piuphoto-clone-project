@@ -66,6 +66,11 @@ export class StoreSettingsDto {
   saleAlbumIds?: string[];
   @IsOptional() @IsString() @MaxLength(2000) termsText?: string;
 }
+export class StoreAccountSettingsDto {
+  @IsOptional() @IsString() @MaxLength(120) stripeAccountLabel?: string;
+  @IsOptional() @IsString() @MaxLength(240) stripeSecretKey?: string;
+}
+
 export class StoreCheckoutDto {
   @IsMongoId() eventId: string;
   @IsOptional() @IsIn(['selected', 'event']) purchaseMode?:

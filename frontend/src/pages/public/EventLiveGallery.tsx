@@ -9,9 +9,12 @@ import {
 } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
+  ArrowDown,
   ArrowLeft,
   Camera,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Download,
   Folder,
@@ -21,9 +24,13 @@ import {
   Lock,
   RefreshCw,
   Search,
+  Share2,
   ShieldCheck,
+  ShoppingCart,
   Trash2,
+  Upload,
   UserRoundSearch,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +49,7 @@ import {
 type Branding = {
   logoUrl?: string;
   coverUrl?: string;
+  coverText?: string;
   watermarkUrl?: string;
   watermarkPosition?: string;
   watermarkOpacity?: number;
@@ -79,11 +87,14 @@ type GalleryImage = {
   isEnhanced?: boolean;
   mediaType?: "photo" | "video";
   userTakenBy?: { name?: string } | string;
+  purchaseRequired?: boolean;
+  storeImageId?: string;
 };
 
 type GalleryImageResponse = {
   data?: GalleryImage[];
   totalItems?: number;
+  storeEnabled?: boolean;
 };
 
 type Album = {
@@ -108,6 +119,12 @@ const imageAccept = "image/jpeg,image/png,image/webp";
 const baseUrl = import.meta.env.VITE_BASE_URL ?? "";
 const imageId = (image: GalleryImage) =>
   image._id || image.id || image.imageUrl || "";
+const assetUrl = (url?: string) => {
+  if (!url) return "";
+  return /^https?:\/\//i.test(url) ? url : `${baseUrl}${url}`;
+};
+const publicImageUrl = (eventId: string, id: string) =>
+  `${window.location.origin}${window.location.pathname}#/event/${eventId}/image/${id}`;
 
 const watermarkPositionClass = (position?: string) => {
   switch (position) {
@@ -149,10 +166,11 @@ async function downloadImage(url: string, filename: string) {
 }
 
 export default function EventLiveGallery() {
-  const { eventId = "", albumId } = useParams();
+  const { eventId = "", albumId, imageId: routeImageId } = useParams();
   const [params, setParams] = useSearchParams();
   const faceEnrollment = params.get("face") === "1";
   const faceInput = useRef<HTMLInputElement>(null);
+  const faceUploadInput = useRef<HTMLInputElement>(null);
   const registerInput = useRef<HTMLInputElement>(null);
   const storageKey = `gallery_access_${eventId}_${albumId || "all"}`;
   const guestStorageKey = `personal_gallery_${eventId}_${albumId || "all"}`;
@@ -183,6 +201,9 @@ export default function EventLiveGallery() {
   const [consent, setConsent] = useState(false);
   const [blurredIds, setBlurredIds] = useState<string[]>([]);
   const [savingPreferences, setSavingPreferences] = useState(false);
+  const [storeEnabled, setStoreEnabled] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [findMeOpen, setFindMeOpen] = useState(false);
 
   const commonParams = useCallback(
     (includeAccess = true) => {
@@ -214,7 +235,7 @@ export default function EventLiveGallery() {
 
   useEffect(() => {
     if (eventId) track("gallery_visit");
-  }, [eventId, albumId]);
+  }, [eventId, track]);
   const loadInfo = useCallback(async () => {
     if (!eventId) return undefined;
     const [data, error] = await GetRequestAxios<GalleryInfo>(
@@ -237,6 +258,7 @@ export default function EventLiveGallery() {
     );
     if (!error) {
       setImages(data?.data || []);
+      setStoreEnabled(Boolean(data?.storeEnabled));
       setFaceMatches(false);
     }
     if (!albumId) {
@@ -266,6 +288,7 @@ export default function EventLiveGallery() {
       return;
     }
     setImages(data.data || []);
+    setStoreEnabled(Boolean(data.storeEnabled));
     setFaceMatches(true);
     if (data.notificationPreferences) {
       setEmail(data.notificationPreferences.email || "");
@@ -346,9 +369,31 @@ export default function EventLiveGallery() {
     return () => window.removeEventListener("scroll", onScroll);
   }, [images.length]);
 
+  useEffect(() => {
+    if (!routeImageId || !images.length) return;
+    const index = images.findIndex((image) => imageId(image) === routeImageId);
+    if (index >= 0) setFocusedIndex(index);
+  }, [images, routeImageId]);
+
+  useEffect(() => {
+    if (focusedIndex < 0) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFocusedIndex(-1);
+      if (images.length && event.key === "ArrowLeft") {
+        setFocusedIndex((index) => (index - 1 + images.length) % images.length);
+      }
+      if (images.length && event.key === "ArrowRight") {
+        setFocusedIndex((index) => (index + 1) % images.length);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [focusedIndex, images.length]);
+
   const updateUrlToken = (key: "access" | "guest", value: string) => {
     const next = new URLSearchParams(params);
-    value ? next.set(key, value) : next.delete(key);
+    if (value) next.set(key, value);
+    else next.delete(key);
     setParams(next, { replace: true });
   };
 
@@ -454,9 +499,8 @@ export default function EventLiveGallery() {
       { withCredentials: false, redirectOnUnauthorized: false },
     );
     setSavingPreferences(false);
-    error
-      ? toast.error(error.message)
-      : toast.success("Notification preferences saved");
+    if (error) toast.error(error.message);
+    else toast.success("Notification preferences saved");
   };
 
   const runFaceSearch = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -483,6 +527,7 @@ export default function EventLiveGallery() {
       return;
     }
     setImages(data?.data || []);
+    setStoreEnabled(Boolean(data?.storeEnabled));
     setFaceMatches(true);
     track("face_search");
   };
@@ -490,26 +535,62 @@ export default function EventLiveGallery() {
   const toggle = (id: string) => {
     setSelected((current) => {
       const next = new Set(current);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
 
-  const download = async () => {
-    const target = selected.size
-      ? images.filter((image) => selected.has(imageId(image)))
-      : images;
+  const download = async (targetOverride?: GalleryImage[]) => {
+    const target =
+      targetOverride ||
+      (selected.size
+        ? images.filter((image) => selected.has(imageId(image)))
+        : images);
+    const paidIds = [
+      ...new Set(
+        target
+          .filter((image) => image.purchaseRequired)
+          .map((image) => image.storeImageId || imageId(image))
+          .filter(Boolean),
+      ),
+    ];
+    if (paidIds.length) {
+      track("store_click");
+      window.location.hash = `/store/${eventId}?photos=${encodeURIComponent(paidIds.join(","))}`;
+      return;
+    }
+
     setDownloading(true);
     for (const [index, image] of target.entries()) {
       if (image.imageUrl) {
         track("download", imageId(image));
         await downloadImage(
-          image.imageUrl,
+          assetUrl(image.imageUrl),
           `event-photo-${imageId(image).slice(-8) || index + 1}.${image.mediaType === "video" ? "mp4" : "jpg"}`,
         );
       }
     }
     setDownloading(false);
+  };
+
+  const focusedImage =
+    focusedIndex >= 0 && focusedIndex < images.length
+      ? images[focusedIndex]
+      : undefined;
+  const copyGalleryLink = async () => {
+    const url = focusedImage
+      ? publicImageUrl(eventId, imageId(focusedImage))
+      : `${window.location.origin}${window.location.pathname}#/event/${eventId}`;
+    await navigator.clipboard.writeText(url);
+    track("share", focusedImage ? imageId(focusedImage) : undefined);
+    toast.success("Share link copied");
+  };
+  const closeFocusedImage = () => {
+    setFocusedIndex(-1);
+    if (routeImageId) {
+      window.location.hash = `/event/${eventId}`;
+    }
   };
 
   const branding = info?.branding || {};
@@ -779,11 +860,13 @@ export default function EventLiveGallery() {
   const visibleImages = images.slice(0, visibleCount);
   return (
     <div className="min-h-screen bg-muted/20" style={style}>
-      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
+      <header
+        className={`absolute inset-x-0 top-0 z-40 border-b ${cover ? "border-white/15 bg-black/10 text-white" : "border-border bg-background/95"} backdrop-blur-sm`}
+      >
         <div className="mx-auto flex h-16 max-w-[1500px] items-center justify-between gap-3 px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             {albumId ? (
-              <Button variant="ghost" size="icon" asChild>
+              <Button variant="ghost" size="icon" asChild aria-label="Back to gallery">
                 <Link
                   to={`/event/${eventId}${accessToken ? `?access=${encodeURIComponent(accessToken)}` : ""}`}
                 >
@@ -792,54 +875,25 @@ export default function EventLiveGallery() {
               </Button>
             ) : null}
             {branding.logoUrl ? (
-              <img
-                src={branding.logoUrl}
-                alt=""
-                className="h-9 max-w-28 object-contain"
-              />
+              <img src={assetUrl(branding.logoUrl)} alt="" className="h-9 max-w-28 object-contain" />
             ) : !branding.whiteLabel ? (
-              <span className="font-bold">airpix</span>
+              <span className="text-lg font-bold">airpix</span>
             ) : null}
-            <div className="min-w-0">
-              <p className="truncate font-semibold">
-                {info?.title || "Live Gallery"}
-              </p>
-              {guestToken ? (
-                <p className="text-xs text-muted-foreground">
-                  Your personal live gallery
-                </p>
-              ) : null}
-            </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                try {
-                  if (navigator.share) {
-                    await navigator.share({
-                      title: info?.title || "Live Gallery",
-                      url: window.location.href,
-                    });
-                    track("share");
-                    return;
-                  }
-                } catch (error) {
-                  if ((error as DOMException)?.name === "AbortError") return;
-                }
-                await navigator.clipboard.writeText(window.location.href);
-                track("share");
-                toast.success("Gallery link copied");
-              }}
+              variant="ghost"
+              size="icon"
+              aria-label="Copy gallery share link"
+              onClick={() => void copyGalleryLink()}
             >
-              <Copy className="mr-2 h-4 w-4" /> Share
+              <Share2 className="h-4 w-4" />
             </Button>
             {guestToken ? (
               <Button
                 variant="ghost"
                 size="icon"
-                title="Delete selfie profile"
+                aria-label="Delete selfie profile"
                 onClick={() => void deletePersonalGallery()}
               >
                 <Trash2 className="h-4 w-4" />
@@ -849,32 +903,34 @@ export default function EventLiveGallery() {
         </div>
       </header>
 
-      <section className="relative overflow-hidden border-b bg-background">
+      <section
+        className={`relative flex min-h-[72vh] items-center justify-center overflow-hidden border-b ${cover ? "bg-black text-white" : "bg-background pt-16"}`}
+      >
         {cover ? (
-          <img
-            src={cover}
-            alt=""
-            className="absolute inset-0 h-full w-full object-cover"
-          />
+          <img src={assetUrl(cover)} alt="" className="absolute inset-0 h-full w-full object-cover" />
         ) : null}
-        {cover ? <div className="absolute inset-0 bg-black/50" /> : null}
-        <div
-          className={`relative mx-auto max-w-[1500px] px-4 py-12 sm:px-6 sm:py-16 ${cover ? "text-white" : ""}`}
-        >
-          <Badge className="mb-3" variant={cover ? "secondary" : "outline"}>
-            {guestToken ? "Personal gallery" : "Live gallery"}
+        {cover ? <div className="absolute inset-0 bg-black/55" /> : null}
+        <div className="relative mx-auto max-w-4xl px-4 py-24 text-center sm:px-6">
+          <Badge className="mb-4" variant={cover ? "secondary" : "outline"}>
+            {guestToken ? "Your personal gallery" : "Event gallery"}
           </Badge>
-          <h1 className="max-w-3xl text-3xl font-bold sm:text-4xl">
-            {info?.title}
+          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+            {branding.coverText || info?.title}
           </h1>
           {info?.description ? (
-            <p
-              className={`mt-3 max-w-2xl ${cover ? "text-white/80" : "text-muted-foreground"}`}
-            >
+            <p className={`mx-auto mt-4 max-w-2xl text-base ${cover ? "text-white/80" : "text-muted-foreground"}`}>
               {info.description}
             </p>
           ) : null}
         </div>
+        <button
+          type="button"
+          aria-label="View gallery photos"
+          className={`absolute bottom-6 left-1/2 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border ${cover ? "border-white/60 text-white" : "border-border"}`}
+          onClick={() => document.getElementById("gallery-grid")?.scrollIntoView({ behavior: "smooth" })}
+        >
+          <ArrowDown className="h-4 w-4" />
+        </button>
       </section>
 
       <main className="mx-auto max-w-[1500px] space-y-6 px-4 py-6 sm:px-6">
@@ -890,34 +946,10 @@ export default function EventLiveGallery() {
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
-            {info?.faceSearchEnabled && !guestToken ? (
-              <>
-                <input
-                  ref={faceInput}
-                  type="file"
-                  accept={imageAccept}
-                  capture="user"
-                  className="hidden"
-                  onChange={runFaceSearch}
-                />
-                <Button
-                  variant="outline"
-                  disabled={faceSearching}
-                  onClick={() => faceInput.current?.click()}
-                >
-                  {faceSearching ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Camera className="mr-2 h-4 w-4" />
-                  )}
-                  Find my photos
-                </Button>
-                {faceMatches ? (
-                  <Button variant="outline" onClick={() => void loadPublic()}>
-                    <RefreshCw className="mr-2 h-4 w-4" /> Show all
-                  </Button>
-                ) : null}
-              </>
+            {faceMatches ? (
+              <Button variant="outline" onClick={() => void loadPublic()}>
+                <RefreshCw className="mr-2 h-4 w-4" /> Show all
+              </Button>
             ) : null}
             <Button
               disabled={downloading || images.length === 0}
@@ -925,10 +957,18 @@ export default function EventLiveGallery() {
             >
               {downloading ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : storeEnabled ? (
+                <ShoppingCart className="mr-2 h-4 w-4" />
               ) : (
                 <Download className="mr-2 h-4 w-4" />
               )}
-              {selected.size ? `Download ${selected.size}` : "Download all"}
+              {storeEnabled
+                ? selected.size
+                  ? `Buy ${selected.size} original${selected.size === 1 ? "" : "s"}`
+                  : "Buy originals"
+                : selected.size
+                  ? `Download ${selected.size}`
+                  : "Download all"}
             </Button>
           </div>
         </div>
@@ -1020,94 +1060,77 @@ export default function EventLiveGallery() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div id="gallery-grid" className="columns-1 gap-1 sm:columns-2 lg:columns-3 xl:columns-4">
             {visibleImages.map((image, index) => {
               const id = imageId(image);
+              if (!id) return null;
               const isSelected = selected.has(id);
               return (
-                <Card key={id || index} className="overflow-hidden">
-                  <div className="group relative aspect-[4/3] bg-muted">
-                    {image.imageUrl ? (
-                      image.mediaType === "video" ? (
-                        <video
-                          src={image.imageUrl}
-                          controls
-                          preload="metadata"
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <a
-                          href={image.imageUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={() => track("image_view", id)}
-                        >
-                          <img
-                            src={image.imageUrl}
-                            alt=""
-                            className="h-full w-full object-cover"
-                          />
-                        </a>
-                      )
+                <article key={id} className="group relative mb-1 break-inside-avoid overflow-hidden bg-black">
+                  {image.imageUrl ? (
+                    image.mediaType === "video" ? (
+                      <video
+                        src={assetUrl(image.imageUrl)}
+                        controls
+                        preload="metadata"
+                        className="aspect-video w-full object-cover"
+                      />
                     ) : (
-                      <div className="flex h-full items-center justify-center">
-                        <ImageIcon className="h-8 w-8 text-muted-foreground" />
-                      </div>
-                    )}
-                    {branding.watermarkUrl && branding.watermarkPosition === "tile" ? (
-                      <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-2 place-items-center gap-3 p-4">
-                        {Array.from({ length: 6 }, (_, watermarkIndex) => (
-                          <img
-                            key={watermarkIndex}
-                            src={branding.watermarkUrl}
-                            alt=""
-                            className="max-h-12 max-w-full object-contain"
-                            style={{ opacity: branding.watermarkOpacity ?? 0.7, width: `${Math.min(branding.watermarkScale ?? 24, 45)}%` }}
-                          />
-                        ))}
-                      </div>
-                    ) : branding.watermarkUrl ? (
-                      <img
-                        src={branding.watermarkUrl}
-                        alt=""
-                        className={`pointer-events-none absolute max-h-[60%] object-contain ${watermarkPositionClass(branding.watermarkPosition)}`}
-                        style={{ opacity: branding.watermarkOpacity ?? 0.7, width: `${branding.watermarkScale ?? 24}%` }}
-                      />
-                    ) : null}
-                    <label className="absolute left-3 top-3 rounded-full bg-background/90 p-1.5 shadow">
-                      <Checkbox
-                        checked={isSelected}
-                        onCheckedChange={() => toggle(id)}
-                        aria-label="Select image"
-                      />
-                    </label>
-                    {image.isEnhanced ? (
-                      <Badge className="absolute right-3 top-3">Enhanced</Badge>
-                    ) : null}
-                  </div>
-                  <CardContent className="flex items-center justify-between gap-2 p-3">
-                    <p className="truncate text-xs text-muted-foreground">
-                      {typeof image.userTakenBy === "object"
-                        ? image.userTakenBy?.name || "Photographer"
-                        : "Live upload"}
-                    </p>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      disabled={!image.imageUrl}
-                      onClick={() =>
-                        image.imageUrl &&
-                        void downloadImage(
-                          image.imageUrl,
-                          `event-photo-${id.slice(-8)}.${image.mediaType === "video" ? "mp4" : "jpg"}`,
-                        )
-                      }
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                    </Button>
-                  </CardContent>
-                </Card>
+                      <button
+                        type="button"
+                        className="block w-full cursor-zoom-in"
+                        aria-label={`Open event photo ${index + 1}`}
+                        onClick={() => {
+                          setFocusedIndex(index);
+                          track("image_view", id);
+                        }}
+                      >
+                        <img
+                          src={assetUrl(image.imageUrl)}
+                          alt={`Event photo ${index + 1}`}
+                          loading="lazy"
+                          className="h-auto w-full object-cover transition duration-300 group-hover:scale-[1.015]"
+                        />
+                      </button>
+                    )
+                  ) : (
+                    <div className="flex aspect-[4/3] items-center justify-center bg-muted">
+                      <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                    </div>
+                  )}
+                  {branding.watermarkUrl && branding.watermarkPosition === "tile" ? (
+                    <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-2 place-items-center gap-3 p-4">
+                      {Array.from({ length: 6 }, (_, watermarkIndex) => (
+                        <img
+                          key={watermarkIndex}
+                          src={assetUrl(branding.watermarkUrl)}
+                          alt=""
+                          className="max-h-12 max-w-full object-contain"
+                          style={{ opacity: branding.watermarkOpacity ?? 0.7, width: `${Math.min(branding.watermarkScale ?? 24, 45)}%` }}
+                        />
+                      ))}
+                    </div>
+                  ) : branding.watermarkUrl ? (
+                    <img
+                      src={assetUrl(branding.watermarkUrl)}
+                      alt=""
+                      className={`pointer-events-none absolute max-h-[60%] object-contain ${watermarkPositionClass(branding.watermarkPosition)}`}
+                      style={{ opacity: branding.watermarkOpacity ?? 0.7, width: `${branding.watermarkScale ?? 24}%` }}
+                    />
+                  ) : null}
+                  <label className="absolute left-3 top-3 rounded-full bg-background/90 p-1.5 opacity-0 shadow transition group-hover:opacity-100 has-[:checked]:opacity-100">
+                    <Checkbox checked={isSelected} onCheckedChange={() => toggle(id)} aria-label="Select image" />
+                  </label>
+                  <Button
+                    size="icon"
+                    className="absolute bottom-3 right-3 h-9 w-9 rounded-full opacity-0 shadow transition group-hover:opacity-100"
+                    aria-label={image.purchaseRequired ? "Buy original photo" : "Download original photo"}
+                    onClick={() => void download([image])}
+                  >
+                    {image.purchaseRequired ? <ShoppingCart className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+                  </Button>
+                  {image.isEnhanced ? <Badge className="absolute right-3 top-3">Enhanced</Badge> : null}
+                </article>
               );
             })}
           </div>
@@ -1129,6 +1152,64 @@ export default function EventLiveGallery() {
         ) : null}
       </main>
 
+      {info?.faceSearchEnabled && !guestToken ? (
+        <>
+          <input
+            ref={faceInput}
+            type="file"
+            accept={imageAccept}
+            capture="user"
+            className="hidden"
+            onChange={(event) => {
+              setFindMeOpen(false);
+              void runFaceSearch(event);
+            }}
+          />
+          <input
+            ref={faceUploadInput}
+            type="file"
+            accept={imageAccept}
+            className="hidden"
+            onChange={(event) => {
+              setFindMeOpen(false);
+              void runFaceSearch(event);
+            }}
+          />
+          <Button
+            size="lg"
+            className="fixed bottom-5 right-5 z-40 rounded-full bg-white px-5 text-black shadow-2xl hover:bg-white/90"
+            disabled={faceSearching}
+            onClick={() => setFindMeOpen(true)}
+          >
+            {faceSearching ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <UserRoundSearch className="mr-2 h-5 w-5" />}
+            Find Me
+          </Button>
+        </>
+      ) : null}
+
+      {findMeOpen ? (
+        <FindMeDialog
+          busy={faceSearching}
+          onClose={() => setFindMeOpen(false)}
+          onCamera={() => faceInput.current?.click()}
+          onUpload={() => faceUploadInput.current?.click()}
+        />
+      ) : null}
+
+      {focusedImage ? (
+        <GalleryLightbox
+          image={focusedImage}
+          imageUrl={assetUrl(focusedImage.imageUrl)}
+          position={focusedIndex + 1}
+          total={images.length}
+          onClose={closeFocusedImage}
+          onPrevious={() => setFocusedIndex((index) => (index - 1 + images.length) % images.length)}
+          onNext={() => setFocusedIndex((index) => (index + 1) % images.length)}
+          onDownload={() => void download([focusedImage])}
+          onCopyLink={() => void copyGalleryLink()}
+        />
+      ) : null}
+
       <footer className="border-t bg-background">
         <div className="mx-auto max-w-[1500px] px-4 py-6 text-sm text-muted-foreground sm:px-6">
           {branding.footerText ||
@@ -1138,6 +1219,105 @@ export default function EventLiveGallery() {
           ) : null}
         </div>
       </footer>
+    </div>
+  );
+}
+
+export function FindMeDialog({
+  busy,
+  onClose,
+  onCamera,
+  onUpload,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onCamera: () => void;
+  onUpload: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-4" role="dialog" aria-modal="true" aria-labelledby="find-me-title">
+      <div className="relative w-full max-w-md rounded-3xl bg-background p-6 shadow-2xl">
+        <Button variant="ghost" size="icon" className="absolute right-3 top-3" aria-label="Close Find Me" onClick={onClose}>
+          <X className="h-5 w-5" />
+        </Button>
+        <UserRoundSearch className="mb-4 h-9 w-9" />
+        <h2 id="find-me-title" className="text-2xl font-bold">Find all your photos</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Take a clear selfie now or upload one from your device. Face matching will show every photo of you in this event.
+        </p>
+        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          <Button className="h-24 flex-col gap-2" disabled={busy} onClick={onCamera}>
+            <Camera className="h-6 w-6" />
+            Take a photo
+          </Button>
+          <Button className="h-24 flex-col gap-2" variant="outline" disabled={busy} onClick={onUpload}>
+            <Upload className="h-6 w-6" />
+            Upload a selfie
+          </Button>
+        </div>
+        <p className="mt-4 text-xs text-muted-foreground">
+          Your selfie is used only to search this gallery unless you explicitly create a reusable face profile.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function GalleryLightbox({
+  image,
+  imageUrl,
+  position,
+  total,
+  onClose,
+  onPrevious,
+  onNext,
+  onDownload,
+  onCopyLink,
+}: {
+  image: GalleryImage;
+  imageUrl: string;
+  position: number;
+  total: number;
+  onClose: () => void;
+  onPrevious: () => void;
+  onNext: () => void;
+  onDownload: () => void;
+  onCopyLink: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black text-white" role="dialog" aria-modal="true" aria-label="Photo viewer">
+      <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between p-3 sm:p-5">
+        <Button variant="ghost" size="icon" className="text-white hover:bg-white/10 hover:text-white" aria-label="Close photo" onClick={onClose}>
+          <ArrowLeft className="h-6 w-6" />
+        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" className="text-white hover:bg-white/10 hover:text-white" aria-label="Copy photo link" onClick={onCopyLink}>
+            <Copy className="h-5 w-5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="text-white hover:bg-white/10 hover:text-white" aria-label={image.purchaseRequired ? "Buy original photo" : "Download original photo"} onClick={onDownload}>
+            {image.purchaseRequired ? <ShoppingCart className="h-5 w-5" /> : <Download className="h-5 w-5" />}
+          </Button>
+        </div>
+      </div>
+      {total > 1 ? (
+        <>
+          <Button variant="ghost" size="icon" className="absolute left-2 z-10 text-white hover:bg-white/10 hover:text-white sm:left-5" aria-label="Previous photo" onClick={onPrevious}>
+            <ChevronLeft className="h-8 w-8" />
+          </Button>
+          <Button variant="ghost" size="icon" className="absolute right-2 z-10 text-white hover:bg-white/10 hover:text-white sm:right-5" aria-label="Next photo" onClick={onNext}>
+            <ChevronRight className="h-8 w-8" />
+          </Button>
+        </>
+      ) : null}
+      {image.mediaType === "video" ? (
+        <video src={imageUrl} controls autoPlay className="max-h-screen max-w-full" />
+      ) : (
+        <img src={imageUrl} alt={`Event photo ${position}`} className="max-h-screen max-w-full object-contain" />
+      )}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/55 px-3 py-1.5 text-xs">
+        {position} / {total}
+        {image.purchaseRequired ? " · Preview — purchase unlocks original" : ""}
+      </div>
     </div>
   );
 }

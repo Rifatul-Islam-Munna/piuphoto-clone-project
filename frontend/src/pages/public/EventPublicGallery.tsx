@@ -121,6 +121,7 @@ export default function EventPublicGallery() {
   const [isFaceSearching, setIsFaceSearching] = useState(false);
   const [showingFaceMatches, setShowingFaceMatches] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [storeEnabled, setStoreEnabled] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -173,6 +174,17 @@ export default function EventPublicGallery() {
       isMounted = false;
     };
   }, [albumId, eventId, reloadKey]);
+
+  useEffect(() => {
+    if (!eventId) return;
+    void (async () => {
+      const [catalog] = await GetRequestAxios<any>(
+        `/store/public/catalog?eventId=${eventId}`,
+        { withCredentials: false, redirectOnUnauthorized: false },
+      );
+      setStoreEnabled(Boolean(catalog?.settings));
+    })();
+  }, [eventId]);
 
   useEffect(() => {
     if (!eventId || showingFaceMatches) return;
@@ -250,6 +262,12 @@ export default function EventPublicGallery() {
   };
 
   const downloadImages = async (targetImages: EventImage[]) => {
+    if (storeEnabled) {
+      toast.info('Store is enabled. Please complete purchase to download originals.');
+      window.location.hash = `/store/${eventId}`;
+      return;
+    }
+
     const downloadable = targetImages.filter((image) => image.imageUrl);
 
     if (!downloadable.length) {

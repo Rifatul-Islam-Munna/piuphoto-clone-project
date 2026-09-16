@@ -26,7 +26,9 @@ import {
   EventImageDocument,
 } from '../event-image/entities/event-image.entity';
 import { NotificationService } from '../notification/notification.service';
+import { User, UserDocument } from '../user/entities/user.entity';
 import {
+  StoreAccountSettingsDto,
   StoreCheckoutDto,
   StoreOrderQueryDto,
   StoreSaleDto,
@@ -56,6 +58,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     @InjectModel(Event.name) private readonly events: Model<EventDocument>,
     @InjectModel(EventImage.name)
     private readonly images: Model<EventImageDocument>,
+    @InjectModel(User.name)
+    private readonly users: Model<UserDocument>,
     private readonly members: EventMemberService,
     private readonly config: ConfigService,
     private readonly notifier: NotificationService,
@@ -262,8 +266,21 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     return createHash('sha256').update(value).digest('hex');
   }
   private async stripeKeyForEvent(eventId: string) {
-    const config = await this.getSettings(eventId, true);
-    return this.stripeKeyFor(config);
+    const config: any = await this.getSettings(eventId, true);
+    if (config?.useCustomStripe === true && config?.stripeSecretCipher) {
+      return this.decrypt(String(config.stripeSecretCipher));
+    }
+    const event = await this.events.findById(eventId).select('userId').lean();
+    if (event?.userId) {
+      const owner: any = await this.users
+        .findById(event.userId)
+        .select('+storeStripeSecretCipher')
+        .lean();
+      if (owner?.storeStripeSecretCipher) {
+        return this.decrypt(String(owner.storeStripeSecretCipher));
+      }
+    }
+    return this.platformStripeKey();
   }
   private async getSettings(eventId: string, withSecrets = false) {
     const query = this.settings.findOneAndUpdate(
@@ -606,7 +623,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     params.append('line_items[0][quantity]', '1');
     try {
       const headers: Record<string, string> = {
-        Authorization: `Bearer ${this.stripeKeyFor(config)}`,
+        Authorization: `Bearer ${await this.stripeKeyForEvent(dto.eventId)}`,
         'Content-Type': 'application/x-www-form-urlencoded',
       };
       if (checkoutKey)
@@ -961,6 +978,33 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
       filename: sourceName || `photo-${String(image._id).slice(-8)}`,
     };
   }
+  async accountSettings(userId?: string) {
+    if (!userId) throw new ForbiddenException('Authentication required');
+    const user: any = await this.users
+      .findById(userId)
+      .select('+storeStripeSecretCipher storeStripeAccountLabel')
+      .lean();
+    if (!user) throw new HttpException('User not found', 404);
+    return {
+      data: {
+        stripeAccountLabel: user.storeStripeAccountLabel || '',
+        stripeConfigured: Boolean(user.storeStripeSecretCipher),
+      },
+    };
+  }
+
+  async updateAccountSettings(dto: StoreAccountSettingsDto, userId?: string) {
+    if (!userId) throw new ForbiddenException('Authentication required');
+    const set: Record<string, unknown> = {};
+    if (dto.stripeAccountLabel !== undefined)
+      set.storeStripeAccountLabel = dto.stripeAccountLabel.trim();
+    if (dto.stripeSecretKey?.trim())
+      set.storeStripeSecretCipher = this.encrypt(dto.stripeSecretKey.trim());
+    const user = await this.users.findByIdAndUpdate(userId, { $set: set }, { new: true }).lean();
+    if (!user) throw new HttpException('User not found', 404);
+    return this.accountSettings(userId);
+  }
+
   async settingsForPlanner(eventId: string, userId?: string, role?: string) {
     await this.members.assertCanManage(eventId, userId, role);
     const data: any = await this.getSettings(eventId, true);

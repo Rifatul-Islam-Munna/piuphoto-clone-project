@@ -16,6 +16,7 @@ import type { Request, Response } from 'express';
 import { AuthGuard } from '../lib/auth.guard';
 import type { ExpressRequest } from '../lib/auth.guard';
 import {
+  StoreAccountSettingsDto,
   StoreCheckoutDto,
   StoreOrderQueryDto,
   StoreSaleDto,
@@ -84,6 +85,17 @@ export class StoreController {
     @Body() body: any,
   ) {
     return this.service.webhook(eventId, req.rawBody, signature, body);
+  }
+  @Get('account-settings') @UseGuards(AuthGuard)
+  accountSettings(@Req() req: ExpressRequest) {
+    return this.service.accountSettings(req.user?.id);
+  }
+  @Patch('account-settings') @UseGuards(AuthGuard)
+  updateAccountSettings(
+    @Body() body: StoreAccountSettingsDto,
+    @Req() req: ExpressRequest,
+  ) {
+    return this.service.updateAccountSettings(body, req.user?.id);
   }
   @Get('settings') @UseGuards(AuthGuard) settings(
     @Query('eventId') eventId: string,

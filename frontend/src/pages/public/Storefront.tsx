@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { Loader2, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
 import { GetRequestAxios, PostRequestAxios } from "@/api-hooks/api-hooks";
@@ -30,6 +30,8 @@ type Catalog = {
 const baseUrl = import.meta.env.VITE_BASE_URL ?? "";
 export default function Storefront() {
   const { eventId = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const requestedPhotos = searchParams.get("photos") || "";
   const [catalog, setCatalog] = useState<Catalog>();
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -54,6 +56,13 @@ export default function Storefront() {
         return;
       }
       setCatalog(data);
+      if (requestedPhotos) {
+        const available = new Set(data.data.map((photo) => photo._id));
+        const requested = requestedPhotos
+          .split(",")
+          .filter((id) => available.has(id));
+        setSelected(new Set(requested));
+      }
       void PostRequestAxios(
         "/analytics/track",
         { eventId, type: "store_view", channel: "store" },
@@ -63,7 +72,7 @@ export default function Storefront() {
     return () => {
       mounted = false;
     };
-  }, [eventId]);
+  }, [eventId, requestedPhotos]);
   useEffect(
     () => setCheckoutKey(""),
     [eventId, email, whatsapp, selected, purchaseMode],
@@ -82,7 +91,8 @@ export default function Storefront() {
     setPurchaseMode("selected");
     setSelected((current) => {
       const next = new Set(current);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };

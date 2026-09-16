@@ -3,6 +3,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Album, AlbumSchema } from '../album/entities/album.entity';
 import { EventMemberModule } from '../event-member/event-member.module';
 import { Event, EventSchema } from '../event/entities/event.entity';
+import {
+  StoreSettings,
+  StoreSettingsSchema,
+} from '../store/entities/store-settings.entity';
 import { GalleryAccessController } from './gallery-access.controller';
 import { GalleryAccessService } from './gallery-access.service';
 import {
@@ -16,6 +20,7 @@ import {
     MongooseModule.forFeature([
       { name: Event.name, schema: EventSchema },
       { name: Album.name, schema: AlbumSchema },
+      { name: StoreSettings.name, schema: StoreSettingsSchema },
       { name: GalleryAccessAudit.name, schema: GalleryAccessAuditSchema },
     ]),
   ],

@@ -1,4 +1,4 @@
-﻿import { Type } from 'class-transformer';
+import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
@@ -37,6 +37,7 @@ export enum PublishPolicyMode {
 export class GalleryBrandingDto {
   @IsOptional() @IsString() @MaxLength(500) logoUrl?: string;
   @IsOptional() @IsString() @MaxLength(500) coverUrl?: string;
+  @IsOptional() @IsString() @MaxLength(180) coverText?: string;
   @IsOptional() @IsString() @MaxLength(500) watermarkUrl?: string;
   @IsOptional() @IsString() @MaxLength(32) watermarkPosition?: string;
   @IsOptional()

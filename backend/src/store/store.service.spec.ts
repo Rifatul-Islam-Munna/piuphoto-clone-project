@@ -59,6 +59,7 @@ describe('StoreService checkout idempotency', () => {
       {} as never,
       images as never,
       {} as never,
+      {} as never,
       { get: jest.fn() } as never,
       {
         emailConfigured: jest.fn().mockReturnValue(false),
@@ -83,6 +84,7 @@ describe('StoreService checkout idempotency', () => {
 describe('StoreService without Stripe webhook secret', () => {
   it('falls back to Stripe API reconciliation instead of failing', async () => {
     const service = new StoreService(
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

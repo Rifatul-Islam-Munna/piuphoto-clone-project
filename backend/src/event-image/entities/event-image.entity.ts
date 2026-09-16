@@ -26,6 +26,9 @@ export class EventImage {
   @Prop({ default: true, index: true })
   isPublished: boolean;
 
+  @Prop({ default: true, index: true })
+  isForSale: boolean;
+
   @Prop({ trim: true })
   clientTransferId?: string;
 

@@ -86,6 +86,7 @@ export class Event {
   branding?: {
     logoUrl?: string;
     coverUrl?: string;
+    coverText?: string;
     watermarkUrl?: string;
     watermarkPosition?: string;
     watermarkOpacity?: number;
