@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:mobileapp/core/guest/guest_qr_payload.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/platform/canon_ccapi_camera.dart';
 import 'package:mobileapp/core/platform/device_settings.dart';
@@ -26,6 +27,7 @@ import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/pages/upload/transfer_list_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
+import 'package:mobileapp/widgets/intrinsic_qr_image.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
@@ -2486,30 +2488,109 @@ class _UploadPageState extends State<UploadPage> {
     );
   }
 
-  String _guestQrPayload(EventSummary event) => 'mobile:${event.id}\nface:1';
+  Future<bool> _prepareGuestFaceDelivery(EventSummary event) async {
+    if (!RegExp(r'^[a-fA-F0-9]{24}$').hasMatch(event.id.trim())) {
+      AppToast.error('This event has an invalid id. Refresh the workspace.');
+      return false;
+    }
+
+    try {
+      await DioHelper.patch(
+        '/gallery-access/settings',
+        data: {
+          'eventId': event.id,
+          'faceSearchEnabled': true,
+          'faceConsentRequired': true,
+        },
+      );
+      final response = await DioHelper.get(
+        '/gallery-access/info',
+        queryParameters: {'eventId': event.id},
+      );
+      final raw = response.data;
+      final info = raw is Map
+          ? Map<String, dynamic>.from(raw)
+          : <String, dynamic>{};
+      if (info['faceSearchEnabled'] != true) {
+        throw StateError('Face delivery was not enabled');
+      }
+      return true;
+    } on DioException catch (error) {
+      final responseData = error.response?.data;
+      final message = responseData is Map
+          ? responseData['message']?.toString()
+          : null;
+      AppToast.error(message ?? 'Could not prepare guest face delivery');
+      return false;
+    } catch (_) {
+      AppToast.error('Could not prepare guest face delivery');
+      return false;
+    }
+  }
 
   Future<void> _showGuestQr(EventSummary event) async {
-    final payload = _guestQrPayload(event);
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    unawaited(
+      showDialog<void>(
+        context: context,
+        useRootNavigator: true,
+        barrierDismissible: false,
+        builder: (_) => const AlertDialog(
+          content: Row(
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(width: 18),
+              Expanded(child: Text('Preparing guest QR...')),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final ready = await _prepareGuestFaceDelivery(event);
+    if (!mounted) return;
+    rootNavigator.pop();
+    if (!ready) return;
+
+    final payload = GuestQrPayload.encode(event.id);
     await showDialog<void>(
       context: context,
+      useRootNavigator: true,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Guest face-delivery QR'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            QrImageView(data: payload, size: 230),
+            DecoratedBox(
+              decoration: BoxDecoration(color: Colors.white),
+              child: Padding(
+                padding: EdgeInsets.all(12),
+                child: IntrinsicQrImage(
+                  data: payload,
+                  size: 230,
+                  errorCorrectionLevel: QrErrorCorrectLevel.Q,
+                ),
+              ),
+            ),
             const SizedBox(height: 12),
             const Text(
-              'Guests scan this in Airpix, take 2-5 selfies, then receive their matching photos.',
+              'Scan in AirPix. Guests take 2-5 selfies, then receive their matching photos.',
               textAlign: TextAlign.center,
             ),
           ],
         ),
         actions: [
           TextButton.icon(
-            onPressed: () => SharePlus.instance.share(
-              ShareParams(text: 'Airpix face delivery\n$payload'),
-            ),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: payload));
+              AppToast.success('Guest QR link copied');
+            },
+            icon: const Icon(Icons.copy_outlined),
+            label: const Text('Copy'),
+          ),
+          TextButton.icon(
+            onPressed: () =>
+                SharePlus.instance.share(ShareParams(text: payload)),
             icon: const Icon(Icons.share_outlined),
             label: const Text('Share'),
           ),
