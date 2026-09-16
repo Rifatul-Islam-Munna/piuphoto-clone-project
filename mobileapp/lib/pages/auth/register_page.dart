@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/router/app_router.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
 @RoutePage()
@@ -67,7 +68,7 @@ class _RegisterPageState extends State<RegisterPage> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 430),
               child: Column(
@@ -75,30 +76,31 @@ class _RegisterPageState extends State<RegisterPage> {
                 children: [
                   IconButton(
                     onPressed: () => context.router.maybePop(),
-                    icon: const Icon(Icons.arrow_back),
+                    icon: const Icon(Icons.arrow_back, size: 22),
                   ),
                   const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: Image.asset(
-                      'assets/logo.jpeg',
-                      height: 70,
-                      width: 170,
-                      fit: BoxFit.cover,
+                  Center(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(AppRadius.lg),
+                      child: Image.asset(
+                        'assets/logo.jpeg',
+                        height: 68,
+                        width: 160,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 28),
                   Text(
                     'Create account',
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
+                    style: Theme.of(context).textTheme.headlineMedium,
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Choose if you manage events or upload as a photographer.',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: color.onSurface.withValues(alpha: 0.65),
+                      color: AppColors.mutedForeground,
+                      height: 1.5,
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -106,13 +108,13 @@ class _RegisterPageState extends State<RegisterPage> {
                     segments: const [
                       ButtonSegment(
                         value: 'event_planner',
-                        label: Text('Event Planner'),
-                        icon: Icon(Icons.event_available_outlined),
+                        label: Text('Planner'),
+                        icon: Icon(Icons.event_available_outlined, size: 18),
                       ),
                       ButtonSegment(
                         value: 'photographer',
                         label: Text('Photographer'),
-                        icon: Icon(Icons.photo_camera_outlined),
+                        icon: Icon(Icons.photo_camera_outlined, size: 18),
                       ),
                     ],
                     selected: {_role},
@@ -122,44 +124,40 @@ class _RegisterPageState extends State<RegisterPage> {
                   const SizedBox(height: 20),
                   TextField(
                     controller: _nameController,
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       labelText: 'Name',
-                      prefixIcon: const Icon(Icons.person_outline),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+                      prefixIcon: Icon(Icons.person_outline, size: 20),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
                   TextField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       labelText: 'Email',
-                      prefixIcon: const Icon(Icons.mail_outline),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+                      prefixIcon: Icon(Icons.mail_outline, size: 20),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
                   TextField(
                     controller: _passwordController,
                     obscureText: true,
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       labelText: 'Password',
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+                      prefixIcon: Icon(Icons.lock_outline, size: 20),
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 28),
                   SizedBox(
                     width: double.infinity,
                     height: 52,
                     child: FilledButton(
                       onPressed: _loading ? null : _register,
+                      style: FilledButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(AppRadius.md),
+                        ),
+                      ),
                       child: _loading
                           ? const SizedBox(
                               height: 22,
@@ -169,10 +167,10 @@ class _RegisterPageState extends State<RegisterPage> {
                                 color: Colors.white,
                               ),
                             )
-                          : const Text('Create Account'),
+                          : const Text('Create account'),
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 16),
                   Center(
                     child: TextButton(
                       onPressed: () =>

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
@@ -79,67 +80,65 @@ class _LoginPageState extends State<LoginPage> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 430),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: Image.asset(
-                      'assets/logo.jpeg',
-                      height: 78,
-                      width: 180,
-                      fit: BoxFit.cover,
+                  Center(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(AppRadius.lg),
+                      child: Image.asset(
+                        'assets/logo.jpeg',
+                        height: 72,
+                        width: 168,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 36),
                   Text(
                     'Welcome back',
-                    style: Theme.of(context)
-                        .textTheme
-                        .headlineMedium
-                        ?.copyWith(fontWeight: FontWeight.w800),
+                    style: Theme.of(context).textTheme.headlineMedium,
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Sign in to manage events, albums, and photographer uploads.',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(color: color.onSurface.withValues(alpha: 0.65)),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: AppColors.mutedForeground,
+                      height: 1.5,
+                    ),
                   ),
-                  const SizedBox(height: 28),
+                  const SizedBox(height: 32),
                   TextField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       labelText: 'Email',
-                      prefixIcon: const Icon(Icons.mail_outline),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+                      prefixIcon: Icon(Icons.mail_outline, size: 20),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
                   TextField(
                     controller: _passwordController,
                     obscureText: true,
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       labelText: 'Password',
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+                      prefixIcon: Icon(Icons.lock_outline, size: 20),
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 28),
                   SizedBox(
                     width: double.infinity,
                     height: 52,
                     child: FilledButton(
                       onPressed: _loading ? null : _login,
+                      style: FilledButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(AppRadius.md),
+                        ),
+                      ),
                       child: _loading
                           ? const SizedBox(
                               height: 22,
@@ -149,19 +148,20 @@ class _LoginPageState extends State<LoginPage> {
                                 color: Colors.white,
                               ),
                             )
-                          : const Text('Login'),
+                          : const Text('Sign in'),
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 20),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
                         'New here?',
-                        style: TextStyle(color: color.onSurface.withValues(alpha: 0.65)),
+                        style: TextStyle(color: AppColors.mutedForeground),
                       ),
                       TextButton(
-                        onPressed: () => context.router.root.push(const RegisterRoute()),
+                        onPressed: () =>
+                            context.router.root.push(const RegisterRoute()),
                         child: const Text('Create account'),
                       ),
                     ],

@@ -10,18 +10,21 @@ import {
 } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
-  ArrowDown,
   ArrowLeft,
   Camera,
+  Check,
   CheckCircle2,
   ChevronLeft,
+  ChevronDown,
   ChevronRight,
+  Copy,
   Download,
   Folder,
   Image as ImageIcon,
   Images,
   Loader2,
   Lock,
+  Mail,
   Maximize2,
   MoreHorizontal,
   Pause,
@@ -36,12 +39,21 @@ import {
   UserRoundSearch,
   X,
 } from "lucide-react";
+import QRCode from "qrcode";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -158,6 +170,25 @@ const assetUrl = (url?: string) => {
 const publicImageUrl = (eventId: string, id: string) =>
   `${window.location.origin}${window.location.pathname}#/event/${eventId}/image/${id}`;
 
+type ShareNetwork = "facebook" | "x" | "pinterest" | "whatsapp" | "email";
+
+const socialShareUrl = (network: ShareNetwork, url: string, title: string) => {
+  const link = encodeURIComponent(url);
+  const text = encodeURIComponent(title);
+  switch (network) {
+    case "facebook":
+      return `https://www.facebook.com/sharer/sharer.php?u=${link}`;
+    case "x":
+      return `https://twitter.com/intent/tweet?url=${link}&text=${text}`;
+    case "pinterest":
+      return `https://pinterest.com/pin/create/button/?url=${link}&description=${text}`;
+    case "whatsapp":
+      return `https://wa.me/?text=${encodeURIComponent(`${title} ${url}`)}`;
+    default:
+      return `mailto:?subject=${text}&body=${link}`;
+  }
+};
+
 const watermarkPositionClass = (position?: string) => {
   switch (position) {
     case "top_left":
@@ -243,6 +274,10 @@ export default function EventLiveGallery() {
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const [slideshow, setSlideshow] = useState(false);
   const [findMeOpen, setFindMeOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [shareTitle, setShareTitle] = useState("");
+  const [shareQr, setShareQr] = useState("");
 
   const commonParams = useCallback(
     (includeAccess = true) => {
@@ -756,23 +791,17 @@ export default function EventLiveGallery() {
     const url = targetId
       ? publicImageUrl(eventId, targetId)
       : `${window.location.origin}${window.location.pathname}#/event/${eventId}`;
+    const title = info?.title || "Event gallery";
+    setShareUrl(url);
+    setShareTitle(targetId ? "View this event photo" : "View this event gallery");
     try {
-      if (navigator.share) {
-        await navigator.share({
-          title: info?.title || "Event gallery",
-          text: targetId ? "View this event photo" : "View this event gallery",
-          url,
-        });
-      } else {
-        await navigator.clipboard.writeText(url);
-        toast.success("Share link copied");
-      }
-      track("share", targetId);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      await navigator.clipboard.writeText(url);
-      toast.success("Share link copied");
+      const dataUrl = await QRCode.toDataURL(url, { width: 512, margin: 1 });
+      setShareQr(dataUrl);
+    } catch {
+      setShareQr("");
     }
+    setShareOpen(true);
+    track("share", targetId);
   };
 
   const toggleFullscreen = async () => {
@@ -813,8 +842,11 @@ export default function EventLiveGallery() {
 
   if (loading && !info) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin" />
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+          <Camera className="h-7 w-7 text-primary" />
+        </div>
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -1084,7 +1116,7 @@ export default function EventLiveGallery() {
   const visibleImages = images.slice(0, visibleCount);
   return (
     <div className="min-h-screen bg-background" style={style}>
-      <section className="relative h-[260px] overflow-hidden bg-zinc-950 sm:h-[340px]">
+      <section className="relative h-[300px] overflow-hidden bg-zinc-950 sm:h-[380px]">
         {cover ? (
           <img
             src={assetUrl(cover)}
@@ -1092,28 +1124,28 @@ export default function EventLiveGallery() {
             className="absolute inset-0 h-full w-full object-cover"
           />
         ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 via-zinc-950 to-black" />
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_hsl(18_100%_58%/0.25),_transparent_60%)] bg-zinc-950" />
         )}
-        <div className="absolute inset-0 bg-black/25" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/25 to-black/40" />
         <button
           type="button"
           aria-label="View gallery photos"
-          className="absolute bottom-5 left-1/2 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/70 text-white transition hover:bg-white/15"
+          className="absolute bottom-5 left-1/2 flex h-11 w-11 -translate-x-1/2 items-center justify-center rounded-full border border-white/30 bg-white/10 text-white backdrop-blur transition hover:bg-white/20"
           onClick={() =>
             document
               .getElementById("gallery-grid")
               ?.scrollIntoView({ behavior: "smooth" })
           }
         >
-          <ArrowDown className="h-4 w-4" />
+          <ChevronDown className="h-5 w-5" />
         </button>
       </section>
 
-      <main className="mx-auto max-w-[1500px] space-y-6 bg-background px-4 py-5 sm:px-6">
-        <section className="border-b pb-6">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+      <main className="relative mx-auto max-w-[1500px] space-y-8 bg-background px-4 pb-16 pt-4 sm:px-6">
+        <section className="-mt-14 rounded-3xl border bg-card p-5 sm:p-7">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 {albumId ? (
                   <Button
                     variant="outline"
@@ -1139,29 +1171,40 @@ export default function EventLiveGallery() {
                     <Camera className="h-5 w-5" />
                   )}
                 </div>
-                <p className="font-semibold">
+                <p className="text-sm font-semibold tracking-tight">
                   {branding.whiteLabel ? info?.title : "airpix"}
                 </p>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-2.5 py-0.5 text-xs font-medium text-primary">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+                  </span>
+                  Live
+                </span>
                 {guestToken ? (
                   <Badge variant="secondary">Your personal gallery</Badge>
                 ) : null}
               </div>
-              <h1 className="mt-7 text-2xl font-semibold tracking-tight sm:text-3xl">
+              <h1 className="mt-5 text-2xl font-bold tracking-tight sm:text-4xl">
                 {branding.coverText || info?.title}
               </h1>
               {info?.description ? (
-                <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
                   {info.description}
                 </p>
               ) : null}
-              <p className="mt-6 text-sm font-medium">
-                {images.length} {guestToken ? "matching" : "published"} photos
-              </p>
-              {faceMatches ? (
-                <Badge variant="outline" className="mt-2">
-                  Face matches
-                </Badge>
-              ) : null}
+              <div className="mt-5 flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-sm font-medium">
+                  <Images className="h-4 w-4 text-primary" />
+                  {images.length} {guestToken ? "matching" : "published"} photos
+                </span>
+                {faceMatches ? (
+                  <span className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-sm font-medium text-primary">
+                    <UserRoundSearch className="h-4 w-4" />
+                    Face matches
+                  </span>
+                ) : null}
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -1326,17 +1369,27 @@ export default function EventLiveGallery() {
 
         {!albumId && albums.length && !guestToken ? (
           <section>
-            <h2 className="mb-3 text-lg font-semibold">Albums</h2>
+            <div className="mb-3 flex items-center gap-2">
+              <Folder className="h-4 w-4 text-primary" />
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                Albums
+              </h2>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {albums.map((album) => (
                 <Link
                   key={album._id || album.id}
                   to={`/event/${eventId}/album/${album._id || album.id}${accessToken ? `?access=${encodeURIComponent(accessToken)}` : ""}`}
-                  className="rounded-xl border bg-background p-4 transition hover:bg-muted/40"
+                  className="group rounded-2xl border bg-card p-4 transition-all duration-300 hover:border-primary/50 hover:bg-muted/30"
                 >
-                  <Folder className="mb-3 h-6 w-6" />
-                  <p className="font-semibold">{album.title || "Album"}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
+                  <div className="flex items-center justify-between">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 transition-colors group-hover:bg-primary/15">
+                      <Folder className="h-5 w-5 text-primary" />
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform duration-300 group-hover:translate-x-0.5" />
+                  </div>
+                  <p className="mt-3 font-semibold">{album.title || "Album"}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
                     {album.imagesCount || 0} photos
                   </p>
                 </Link>
@@ -1350,9 +1403,11 @@ export default function EventLiveGallery() {
             <Loader2 className="h-7 w-7 animate-spin" />
           </div>
         ) : visibleImages.length === 0 ? (
-          <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed bg-background text-center">
-            <Images className="mb-3 h-10 w-10 text-muted-foreground" />
-            <p className="font-semibold">
+          <div className="flex min-h-64 flex-col items-center justify-center rounded-3xl border border-dashed bg-muted/20 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-background">
+              <Images className="h-7 w-7 text-muted-foreground" />
+            </div>
+            <p className="mt-4 font-semibold">
               {guestToken
                 ? "No matching photos yet"
                 : "No published photos yet"}
@@ -1375,7 +1430,7 @@ export default function EventLiveGallery() {
               return (
                 <article
                   key={id}
-                  className="group relative mb-1 break-inside-avoid overflow-hidden bg-black"
+                  className="group relative mb-4 break-inside-avoid overflow-hidden rounded-2xl border bg-black"
                 >
                   {image.imageUrl ? (
                     image.mediaType === "video" ? (
@@ -1399,7 +1454,7 @@ export default function EventLiveGallery() {
                           src={assetUrl(image.imageUrl)}
                           alt={`Event photo ${index + 1}`}
                           loading="lazy"
-                          className="h-auto w-full object-cover transition duration-300 group-hover:scale-[1.015]"
+                          className="h-auto w-full object-cover transition duration-500 group-hover:scale-[1.03]"
                         />
                       </button>
                     )
@@ -1435,7 +1490,7 @@ export default function EventLiveGallery() {
                       }}
                     />
                   ) : null}
-                  <label className="absolute left-3 top-3 rounded-full bg-background/90 p-1.5 opacity-0 shadow transition group-hover:opacity-100 has-[:checked]:opacity-100">
+                  <label className="absolute left-3 top-3 rounded-full bg-background/90 p-1.5 opacity-0 shadow-sm transition group-hover:opacity-100 has-[:checked]:opacity-100">
                     <Checkbox
                       checked={isSelected}
                       onCheckedChange={() => toggle(id)}
@@ -1444,7 +1499,7 @@ export default function EventLiveGallery() {
                   </label>
                   <Button
                     size="icon"
-                    className="absolute bottom-3 right-3 h-9 w-9 rounded-full opacity-0 shadow transition group-hover:opacity-100"
+                    className="absolute bottom-3 right-3 h-9 w-9 rounded-full bg-white text-black opacity-0 shadow-sm transition hover:bg-white hover:text-black group-hover:opacity-100"
                     aria-label={
                       image.purchaseRequired
                         ? "Buy original photo"
@@ -1508,7 +1563,7 @@ export default function EventLiveGallery() {
           />
           <Button
             size="lg"
-            className="fixed bottom-5 right-5 z-40 rounded-full bg-white px-5 text-black shadow-2xl hover:bg-white/90"
+            className="fixed bottom-6 right-6 z-40 rounded-full bg-primary px-6 text-primary-foreground shadow-xl transition hover:brightness-110"
             disabled={faceSearching}
             onClick={() => setFindMeOpen(true)}
           >
@@ -1530,6 +1585,14 @@ export default function EventLiveGallery() {
           onUpload={() => faceUploadInput.current?.click()}
         />
       ) : null}
+
+      <ShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        url={shareUrl}
+        shareText={shareTitle}
+        qrDataUrl={shareQr}
+      />
 
       <Sheet open={purchaseOpen} onOpenChange={setPurchaseOpen}>
         <SheetContent
@@ -1720,7 +1783,7 @@ export function FindMeDialog({
       aria-modal="true"
       aria-labelledby="find-me-title"
     >
-      <div className="relative w-full max-w-md rounded-3xl bg-background p-6 shadow-2xl">
+      <div className="relative w-full max-w-md rounded-3xl border bg-background p-6">
         <Button
           variant="ghost"
           size="icon"
@@ -1730,8 +1793,10 @@ export function FindMeDialog({
         >
           <X className="h-5 w-5" />
         </Button>
-        <UserRoundSearch className="mb-4 h-9 w-9" />
-        <h2 id="find-me-title" className="text-2xl font-bold">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
+          <UserRoundSearch className="h-6 w-6 text-primary" />
+        </div>
+        <h2 id="find-me-title" className="text-2xl font-bold tracking-tight">
           Find all your photos
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
@@ -1795,12 +1860,12 @@ function GalleryLightbox({
 }) {
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black text-white"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/95 text-white backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Photo viewer"
     >
-      <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-black/70 to-transparent p-3 pb-10 sm:p-5 sm:pb-12">
+      <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent p-3 pb-10 sm:p-5 sm:pb-12">
         <Button
           variant="ghost"
           size="icon"
@@ -1904,13 +1969,169 @@ function GalleryLightbox({
           className="max-h-screen max-w-full object-contain"
         />
       )}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1.5 text-xs">
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-xs backdrop-blur">
         {position} / {total}
         {image.purchaseRequired
           ? " · Preview — purchase unlocks the original"
           : ""}
       </div>
     </div>
+  );
+}
+
+function SocialShareButton({
+  href,
+  label,
+  className,
+  icon,
+}: {
+  href: string;
+  label: string;
+  className?: string;
+  icon: ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={label}
+      title={label}
+      className={`flex h-11 w-11 items-center justify-center rounded-full text-white transition duration-300 hover:scale-110 ${className ?? ""}`}
+    >
+      {icon}
+    </a>
+  );
+}
+
+function ShareDialog({
+  open,
+  onOpenChange,
+  url,
+  shareText,
+  qrDataUrl,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  url: string;
+  shareText: string;
+  qrDataUrl: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!open) setCopied(false);
+  }, [open]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      toast.success("Link copied");
+    } catch {
+      toast.error("Could not copy the link");
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md gap-0 overflow-hidden rounded-3xl p-0">
+        <DialogHeader className="space-y-1 border-b p-6 pb-5">
+          <DialogTitle className="text-xl font-bold tracking-tight">
+            Share
+          </DialogTitle>
+          <DialogDescription>
+            Let anyone with the link see the{' '}
+            {url.includes("/image/") ? "photo" : "gallery"}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-5 p-6">
+          <div className="flex items-center justify-between gap-2">
+            <SocialShareButton
+              href={socialShareUrl("facebook", url, shareText)}
+              label="Share on Facebook"
+              className="bg-[#1877F2] hover:brightness-110"
+              icon={
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
+                  <path d="M13.5 21v-7h2.4l.4-3h-2.8V9.1c0-.9.3-1.5 1.6-1.5h1.3V4.9c-.3 0-1.1-.1-2.1-.1-2.1 0-3.6 1.3-3.6 3.7V11H8.3v3h2.4v7h2.8z" />
+                </svg>
+              }
+            />
+            <SocialShareButton
+              href={socialShareUrl("x", url, shareText)}
+              label="Share on X"
+              className="bg-zinc-900 hover:brightness-125"
+              icon={
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
+                  <path d="M17.8 3h3l-6.7 7.7L22 21h-6.2l-4.8-6.3L5.4 21h-3l7.2-8.2L2 3h6.4l4.4 5.8L17.8 3zm-1 16.2h1.7L7.5 4.7H5.7l11.1 14.5z" />
+                </svg>
+              }
+            />
+            <SocialShareButton
+              href={socialShareUrl("pinterest", url, shareText)}
+              label="Share on Pinterest"
+              className="bg-[#E60023] hover:brightness-110"
+              icon={
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
+                  <path d="M12 2C6.5 2 2 6.5 2 12c0 4.2 2.6 7.8 6.3 9.3-.1-.8-.2-2 0-2.9.2-.8 1.2-5.1 1.2-5.1s-.3-.6-.3-1.5c0-1.4.8-2.5 1.9-2.5.9 0 1.3.7 1.3 1.5 0 .9-.6 2.2-.9 3.4-.2 1 .5 1.9 1.5 1.9 1.8 0 3.2-1.9 3.2-4.7 0-2.5-1.8-4.2-4.3-4.2-2.9 0-4.6 2.2-4.6 4.5 0 .9.3 1.8.8 2.4.1.1.1.2.1.3-.1.3-.2 1-.3 1.1 0 .2-.1.2-.3.1-1.2-.6-2-2.4-2-3.9 0-3.2 2.3-6.1 6.7-6.1 3.5 0 6.2 2.5 6.2 5.8 0 3.5-2.2 6.3-5.3 6.3-1 0-2-.5-2.3-1.2l-.6 2.4c-.2.9-.8 2-1.2 2.6.9.3 1.9.4 2.9.4 5.5 0 10-4.5 10-10S17.5 2 12 2z" />
+                </svg>
+              }
+            />
+            <SocialShareButton
+              href={socialShareUrl("whatsapp", url, shareText)}
+              label="Share on WhatsApp"
+              className="bg-[#25D366] hover:brightness-110"
+              icon={
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
+                  <path d="M12 2a10 10 0 0 0-8.7 15L2 22l5.2-1.3A10 10 0 1 0 12 2zm0 18.2c-1.6 0-3.1-.4-4.4-1.2l-.3-.2-3.1.8.8-3-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.6-6.1c-.3-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1-.2.3-.6.8-.8 1-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.4-3c-.3-.4 0-.5.1-.7l.4-.5c.1-.2.2-.3.3-.5.1-.2 0-.4 0-.5l-.8-1.9c-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.2.3-.9.9-.9 2.2s.9 2.5 1.1 2.7c.1.2 1.8 2.8 4.4 3.9 2.6 1.1 2.6.7 3.1.7.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.2-.3-.2-.5-.3z" />
+                </svg>
+              }
+            />
+            <SocialShareButton
+              href={socialShareUrl("email", url, shareText)}
+              label="Share by email"
+              className="bg-zinc-400 hover:brightness-110"
+              icon={<Mail className="h-5 w-5" />}
+            />
+          </div>
+
+          <div className="flex items-center gap-2 rounded-xl border bg-muted/30 p-2 pl-4">
+            <p className="min-w-0 flex-1 truncate text-sm text-foreground">
+              {url}
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9 shrink-0 gap-1.5 rounded-lg px-3 text-muted-foreground hover:text-foreground"
+              onClick={() => void copy()}
+            >
+              {copied ? (
+                <Check className="h-4 w-4 text-primary" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+
+          <Separator />
+
+          {qrDataUrl ? (
+            <div className="flex flex-col items-center gap-4">
+              <img
+                src={qrDataUrl}
+                alt="QR code for this gallery"
+                className="h-56 w-56"
+              />
+              <p className="text-center text-xs text-muted-foreground">
+                Scan to open on any phone
+              </p>
+            </div>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1951,7 +2172,7 @@ function AccessShell({
               {info?.title}
             </p>
           </div>
-          <div className="mx-auto max-w-lg rounded-2xl border bg-background/95 p-6 shadow-sm">
+          <div className="mx-auto max-w-lg rounded-3xl border bg-background/95 p-6 backdrop-blur">
             {children}
           </div>
         </div>

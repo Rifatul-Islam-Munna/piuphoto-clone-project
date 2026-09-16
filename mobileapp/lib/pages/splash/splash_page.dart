@@ -2,6 +2,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 
 @RoutePage()
 class SplashPage extends StatefulWidget {
@@ -45,16 +46,20 @@ class _SplashPageState extends State<SplashPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: BorderRadius.circular(AppRadius.xl),
               child: Image.asset(
                 'assets/logo.jpeg',
-                width: 180,
-                height: 112,
+                width: 170,
+                height: 106,
                 fit: BoxFit.cover,
               ),
             ),
-            const SizedBox(height: 24),
-            const CircularProgressIndicator(),
+            const SizedBox(height: 32),
+            const SizedBox(
+              height: 26,
+              width: 26,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
           ],
         ),
       ),
