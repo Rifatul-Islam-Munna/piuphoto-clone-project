@@ -4,6 +4,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -15,13 +16,16 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Copy,
   Download,
   Folder,
   Image as ImageIcon,
   Images,
   Loader2,
   Lock,
+  Maximize2,
+  MoreHorizontal,
+  Pause,
+  Play,
   RefreshCw,
   Search,
   Share2,
@@ -40,6 +44,19 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   GetRequestAxios,
   PatchRequestAxios,
@@ -113,6 +130,21 @@ type PersonalGalleryResponse = GalleryImageResponse & {
     notifyWhatsapp?: boolean;
   };
 };
+
+type StoreCatalog = {
+  settings: {
+    currency: string;
+    singlePhotoPrice: number;
+    wholeEventPrice: number;
+    bundlePrice: number;
+    bundleMinPhotos: number;
+    termsText?: string;
+  };
+  data: Array<{ _id: string }>;
+  totalItems: number;
+};
+
+type PurchaseMode = "selected" | "event";
 
 const pageSize = 24;
 const imageAccept = "image/jpeg,image/png,image/webp";
@@ -202,7 +234,14 @@ export default function EventLiveGallery() {
   const [blurredIds, setBlurredIds] = useState<string[]>([]);
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [storeEnabled, setStoreEnabled] = useState(false);
+  const [storeCatalog, setStoreCatalog] = useState<StoreCatalog>();
+  const [purchaseOpen, setPurchaseOpen] = useState(false);
+  const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>("selected");
+  const [purchaseIds, setPurchaseIds] = useState<Set<string>>(new Set());
+  const [checkingOut, setCheckingOut] = useState(false);
+  const [checkoutKey, setCheckoutKey] = useState("");
   const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [slideshow, setSlideshow] = useState(false);
   const [findMeOpen, setFindMeOpen] = useState(false);
 
   const commonParams = useCallback(
@@ -317,6 +356,27 @@ export default function EventLiveGallery() {
   }, [guestToken, loadInfo, loadPersonal, loadPublic]);
 
   useEffect(() => {
+    if (!eventId || !storeEnabled) {
+      setStoreCatalog(undefined);
+      return;
+    }
+    let cancelled = false;
+    void GetRequestAxios<StoreCatalog>(
+      `/store/public/catalog?eventId=${eventId}`,
+      { withCredentials: false, redirectOnUnauthorized: false },
+    ).then(([catalog, error]) => {
+      if (!cancelled && !error && catalog) setStoreCatalog(catalog);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId, storeEnabled]);
+
+  useEffect(() => {
+    setCheckoutKey("");
+  }, [email, purchaseIds, purchaseMode, whatsapp]);
+
+  useEffect(() => {
     if (!eventId || guestToken || !info?.unlocked) return;
     const source = new EventSource(
       `${baseUrl}/eventImage/public/stream?${commonParams().toString()}`,
@@ -378,7 +438,10 @@ export default function EventLiveGallery() {
   useEffect(() => {
     if (focusedIndex < 0) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFocusedIndex(-1);
+      if (event.key === "Escape") {
+        setFocusedIndex(-1);
+        setSlideshow(false);
+      }
       if (images.length && event.key === "ArrowLeft") {
         setFocusedIndex((index) => (index - 1 + images.length) % images.length);
       }
@@ -389,6 +452,14 @@ export default function EventLiveGallery() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [focusedIndex, images.length]);
+
+  useEffect(() => {
+    if (!slideshow || focusedIndex < 0 || images.length < 2) return;
+    const timer = window.setInterval(() => {
+      setFocusedIndex((index) => (index + 1) % images.length);
+    }, 3500);
+    return () => window.clearInterval(timer);
+  }, [focusedIndex, images.length, slideshow]);
 
   const updateUrlToken = (key: "access" | "guest", value: string) => {
     const next = new URLSearchParams(params);
@@ -541,6 +612,109 @@ export default function EventLiveGallery() {
     });
   };
 
+  const availableStoreIds = useMemo(
+    () => new Set((storeCatalog?.data || []).map((photo) => photo._id)),
+    [storeCatalog],
+  );
+
+  const purchasePrice = useMemo(() => {
+    if (!storeCatalog) return 0;
+    if (purchaseMode === "event") {
+      return Number(storeCatalog.settings.wholeEventPrice || 0);
+    }
+    const count = purchaseIds.size;
+    return storeCatalog.settings.bundlePrice > 0 &&
+      count >= storeCatalog.settings.bundleMinPhotos
+      ? storeCatalog.settings.bundlePrice
+      : storeCatalog.settings.singlePhotoPrice * count;
+  }, [purchaseIds, purchaseMode, storeCatalog]);
+
+  const buyAllPrice = useMemo(() => {
+    if (!storeCatalog) return 0;
+    if (storeCatalog.settings.wholeEventPrice > 0) {
+      return storeCatalog.settings.wholeEventPrice;
+    }
+    const count = storeCatalog.data.length;
+    return storeCatalog.settings.bundlePrice > 0 &&
+      count >= storeCatalog.settings.bundleMinPhotos
+      ? storeCatalog.settings.bundlePrice
+      : storeCatalog.settings.singlePhotoPrice * count;
+  }, [storeCatalog]);
+
+  const openPurchase = useCallback(
+    (ids: string[] = [], mode: PurchaseMode = "selected") => {
+      if (!storeCatalog) {
+        toast.error("Store details are still loading. Please try again.");
+        return;
+      }
+      if (mode === "event") {
+        if (storeCatalog.settings.wholeEventPrice <= 0) {
+          toast.error("Buy all is not enabled for this event");
+          return;
+        }
+        setPurchaseMode("event");
+        setPurchaseIds(new Set(storeCatalog.data.map((photo) => photo._id)));
+      } else {
+        const eligible = [...new Set(ids)].filter((id) =>
+          availableStoreIds.has(id),
+        );
+        if (!eligible.length) {
+          toast.error("This photo is not available for purchase");
+          return;
+        }
+        setPurchaseMode("selected");
+        setPurchaseIds(new Set(eligible));
+      }
+      setCheckoutKey("");
+      setPurchaseOpen(true);
+      track("store_click");
+    },
+    [availableStoreIds, storeCatalog, track],
+  );
+
+  const buySelectedOrAll = () => {
+    const selectedStoreIds = images
+      .filter((image) => selected.has(imageId(image)) && image.purchaseRequired)
+      .map((image) => image.storeImageId || imageId(image));
+    if (selectedStoreIds.length) {
+      openPurchase(selectedStoreIds);
+    } else if ((storeCatalog?.settings.wholeEventPrice || 0) > 0) {
+      openPurchase([], "event");
+    } else {
+      openPurchase(storeCatalog?.data.map((photo) => photo._id) || []);
+    }
+  };
+
+  const startCheckout = async () => {
+    if (!storeCatalog || !email.trim()) {
+      toast.error("Enter the email where your originals should be delivered");
+      return;
+    }
+    if (purchaseMode === "selected" && !purchaseIds.size) return;
+    const idempotencyKey = checkoutKey || crypto.randomUUID();
+    if (!checkoutKey) setCheckoutKey(idempotencyKey);
+    setCheckingOut(true);
+    const [data, error] = await PostRequestAxios<{ url?: string }>(
+      "/store/public/checkout",
+      {
+        eventId,
+        purchaseMode,
+        imageIds: purchaseMode === "selected" ? [...purchaseIds] : undefined,
+        email: email.trim(),
+        whatsapp: whatsapp.trim() || undefined,
+        idempotencyKey,
+      },
+      { withCredentials: false, redirectOnUnauthorized: false },
+    );
+    setCheckingOut(false);
+    if (error || !data?.url) {
+      toast.error(error?.message || "Checkout failed");
+      return;
+    }
+    track("store_checkout");
+    window.location.href = data.url;
+  };
+
   const download = async (targetOverride?: GalleryImage[]) => {
     const target =
       targetOverride ||
@@ -556,8 +730,7 @@ export default function EventLiveGallery() {
       ),
     ];
     if (paidIds.length) {
-      track("store_click");
-      window.location.hash = `/store/${eventId}?photos=${encodeURIComponent(paidIds.join(","))}`;
+      openPurchase(paidIds);
       return;
     }
 
@@ -578,18 +751,57 @@ export default function EventLiveGallery() {
     focusedIndex >= 0 && focusedIndex < images.length
       ? images[focusedIndex]
       : undefined;
-  const copyGalleryLink = async () => {
-    const url = focusedImage
-      ? publicImageUrl(eventId, imageId(focusedImage))
+  const shareGallery = async (targetImage?: GalleryImage) => {
+    const targetId = targetImage ? imageId(targetImage) : undefined;
+    const url = targetId
+      ? publicImageUrl(eventId, targetId)
       : `${window.location.origin}${window.location.pathname}#/event/${eventId}`;
-    await navigator.clipboard.writeText(url);
-    track("share", focusedImage ? imageId(focusedImage) : undefined);
-    toast.success("Share link copied");
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: info?.title || "Event gallery",
+          text: targetId ? "View this event photo" : "View this event gallery",
+          url,
+        });
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast.success("Share link copied");
+      }
+      track("share", targetId);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      await navigator.clipboard.writeText(url);
+      toast.success("Share link copied");
+    }
   };
+
+  const toggleFullscreen = async () => {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  };
+
+  const startSlideshow = () => {
+    if (!images.length) return;
+    setFocusedIndex((current) => (current >= 0 ? current : 0));
+    setSlideshow(true);
+  };
+
+  useEffect(() => {
+    const legacyBuy = params.get("buy");
+    if (!legacyBuy || !storeCatalog) return;
+    if (legacyBuy === "all") openPurchase([], "event");
+    else openPurchase(legacyBuy.split(",").filter(Boolean));
+    const next = new URLSearchParams(params);
+    next.delete("buy");
+    setParams(next, { replace: true });
+  }, [openPurchase, params, setParams, storeCatalog]);
+
   const closeFocusedImage = () => {
     setFocusedIndex(-1);
+    setSlideshow(false);
     if (routeImageId) {
-      window.location.hash = `/event/${eventId}`;
+      const query = params.toString();
+      window.location.hash = `/event/${eventId}${query ? `?${query}` : ""}`;
     }
   };
 
@@ -673,8 +885,16 @@ export default function EventLiveGallery() {
         </p>
         {faceEnrollment ? (
           <div className="mt-5 grid grid-cols-3 gap-2">
-            <EnrollmentStep number="1" label="Selfies" done={selfies.length >= 2} />
-            <EnrollmentStep number="2" label="Contact" done={Boolean(email.trim() && whatsapp.trim())} />
+            <EnrollmentStep
+              number="1"
+              label="Selfies"
+              done={selfies.length >= 2}
+            />
+            <EnrollmentStep
+              number="2"
+              label="Contact"
+              done={Boolean(email.trim() && whatsapp.trim())}
+            />
             <EnrollmentStep number="3" label="Consent" done={consent} />
           </div>
         ) : null}
@@ -733,12 +953,16 @@ export default function EventLiveGallery() {
             <div className="rounded-xl border bg-muted/20 p-3">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-medium">Face samples</span>
-                <span className="text-muted-foreground">{selfies.length}/5 · minimum 2</span>
+                <span className="text-muted-foreground">
+                  {selfies.length}/5 · minimum 2
+                </span>
               </div>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
                 <div
                   className="h-full rounded-full bg-primary transition-all duration-300"
-                  style={{ width: `${Math.max(8, (selfies.length / 5) * 100)}%` }}
+                  style={{
+                    width: `${Math.max(8, (selfies.length / 5) * 100)}%`,
+                  }}
                 />
               </div>
             </div>
@@ -859,119 +1083,199 @@ export default function EventLiveGallery() {
 
   const visibleImages = images.slice(0, visibleCount);
   return (
-    <div className="min-h-screen bg-muted/20" style={style}>
-      <header
-        className={`absolute inset-x-0 top-0 z-40 border-b ${cover ? "border-white/15 bg-black/10 text-white" : "border-border bg-background/95"} backdrop-blur-sm`}
-      >
-        <div className="mx-auto flex h-16 max-w-[1500px] items-center justify-between gap-3 px-4 sm:px-6">
-          <div className="flex min-w-0 items-center gap-3">
-            {albumId ? (
-              <Button variant="ghost" size="icon" asChild aria-label="Back to gallery">
-                <Link
-                  to={`/event/${eventId}${accessToken ? `?access=${encodeURIComponent(accessToken)}` : ""}`}
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                </Link>
-              </Button>
-            ) : null}
-            {branding.logoUrl ? (
-              <img src={assetUrl(branding.logoUrl)} alt="" className="h-9 max-w-28 object-contain" />
-            ) : !branding.whiteLabel ? (
-              <span className="text-lg font-bold">airpix</span>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Copy gallery share link"
-              onClick={() => void copyGalleryLink()}
-            >
-              <Share2 className="h-4 w-4" />
-            </Button>
-            {guestToken ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Delete selfie profile"
-                onClick={() => void deletePersonalGallery()}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </header>
-
-      <section
-        className={`relative flex min-h-[72vh] items-center justify-center overflow-hidden border-b ${cover ? "bg-black text-white" : "bg-background pt-16"}`}
-      >
+    <div className="min-h-screen bg-background" style={style}>
+      <section className="relative h-[260px] overflow-hidden bg-zinc-950 sm:h-[340px]">
         {cover ? (
-          <img src={assetUrl(cover)} alt="" className="absolute inset-0 h-full w-full object-cover" />
-        ) : null}
-        {cover ? <div className="absolute inset-0 bg-black/55" /> : null}
-        <div className="relative mx-auto max-w-4xl px-4 py-24 text-center sm:px-6">
-          <Badge className="mb-4" variant={cover ? "secondary" : "outline"}>
-            {guestToken ? "Your personal gallery" : "Event gallery"}
-          </Badge>
-          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-            {branding.coverText || info?.title}
-          </h1>
-          {info?.description ? (
-            <p className={`mx-auto mt-4 max-w-2xl text-base ${cover ? "text-white/80" : "text-muted-foreground"}`}>
-              {info.description}
-            </p>
-          ) : null}
-        </div>
+          <img
+            src={assetUrl(cover)}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 via-zinc-950 to-black" />
+        )}
+        <div className="absolute inset-0 bg-black/25" />
         <button
           type="button"
           aria-label="View gallery photos"
-          className={`absolute bottom-6 left-1/2 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border ${cover ? "border-white/60 text-white" : "border-border"}`}
-          onClick={() => document.getElementById("gallery-grid")?.scrollIntoView({ behavior: "smooth" })}
+          className="absolute bottom-5 left-1/2 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/70 text-white transition hover:bg-white/15"
+          onClick={() =>
+            document
+              .getElementById("gallery-grid")
+              ?.scrollIntoView({ behavior: "smooth" })
+          }
         >
           <ArrowDown className="h-4 w-4" />
         </button>
       </section>
 
-      <main className="mx-auto max-w-[1500px] space-y-6 px-4 py-6 sm:px-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm text-muted-foreground">
-              {images.length} {guestToken ? "matching" : "published"} photos
-            </p>
-            {faceMatches ? (
-              <Badge variant="outline" className="mt-1">
-                Face matches
-              </Badge>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {faceMatches ? (
-              <Button variant="outline" onClick={() => void loadPublic()}>
-                <RefreshCw className="mr-2 h-4 w-4" /> Show all
+      <main className="mx-auto max-w-[1500px] space-y-6 bg-background px-4 py-5 sm:px-6">
+        <section className="border-b pb-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-3">
+                {albumId ? (
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    asChild
+                    aria-label="Back to event gallery"
+                  >
+                    <Link
+                      to={`/event/${eventId}${accessToken ? `?access=${encodeURIComponent(accessToken)}` : ""}`}
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                ) : null}
+                <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border bg-muted">
+                  {branding.logoUrl ? (
+                    <img
+                      src={assetUrl(branding.logoUrl)}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <Camera className="h-5 w-5" />
+                  )}
+                </div>
+                <p className="font-semibold">
+                  {branding.whiteLabel ? info?.title : "airpix"}
+                </p>
+                {guestToken ? (
+                  <Badge variant="secondary">Your personal gallery</Badge>
+                ) : null}
+              </div>
+              <h1 className="mt-7 text-2xl font-semibold tracking-tight sm:text-3xl">
+                {branding.coverText || info?.title}
+              </h1>
+              {info?.description ? (
+                <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                  {info.description}
+                </p>
+              ) : null}
+              <p className="mt-6 text-sm font-medium">
+                {images.length} {guestToken ? "matching" : "published"} photos
+              </p>
+              {faceMatches ? (
+                <Badge variant="outline" className="mt-2">
+                  Face matches
+                </Badge>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              {faceMatches ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void loadPublic()}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" /> Show all
+                </Button>
+              ) : null}
+              {storeCatalog && storeCatalog.data.length ? (
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    storeCatalog.settings.wholeEventPrice > 0
+                      ? openPurchase([], "event")
+                      : openPurchase(
+                          storeCatalog.data.map((photo) => photo._id),
+                        )
+                  }
+                >
+                  <ShoppingCart className="mr-2 h-4 w-4" />
+                  Buy all · {storeCatalog.settings.currency} {buyAllPrice.toFixed(2)}
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                size="icon"
+                disabled={downloading || images.length === 0}
+                aria-label={
+                  storeEnabled
+                    ? selected.size
+                      ? "Buy selected photos"
+                      : "Buy photos"
+                    : selected.size
+                      ? "Download selected photos"
+                      : "Download all photos"
+                }
+                onClick={() =>
+                  storeEnabled ? buySelectedOrAll() : void download()
+                }
+              >
+                {downloading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : storeEnabled ? (
+                  <ShoppingCart className="h-4 w-4" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
               </Button>
-            ) : null}
-            <Button
-              disabled={downloading || images.length === 0}
-              onClick={() => void download()}
-            >
-              {downloading ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : storeEnabled ? (
-                <ShoppingCart className="mr-2 h-4 w-4" />
-              ) : (
-                <Download className="mr-2 h-4 w-4" />
-              )}
-              {storeEnabled
-                ? selected.size
-                  ? `Buy ${selected.size} original${selected.size === 1 ? "" : "s"}`
-                  : "Buy originals"
-                : selected.size
-                  ? `Download ${selected.size}`
-                  : "Download all"}
-            </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Share gallery"
+                onClick={() => void shareGallery()}
+              >
+                <Share2 className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label={
+                  selected.size ? "Clear selection" : "Select all photos"
+                }
+                onClick={() =>
+                  setSelected(
+                    selected.size
+                      ? new Set()
+                      : new Set(images.map((image) => imageId(image))),
+                  )
+                }
+                disabled={!images.length}
+              >
+                <CheckCircle2 className="h-4 w-4" />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="More gallery actions"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuItem
+                    onSelect={startSlideshow}
+                    disabled={!images.length}
+                  >
+                    <Play className="mr-2 h-4 w-4" />
+                    Slideshow
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void toggleFullscreen()}>
+                    <Maximize2 className="mr-2 h-4 w-4" />
+                    Full screen
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {guestToken ? (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Delete selfie profile"
+                  onClick={() => void deletePersonalGallery()}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              ) : null}
+            </div>
           </div>
-        </div>
+        </section>
 
         {guestToken && info?.guestNotificationsEnabled ? (
           <Card>
@@ -1060,13 +1364,19 @@ export default function EventLiveGallery() {
             </p>
           </div>
         ) : (
-          <div id="gallery-grid" className="columns-1 gap-1 sm:columns-2 lg:columns-3 xl:columns-4">
+          <div
+            id="gallery-grid"
+            className="columns-1 gap-1 sm:columns-2 lg:columns-3 xl:columns-4"
+          >
             {visibleImages.map((image, index) => {
               const id = imageId(image);
               if (!id) return null;
               const isSelected = selected.has(id);
               return (
-                <article key={id} className="group relative mb-1 break-inside-avoid overflow-hidden bg-black">
+                <article
+                  key={id}
+                  className="group relative mb-1 break-inside-avoid overflow-hidden bg-black"
+                >
                   {image.imageUrl ? (
                     image.mediaType === "video" ? (
                       <video
@@ -1098,7 +1408,8 @@ export default function EventLiveGallery() {
                       <ImageIcon className="h-8 w-8 text-muted-foreground" />
                     </div>
                   )}
-                  {branding.watermarkUrl && branding.watermarkPosition === "tile" ? (
+                  {branding.watermarkUrl &&
+                  branding.watermarkPosition === "tile" ? (
                     <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-2 place-items-center gap-3 p-4">
                       {Array.from({ length: 6 }, (_, watermarkIndex) => (
                         <img
@@ -1106,7 +1417,10 @@ export default function EventLiveGallery() {
                           src={assetUrl(branding.watermarkUrl)}
                           alt=""
                           className="max-h-12 max-w-full object-contain"
-                          style={{ opacity: branding.watermarkOpacity ?? 0.7, width: `${Math.min(branding.watermarkScale ?? 24, 45)}%` }}
+                          style={{
+                            opacity: branding.watermarkOpacity ?? 0.7,
+                            width: `${Math.min(branding.watermarkScale ?? 24, 45)}%`,
+                          }}
                         />
                       ))}
                     </div>
@@ -1115,21 +1429,38 @@ export default function EventLiveGallery() {
                       src={assetUrl(branding.watermarkUrl)}
                       alt=""
                       className={`pointer-events-none absolute max-h-[60%] object-contain ${watermarkPositionClass(branding.watermarkPosition)}`}
-                      style={{ opacity: branding.watermarkOpacity ?? 0.7, width: `${branding.watermarkScale ?? 24}%` }}
+                      style={{
+                        opacity: branding.watermarkOpacity ?? 0.7,
+                        width: `${branding.watermarkScale ?? 24}%`,
+                      }}
                     />
                   ) : null}
                   <label className="absolute left-3 top-3 rounded-full bg-background/90 p-1.5 opacity-0 shadow transition group-hover:opacity-100 has-[:checked]:opacity-100">
-                    <Checkbox checked={isSelected} onCheckedChange={() => toggle(id)} aria-label="Select image" />
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => toggle(id)}
+                      aria-label="Select image"
+                    />
                   </label>
                   <Button
                     size="icon"
                     className="absolute bottom-3 right-3 h-9 w-9 rounded-full opacity-0 shadow transition group-hover:opacity-100"
-                    aria-label={image.purchaseRequired ? "Buy original photo" : "Download original photo"}
+                    aria-label={
+                      image.purchaseRequired
+                        ? "Buy original photo"
+                        : "Download original photo"
+                    }
                     onClick={() => void download([image])}
                   >
-                    {image.purchaseRequired ? <ShoppingCart className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+                    {image.purchaseRequired ? (
+                      <ShoppingCart className="h-4 w-4" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
                   </Button>
-                  {image.isEnhanced ? <Badge className="absolute right-3 top-3">Enhanced</Badge> : null}
+                  {image.isEnhanced ? (
+                    <Badge className="absolute right-3 top-3">Enhanced</Badge>
+                  ) : null}
                 </article>
               );
             })}
@@ -1181,7 +1512,11 @@ export default function EventLiveGallery() {
             disabled={faceSearching}
             onClick={() => setFindMeOpen(true)}
           >
-            {faceSearching ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <UserRoundSearch className="mr-2 h-5 w-5" />}
+            {faceSearching ? (
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+            ) : (
+              <UserRoundSearch className="mr-2 h-5 w-5" />
+            )}
             Find Me
           </Button>
         </>
@@ -1196,6 +1531,134 @@ export default function EventLiveGallery() {
         />
       ) : null}
 
+      <Sheet open={purchaseOpen} onOpenChange={setPurchaseOpen}>
+        <SheetContent
+          side="bottom"
+          className="max-h-[90vh] overflow-y-auto rounded-t-3xl px-4 pb-8 pt-6"
+        >
+          <div className="mx-auto w-full max-w-3xl space-y-6">
+            <SheetHeader className="pr-8">
+              <SheetTitle className="text-2xl">Purchase originals</SheetTitle>
+              <SheetDescription>
+                Complete payment securely with Stripe. Your full-resolution,
+                unwatermarked photos will be delivered by email.
+              </SheetDescription>
+            </SheetHeader>
+
+            {storeCatalog ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    className={`rounded-2xl border p-4 text-left transition ${
+                      purchaseMode === "selected"
+                        ? "border-primary bg-primary/5"
+                        : "hover:bg-muted/40"
+                    }`}
+                    onClick={() => setPurchaseMode("selected")}
+                  >
+                    <p className="font-semibold">
+                      {purchaseIds.size} selected photo
+                      {purchaseIds.size === 1 ? "" : "s"}
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {storeCatalog.settings.currency}{" "}
+                      {(storeCatalog.settings.bundlePrice > 0 &&
+                      purchaseIds.size >= storeCatalog.settings.bundleMinPhotos
+                        ? storeCatalog.settings.bundlePrice
+                        : storeCatalog.settings.singlePhotoPrice *
+                          purchaseIds.size
+                      ).toFixed(2)}
+                    </p>
+                  </button>
+                  {storeCatalog.settings.wholeEventPrice > 0 ? (
+                    <button
+                      type="button"
+                      className={`rounded-2xl border p-4 text-left transition ${
+                        purchaseMode === "event"
+                          ? "border-primary bg-primary/5"
+                          : "hover:bg-muted/40"
+                      }`}
+                      onClick={() => setPurchaseMode("event")}
+                    >
+                      <p className="font-semibold">
+                        Buy all {storeCatalog.totalItems} photos
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {storeCatalog.settings.currency}{" "}
+                        {storeCatalog.settings.wholeEventPrice.toFixed(2)}
+                      </p>
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Email for delivery</Label>
+                    <Input
+                      type="email"
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="you@example.com"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>WhatsApp (optional)</Label>
+                    <Input
+                      value={whatsapp}
+                      onChange={(event) => setWhatsapp(event.target.value)}
+                      placeholder="+1..."
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3 rounded-2xl bg-muted/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      {purchaseMode === "event"
+                        ? `${storeCatalog.totalItems} event photos`
+                        : `${purchaseIds.size} selected photo${
+                            purchaseIds.size === 1 ? "" : "s"
+                          }`}
+                    </p>
+                    <p className="text-2xl font-bold">
+                      {storeCatalog.settings.currency}{" "}
+                      {purchasePrice.toFixed(2)}
+                    </p>
+                  </div>
+                  <Button
+                    size="lg"
+                    disabled={
+                      checkingOut ||
+                      !email.trim() ||
+                      (purchaseMode === "selected" && !purchaseIds.size)
+                    }
+                    onClick={() => void startCheckout()}
+                  >
+                    {checkingOut ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <ShoppingCart className="mr-2 h-4 w-4" />
+                    )}
+                    Continue to secure checkout
+                  </Button>
+                </div>
+
+                {storeCatalog.settings.termsText ? (
+                  <p className="text-xs text-muted-foreground">
+                    {storeCatalog.settings.termsText}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <div className="flex min-h-32 items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
       {focusedImage ? (
         <GalleryLightbox
           image={focusedImage}
@@ -1203,10 +1666,26 @@ export default function EventLiveGallery() {
           position={focusedIndex + 1}
           total={images.length}
           onClose={closeFocusedImage}
-          onPrevious={() => setFocusedIndex((index) => (index - 1 + images.length) % images.length)}
+          slideshow={slideshow}
+          onPrevious={() =>
+            setFocusedIndex(
+              (index) => (index - 1 + images.length) % images.length,
+            )
+          }
           onNext={() => setFocusedIndex((index) => (index + 1) % images.length)}
-          onDownload={() => void download([focusedImage])}
-          onCopyLink={() => void copyGalleryLink()}
+          onToggleSlideshow={() => setSlideshow((value) => !value)}
+          onFullscreen={() => void toggleFullscreen()}
+          onShare={() => void shareGallery(focusedImage)}
+          onPrimaryAction={() => {
+            if (focusedImage.purchaseRequired) {
+              const storeId =
+                focusedImage.storeImageId || imageId(focusedImage);
+              closeFocusedImage();
+              openPurchase([storeId]);
+            } else {
+              void download([focusedImage]);
+            }
+          }}
         />
       ) : null}
 
@@ -1235,28 +1714,52 @@ export function FindMeDialog({
   onUpload: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-4" role="dialog" aria-modal="true" aria-labelledby="find-me-title">
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="find-me-title"
+    >
       <div className="relative w-full max-w-md rounded-3xl bg-background p-6 shadow-2xl">
-        <Button variant="ghost" size="icon" className="absolute right-3 top-3" aria-label="Close Find Me" onClick={onClose}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute right-3 top-3"
+          aria-label="Close Find Me"
+          onClick={onClose}
+        >
           <X className="h-5 w-5" />
         </Button>
         <UserRoundSearch className="mb-4 h-9 w-9" />
-        <h2 id="find-me-title" className="text-2xl font-bold">Find all your photos</h2>
+        <h2 id="find-me-title" className="text-2xl font-bold">
+          Find all your photos
+        </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Take a clear selfie now or upload one from your device. Face matching will show every photo of you in this event.
+          Take a clear selfie now or upload one from your device. Face matching
+          will show every photo of you in this event.
         </p>
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
-          <Button className="h-24 flex-col gap-2" disabled={busy} onClick={onCamera}>
+          <Button
+            className="h-24 flex-col gap-2"
+            disabled={busy}
+            onClick={onCamera}
+          >
             <Camera className="h-6 w-6" />
             Take a photo
           </Button>
-          <Button className="h-24 flex-col gap-2" variant="outline" disabled={busy} onClick={onUpload}>
+          <Button
+            className="h-24 flex-col gap-2"
+            variant="outline"
+            disabled={busy}
+            onClick={onUpload}
+          >
             <Upload className="h-6 w-6" />
             Upload a selfie
           </Button>
         </div>
         <p className="mt-4 text-xs text-muted-foreground">
-          Your selfie is used only to search this gallery unless you explicitly create a reusable face profile.
+          Your selfie is used only to search this gallery unless you explicitly
+          create a reusable face profile.
         </p>
       </div>
     </div>
@@ -1268,55 +1771,144 @@ function GalleryLightbox({
   imageUrl,
   position,
   total,
+  slideshow,
   onClose,
   onPrevious,
   onNext,
-  onDownload,
-  onCopyLink,
+  onToggleSlideshow,
+  onFullscreen,
+  onShare,
+  onPrimaryAction,
 }: {
   image: GalleryImage;
   imageUrl: string;
   position: number;
   total: number;
+  slideshow: boolean;
   onClose: () => void;
   onPrevious: () => void;
   onNext: () => void;
-  onDownload: () => void;
-  onCopyLink: () => void;
+  onToggleSlideshow: () => void;
+  onFullscreen: () => void;
+  onShare: () => void;
+  onPrimaryAction: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black text-white" role="dialog" aria-modal="true" aria-label="Photo viewer">
-      <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between p-3 sm:p-5">
-        <Button variant="ghost" size="icon" className="text-white hover:bg-white/10 hover:text-white" aria-label="Close photo" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black text-white"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Photo viewer"
+    >
+      <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-black/70 to-transparent p-3 pb-10 sm:p-5 sm:pb-12">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-white hover:bg-white/10 hover:text-white"
+          aria-label="Close photo"
+          onClick={onClose}
+        >
           <ArrowLeft className="h-6 w-6" />
         </Button>
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="text-white hover:bg-white/10 hover:text-white" aria-label="Copy photo link" onClick={onCopyLink}>
-            <Copy className="h-5 w-5" />
+          <Button
+            variant={image.purchaseRequired ? "secondary" : "ghost"}
+            size={image.purchaseRequired ? "sm" : "icon"}
+            className={
+              image.purchaseRequired
+                ? "bg-white text-black hover:bg-white/90"
+                : "text-white hover:bg-white/10 hover:text-white"
+            }
+            aria-label={
+              image.purchaseRequired
+                ? "Buy this photo"
+                : "Download original photo"
+            }
+            onClick={onPrimaryAction}
+          >
+            {image.purchaseRequired ? (
+              <>
+                <ShoppingCart className="mr-2 h-4 w-4" />
+                Buy this photo
+              </>
+            ) : (
+              <Download className="h-5 w-5" />
+            )}
           </Button>
-          <Button variant="ghost" size="icon" className="text-white hover:bg-white/10 hover:text-white" aria-label={image.purchaseRequired ? "Buy original photo" : "Download original photo"} onClick={onDownload}>
-            {image.purchaseRequired ? <ShoppingCart className="h-5 w-5" /> : <Download className="h-5 w-5" />}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-white hover:bg-white/10 hover:text-white"
+            aria-label="Share photo"
+            onClick={onShare}
+          >
+            <Share2 className="h-5 w-5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-white hover:bg-white/10 hover:text-white"
+            aria-label={slideshow ? "Pause slideshow" : "Start slideshow"}
+            onClick={onToggleSlideshow}
+          >
+            {slideshow ? (
+              <Pause className="h-5 w-5" />
+            ) : (
+              <Play className="h-5 w-5" />
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-white hover:bg-white/10 hover:text-white"
+            aria-label="Full screen"
+            onClick={onFullscreen}
+          >
+            <Maximize2 className="h-5 w-5" />
           </Button>
         </div>
       </div>
       {total > 1 ? (
         <>
-          <Button variant="ghost" size="icon" className="absolute left-2 z-10 text-white hover:bg-white/10 hover:text-white sm:left-5" aria-label="Previous photo" onClick={onPrevious}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute left-2 z-10 text-white hover:bg-white/10 hover:text-white sm:left-5"
+            aria-label="Previous photo"
+            onClick={onPrevious}
+          >
             <ChevronLeft className="h-8 w-8" />
           </Button>
-          <Button variant="ghost" size="icon" className="absolute right-2 z-10 text-white hover:bg-white/10 hover:text-white sm:right-5" aria-label="Next photo" onClick={onNext}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute right-2 z-10 text-white hover:bg-white/10 hover:text-white sm:right-5"
+            aria-label="Next photo"
+            onClick={onNext}
+          >
             <ChevronRight className="h-8 w-8" />
           </Button>
         </>
       ) : null}
       {image.mediaType === "video" ? (
-        <video src={imageUrl} controls autoPlay className="max-h-screen max-w-full" />
+        <video
+          src={imageUrl}
+          controls
+          autoPlay
+          className="max-h-screen max-w-full"
+        />
       ) : (
-        <img src={imageUrl} alt={`Event photo ${position}`} className="max-h-screen max-w-full object-contain" />
+        <img
+          src={imageUrl}
+          alt={`Event photo ${position}`}
+          className="max-h-screen max-w-full object-contain"
+        />
       )}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/55 px-3 py-1.5 text-xs">
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1.5 text-xs">
         {position} / {total}
-        {image.purchaseRequired ? " · Preview — purchase unlocks original" : ""}
+        {image.purchaseRequired
+          ? " · Preview — purchase unlocks the original"
+          : ""}
       </div>
     </div>
   );
@@ -1378,7 +1970,9 @@ function EnrollmentStep({
   done: boolean;
 }) {
   return (
-    <div className={`rounded-xl border p-2.5 text-center transition-all duration-200 ${done ? "border-primary/30 bg-primary/5" : "bg-muted/20"}`}>
+    <div
+      className={`rounded-xl border p-2.5 text-center transition-all duration-200 ${done ? "border-primary/30 bg-primary/5" : "bg-muted/20"}`}
+    >
       <div className="mx-auto flex h-7 w-7 items-center justify-center rounded-full border bg-background text-xs font-bold">
         {done ? <CheckCircle2 className="h-4 w-4 text-primary" /> : number}
       </div>

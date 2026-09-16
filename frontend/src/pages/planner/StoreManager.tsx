@@ -296,12 +296,12 @@ export default function StoreManager() {
             {selected ? (
               <Button variant="outline" asChild>
                 <a
-                  href={`/#/store/${selected}`}
+                  href={`/#/event/${selected}`}
                   target="_blank"
                   rel="noreferrer"
                 >
                   <ExternalLink className="mr-2 h-4 w-4" />
-                  Open store
+                  Open event gallery
                 </a>
               </Button>
             ) : null}

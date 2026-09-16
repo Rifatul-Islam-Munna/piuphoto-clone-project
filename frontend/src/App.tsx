@@ -7,6 +7,7 @@ import {
   Route,
   Navigate,
   useLocation,
+  useParams,
 } from "react-router-dom";
 import { ReactNode } from "react";
 import QueryClint from "../lib/QueryClint";
@@ -41,7 +42,6 @@ import RetouchConsole from "./pages/retouch/RetouchConsole";
 import StoreManager from "./pages/planner/StoreManager";
 import AnalyticsDashboard from "./pages/planner/AnalyticsDashboard";
 import ApiPlatform from "./pages/planner/ApiPlatform";
-import Storefront from "./pages/public/Storefront";
 import StoreOrder from "./pages/public/StoreOrder";
 import { SiteSettingsProvider } from "./components/landing/site-settings-context";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
@@ -143,6 +143,14 @@ const WorkspaceRedirect = () => {
   }
   return <Navigate to="/planner/dashboard" replace />;
 };
+const LegacyStoreRedirect = () => {
+  const { eventId = "" } = useParams();
+  const location = useLocation();
+  const photos = new URLSearchParams(location.search).get("photos");
+  const query = photos ? `?buy=${encodeURIComponent(photos)}` : "";
+  return <Navigate to={`/event/${eventId}${query}`} replace />;
+};
+
 const App = () => (
   <QueryClint>
     <TooltipProvider>
@@ -161,7 +169,7 @@ const App = () => (
               element={<TermsAndConditions />}
             />
             <Route path="/g/:slug" element={<GallerySlugRedirect />} />
-            <Route path="/store/:eventId" element={<Storefront />} />
+            <Route path="/store/:eventId" element={<LegacyStoreRedirect />} />
             <Route path="/store/order/:orderId" element={<StoreOrder />} />
             <Route path="/event/:eventId" element={<EventLiveGallery />} />
             <Route
