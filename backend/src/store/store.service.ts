@@ -1011,14 +1011,29 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
   async settingsForPlanner(eventId: string, userId?: string, role?: string) {
     await this.members.assertCanManage(eventId, userId, role);
-    const data: any = await this.getSettings(eventId, true);
-    const { stripeSecretCipher, stripeWebhookSecretCipher, ...safe } =
-      data || {};
+    const settings: any = (await this.getSettings(eventId, true)) || {};
     return {
       data: {
-        ...safe,
-        customStripeConfigured: Boolean(stripeSecretCipher),
-        customStripeWebhookConfigured: Boolean(stripeWebhookSecretCipher),
+        enabled: Boolean(settings.enabled),
+        currency: settings.currency || 'USD',
+        singlePhotoPrice: Number(settings.singlePhotoPrice ?? 5),
+        wholeEventPrice: Number(settings.wholeEventPrice ?? 0),
+        bundlePrice: Number(settings.bundlePrice ?? 0),
+        bundleMinPhotos: Number(settings.bundleMinPhotos ?? 10),
+        downloadExpiresHours: Number(settings.downloadExpiresHours ?? 72),
+        watermarkedPreview: settings.watermarkedPreview !== false,
+        previewMaxWidth: Number(settings.previewMaxWidth ?? 1200),
+        previewQuality: Number(settings.previewQuality ?? 64),
+        useCustomStripe: Boolean(settings.useCustomStripe),
+        stripeAccountLabel: settings.stripeAccountLabel || '',
+        coverTitle: settings.coverTitle || '',
+        coverImageUrl: settings.coverImageUrl || '',
+        termsText: settings.termsText || '',
+        saleAlbumIds: settings.saleAlbumIds || [],
+        customStripeConfigured: Boolean(settings.stripeSecretCipher),
+        customStripeWebhookConfigured: Boolean(
+          settings.stripeWebhookSecretCipher,
+        ),
       },
     };
   }

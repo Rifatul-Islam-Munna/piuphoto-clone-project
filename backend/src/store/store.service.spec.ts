@@ -27,13 +27,9 @@ describe('StoreService checkout idempotency', () => {
     };
     const images = {
       find: jest.fn().mockReturnValue({
-        select: jest
-          .fn()
-          .mockReturnValue({
-            lean: jest
-              .fn()
-              .mockResolvedValue([{ _id: photoA }, { _id: photoB }]),
-          }),
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([{ _id: photoA }, { _id: photoB }]),
+        }),
       }),
     };
     const order = {
@@ -102,5 +98,76 @@ describe('StoreService without Stripe webhook secret', () => {
       verified: false,
       mode: 'stripe-api-reconciliation',
     });
+  });
+});
+
+describe('StoreService planner settings response', () => {
+  it('does not expose Mongo metadata that the settings DTO rejects', async () => {
+    const eventId = String(new Types.ObjectId());
+    const storedSettings = {
+      _id: new Types.ObjectId(),
+      property_id: 'virtual-metadata',
+      eventId: new Types.ObjectId(eventId),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      __v: 0,
+      enabled: true,
+      currency: 'USD',
+      singlePhotoPrice: 5,
+      wholeEventPrice: 100,
+      bundlePrice: 20,
+      bundleMinPhotos: 5,
+      downloadExpiresHours: 72,
+      watermarkedPreview: true,
+      previewMaxWidth: 1200,
+      previewQuality: 64,
+      useCustomStripe: false,
+      coverTitle: 'Conference Store',
+      coverImageUrl: 'https://example.com/cover.jpg',
+      saleAlbumIds: [],
+      stripeSecretCipher: 'encrypted',
+    };
+    const settingsModel = {
+      findOneAndUpdate: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(storedSettings),
+      }),
+    };
+    const members = {
+      assertCanManage: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new StoreService(
+      settingsModel as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      members as never,
+      { get: jest.fn() } as never,
+      {
+        emailConfigured: jest.fn().mockReturnValue(false),
+        whatsappConfigured: jest.fn().mockReturnValue(false),
+      } as never,
+    );
+
+    const result = await service.settingsForPlanner(
+      eventId,
+      String(new Types.ObjectId()),
+      'photographer',
+    );
+
+    expect(result.data).toMatchObject({
+      enabled: true,
+      coverTitle: 'Conference Store',
+      coverImageUrl: 'https://example.com/cover.jpg',
+      customStripeConfigured: true,
+    });
+    expect(result.data).not.toHaveProperty('property_id');
+    expect(result.data).not.toHaveProperty('_id');
+    expect(result.data).not.toHaveProperty('eventId');
+    expect(result.data).not.toHaveProperty('createdAt');
+    expect(result.data).not.toHaveProperty('updatedAt');
+    expect(result.data).not.toHaveProperty('__v');
+    expect(result.data).not.toHaveProperty('stripeSecretCipher');
   });
 });

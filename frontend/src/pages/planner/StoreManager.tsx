@@ -139,20 +139,34 @@ export default function StoreManager() {
   });
   useEffect(() => {
     const data = settingsQ.data?.data;
-    if (data)
-      setForm({
-        ...data,
-        wholeEventPrice: data.wholeEventPrice || 0,
-        previewMaxWidth: data.previewMaxWidth || 1200,
-        previewQuality: data.previewQuality || 64,
-        useCustomStripe: Boolean(data.useCustomStripe),
-        stripeSecretKey: "",
-        stripeWebhookSecret: "",
-        coverTitle: data.coverTitle || "",
-        coverImageUrl: data.coverImageUrl || "",
-        termsText: data.termsText || "",
-        saleAlbumIds: normalIds(data.saleAlbumIds),
-      });
+    if (!data) return;
+
+    // Keep only editable fields. API/Mongo metadata such as property_id, _id,
+    // timestamps and __v must never become part of the PATCH payload.
+    setForm({
+      enabled: Boolean(data.enabled),
+      currency: data.currency || "USD",
+      singlePhotoPrice: Number(data.singlePhotoPrice ?? 5),
+      wholeEventPrice: Number(data.wholeEventPrice ?? 0),
+      bundlePrice: Number(data.bundlePrice ?? 0),
+      bundleMinPhotos: Number(data.bundleMinPhotos ?? 10),
+      downloadExpiresHours: Number(data.downloadExpiresHours ?? 72),
+      watermarkedPreview: data.watermarkedPreview !== false,
+      previewMaxWidth: Number(data.previewMaxWidth ?? 1200),
+      previewQuality: Number(data.previewQuality ?? 64),
+      useCustomStripe: Boolean(data.useCustomStripe),
+      stripeAccountLabel: data.stripeAccountLabel || "",
+      stripeSecretKey: "",
+      stripeWebhookSecret: "",
+      customStripeConfigured: Boolean(data.customStripeConfigured),
+      customStripeWebhookConfigured: Boolean(
+        data.customStripeWebhookConfigured,
+      ),
+      coverTitle: data.coverTitle || "",
+      coverImageUrl: data.coverImageUrl || "",
+      termsText: data.termsText || "",
+      saleAlbumIds: normalIds(data.saleAlbumIds),
+    });
   }, [settingsQ.data?.data]);
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["store-settings"] });
@@ -188,11 +202,31 @@ export default function StoreManager() {
   };
   const save = useMutation({
     mutationFn: async () => {
-      const [r, e] = await PatchRequestAxios(
-        "/store/settings",
-        { eventId: selected, ...form },
-        { withToken: true, withCredentials: true },
-      );
+      const payload = {
+        eventId: selected,
+        enabled: form.enabled,
+        currency: form.currency,
+        singlePhotoPrice: form.singlePhotoPrice,
+        wholeEventPrice: form.wholeEventPrice,
+        bundlePrice: form.bundlePrice,
+        bundleMinPhotos: form.bundleMinPhotos,
+        downloadExpiresHours: form.downloadExpiresHours,
+        watermarkedPreview: form.watermarkedPreview,
+        previewMaxWidth: form.previewMaxWidth,
+        previewQuality: form.previewQuality,
+        useCustomStripe: form.useCustomStripe,
+        stripeAccountLabel: form.stripeAccountLabel || "",
+        stripeSecretKey: form.stripeSecretKey || "",
+        stripeWebhookSecret: form.stripeWebhookSecret || "",
+        coverTitle: form.coverTitle || "",
+        coverImageUrl: form.coverImageUrl || "",
+        termsText: form.termsText || "",
+        saleAlbumIds: form.saleAlbumIds || [],
+      };
+      const [r, e] = await PatchRequestAxios("/store/settings", payload, {
+        withToken: true,
+        withCredentials: true,
+      });
       if (e || !r) throw new Error(e?.message || "Could not save store");
       return r;
     },
