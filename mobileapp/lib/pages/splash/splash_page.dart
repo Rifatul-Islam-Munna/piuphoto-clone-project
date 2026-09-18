@@ -41,24 +41,54 @@ class _SplashPageState extends State<SplashPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.background,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.xl),
-              child: Image.asset(
-                'assets/logo.jpeg',
-                width: 170,
-                height: 106,
-                fit: BoxFit.cover,
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                gradient: AppGradients.studio,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 28,
+                    offset: const Offset(0, 14),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.camera_alt_rounded,
+                color: Colors.white,
+                size: 32,
+              ),
+            ),
+            const SizedBox(height: 18),
+            const Text(
+              'Airpix',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.8,
+                color: AppColors.foreground,
+              ),
+            ),
+            const SizedBox(height: 7),
+            const Text(
+              'Live photo delivery',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.mutedForeground,
               ),
             ),
             const SizedBox(height: 32),
             const SizedBox(
-              height: 26,
-              width: 26,
-              child: CircularProgressIndicator(strokeWidth: 2.5),
+              width: 80,
+              child: LinearProgressIndicator(minHeight: 3),
             ),
           ],
         ),

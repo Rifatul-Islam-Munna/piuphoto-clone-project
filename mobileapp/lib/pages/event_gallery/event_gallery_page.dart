@@ -779,12 +779,29 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
 
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        foregroundColor: Colors.white,
-        title: Text(
-          profileSetup
-              ? 'Global face delivery'
-              : (widget.albumTitle ?? 'Event photos'),
+        toolbarHeight: 76,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              profileSetup
+                  ? 'Face delivery'
+                  : (widget.albumTitle ?? 'Event photos'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 3),
+            Text(
+              profileSetup
+                  ? 'Set up your personal gallery'
+                  : 'Tap photos to select and download',
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w500,
+                color: AppColors.mutedForeground,
+              ),
+            ),
+          ],
         ),
         actions: [
           if (!_accessBlocked && !profileSetup)
@@ -844,12 +861,12 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
             )
           : GridView.builder(
               controller: _scrollController,
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 20),
               itemCount: visible.length,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
+                mainAxisSpacing: 5,
+                crossAxisSpacing: 5,
               ),
               itemBuilder: (context, index) {
                 final image = visible[index];
@@ -867,7 +884,7 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
                     fit: StackFit.expand,
                     children: [
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        borderRadius: BorderRadius.circular(9),
                         child: ImageLoader.loadImage(
                           image.imageUrl,
                           fit: BoxFit.cover,
@@ -877,7 +894,7 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
                         DecoratedBox(
                           decoration: BoxDecoration(
                             color: AppColors.primary.withValues(alpha: 0.16),
-                            borderRadius: BorderRadius.circular(AppRadius.md),
+                            borderRadius: BorderRadius.circular(9),
                             border: Border.all(
                               color: AppColors.primary,
                               width: 2,

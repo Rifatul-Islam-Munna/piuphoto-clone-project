@@ -7,6 +7,7 @@ import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
+import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/pages/event_gallery/event_qr_scan_page.dart';
@@ -227,7 +228,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               slivers: [
                 _buildAppBar(context, user, isPhotographer),
                 SliverPadding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
                   sliver: SliverList(
                     delegate: SliverChildListDelegate([
                       if (_isRefreshingProfile)
@@ -255,90 +256,89 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     bool isPhotographer,
   ) {
     final isLoggedIn = user != null;
-    final primaryColor = Theme.of(context).colorScheme.primary;
+    final displayName = isLoggedIn ? user.displayLabel.toString() : 'Airpix';
+    final subtitle = !isLoggedIn
+        ? 'Live photo delivery'
+        : isPhotographer
+        ? 'Photographer workspace'
+        : 'Event planner · ${user.credits ?? 0} credits';
 
     return SliverAppBar(
-      expandedHeight: 100,
       pinned: true,
-      backgroundColor: primaryColor,
+      toolbarHeight: 82,
+      backgroundColor: AppColors.background,
+      surfaceTintColor: Colors.transparent,
+      scrolledUnderElevation: 0,
       automaticallyImplyLeading: false,
-      flexibleSpace: FlexibleSpaceBar(
-        background: Container(
-          decoration: BoxDecoration(gradient: AppGradients.brand),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  if (isLoggedIn) ...[
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(9),
-                      child: Image.asset(
-                        'assets/logo.jpeg',
-                        width: 36,
-                        height: 36,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isPhotographer
-                                ? 'Photographer studio'
-                                : (user.displayLabel ?? 'Welcome'),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15.5,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.2,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          if (!isPhotographer && isLoggedIn)
-                            Text(
-                              'Event planner · ${user.credits ?? 0} credits',
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.82),
-                                fontSize: 12,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.notifications_outlined,
-                        color: Colors.white,
-                        size: 22,
-                      ),
-                      onPressed: () {},
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                  ] else ...[
-                    const Icon(Icons.camera_alt, color: Colors.white, size: 24),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'Airpix',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                  ],
-                ],
-              ),
+      titleSpacing: 20,
+      title: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppColors.darkSection,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(
+              Icons.camera_alt_rounded,
+              color: Colors.white,
+              size: 21,
             ),
           ),
-        ),
-        title: const Text(''),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 16.5,
+                    height: 1.1,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.35,
+                    color: AppColors.foreground,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.mutedForeground,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isLoggedIn) ...[
+            const SizedBox(width: 8),
+            Container(
+              width: 39,
+              height: 39,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.cream,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Text(
+                user.avatarText.toString(),
+                style: const TextStyle(
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -347,24 +347,49 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return ValueListenableBuilder(
       valueListenable: ActiveEventStorage.activeEvent,
       builder: (context, activeEvent, _) {
+        final hasPlannerAccess =
+            UserStorage.currentUser.value?.hasPlannerAccess ?? false;
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildPhotographerWorkspaceHero(context, activeEvent),
-            const SizedBox(height: 22),
-            _buildSectionTitle(context, 'Studio overview'),
+            const SizedBox(height: 18),
+            AppPrimaryActionCard(
+              icon: activeEvent == null
+                  ? Icons.event_available_outlined
+                  : Icons.cloud_upload_outlined,
+              title: activeEvent == null
+                  ? 'Connect a shoot'
+                  : 'Continue photo delivery',
+              subtitle: activeEvent == null
+                  ? 'Choose an event or accept an invitation before shooting.'
+                  : 'Upload new photos to ${activeEvent.title}.',
+              actionLabel: activeEvent == null ? 'Choose' : 'Upload',
+              onTap: () {
+                if (activeEvent != null) {
+                  context.router.root.push(const UploadRoute());
+                } else if (hasPlannerAccess) {
+                  context.router.root.push(const EventsRoute());
+                } else {
+                  context.router.root.push(const InvitationsRoute());
+                }
+              },
+            ),
+            const SizedBox(height: 26),
+            _buildSectionTitle(context, 'Today'),
             const SizedBox(height: 12),
-            _buildStatsRow(),
-            const SizedBox(height: 24),
-            _buildSectionTitle(context, 'Active assignment'),
+            _buildStatsRow(activeEvent),
+            const SizedBox(height: 26),
+            _buildSectionTitle(context, 'Active event'),
             const SizedBox(height: 12),
             _buildEventCard(context, activeEvent),
-            const SizedBox(height: 24),
-            _buildSectionTitle(context, 'Shoot toolkit'),
+            const SizedBox(height: 26),
+            _buildSectionTitle(context, 'Quick tools'),
             const SizedBox(height: 12),
             _buildActionsGrid(context, activeEvent),
-            const SizedBox(height: 24),
-            _buildSectionTitle(context, 'Connection guide'),
+            const SizedBox(height: 26),
+            _buildSectionTitle(context, 'Camera connection help'),
             const SizedBox(height: 12),
             _buildHowItWorks(context),
           ],
@@ -465,20 +490,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildPlannerWorkspaceHeader(context, activeEvent),
-            const SizedBox(height: 22),
-            _buildSectionTitle(context, 'Active event'),
-            const SizedBox(height: 12),
-            _buildEventCard(context, activeEvent),
-            const SizedBox(height: 24),
-            _buildSectionTitle(context, 'Manage'),
+            const SizedBox(height: 18),
+            AppPrimaryActionCard(
+              icon: activeEvent == null
+                  ? Icons.add_circle_outline_rounded
+                  : Icons.event_available_outlined,
+              title: activeEvent == null
+                  ? 'Create your next event'
+                  : 'Manage ${activeEvent.title}',
+              subtitle: activeEvent == null
+                  ? 'Set up an event, invite photographers and start delivery.'
+                  : 'Open events to manage galleries, guests and photographers.',
+              actionLabel: activeEvent == null ? 'Create' : 'Manage',
+              onTap: () => context.router.root.push(const EventsRoute()),
+            ),
+            const SizedBox(height: 26),
+            _buildSectionTitle(context, 'Workspace shortcuts'),
             const SizedBox(height: 12),
             _buildUserQuickActions(context),
-            const SizedBox(height: 24),
-            _buildSectionTitle(context, 'Your plans'),
+            const SizedBox(height: 28),
+            _buildSectionTitle(context, 'Plans'),
             const SizedBox(height: 12),
             _buildPlansSection(context),
-            const SizedBox(height: 24),
-            _buildSectionTitle(context, 'Credit addons'),
+            const SizedBox(height: 26),
+            _buildSectionTitle(context, 'Extra credits'),
             const SizedBox(height: 12),
             _buildAddonsSection(context),
           ],
@@ -504,9 +539,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         border: Border.all(color: AppColors.border),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.07),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
+            color: Colors.black.withValues(alpha: 0.035),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
@@ -549,28 +584,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
               ),
               const SizedBox(width: 8),
-              AppPill(
-                label: 'Planner',
-                icon: Icons.workspace_premium_outlined,
-              ),
+              AppPill(label: 'Planner', icon: Icons.workspace_premium_outlined),
             ],
           ),
           const SizedBox(height: 14),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               AppPill(
                 label: '$credits credits',
                 icon: Icons.toll_outlined,
+                color: AppColors.tertiary,
               ),
-              const SizedBox(width: 8),
               AppPill(
-                label: activeEvent == null ? 'No active event' : activeEvent.title,
+                label: activeEvent == null
+                    ? 'No active event'
+                    : activeEvent.title,
                 icon: activeEvent == null
                     ? Icons.event_busy_outlined
                     : Icons.event_available_outlined,
                 color: activeEvent == null
                     ? AppColors.mutedForeground
-                    : AppColors.primary,
+                    : AppColors.secondary,
               ),
             ],
           ),
@@ -583,10 +619,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildHeroSection(context),
-        const SizedBox(height: 24),
         _buildGuestQrCard(context),
-        const SizedBox(height: 24),
+        const SizedBox(height: 18),
+        _buildHeroSection(context),
+        const SizedBox(height: 26),
         _buildSectionTitle(context, 'Why Airpix?'),
         const SizedBox(height: 12),
         _buildFeaturesList(context),
@@ -608,156 +644,175 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return AppSectionTitle(title: title);
   }
 
-  Widget _buildStatsRow() {
-    return Row(
-      children: [
-        Expanded(
-          child: _StatTile(
-            icon: Icons.photo_library_outlined,
-            value: '0',
-            label: 'Photos',
-            color: Colors.blue,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _StatTile(
-            icon: Icons.mail_outline,
-            value: '0',
-            label: 'Invites',
-            color: Colors.purple,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _StatTile(
-            icon: Icons.cloud_done_outlined,
-            value: '0',
-            label: 'Uploaded',
-            color: Colors.green,
-          ),
-        ),
-      ],
+  Widget _buildStatsRow(dynamic activeEvent) {
+    final eventId = activeEvent?.id?.toString();
+
+    return ValueListenableBuilder<List<TransferLedgerItem>>(
+      valueListenable: TransferLedgerStorage.items,
+      builder: (context, items, _) {
+        final eventTransfers = eventId == null
+            ? const <TransferLedgerItem>[]
+            : items.where((item) => item.eventId == eventId).toList();
+        final pending = eventTransfers.where((item) => item.isPending).length;
+        final uploaded = eventTransfers.where((item) => item.isUploaded).length;
+        final photos = activeEvent?.photosCount ?? 0;
+
+        return Row(
+          children: [
+            Expanded(
+              child: _StatTile(
+                icon: Icons.photo_library_outlined,
+                value: '$photos',
+                label: 'Event photos',
+                color: AppColors.primary,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _StatTile(
+                icon: Icons.schedule_rounded,
+                value: '$pending',
+                label: 'Pending',
+                color: AppColors.tertiary,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _StatTile(
+                icon: Icons.cloud_done_outlined,
+                value: '$uploaded',
+                label: 'Delivered',
+                color: AppColors.secondary,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
   Widget _buildEventCard(BuildContext context, dynamic event) {
     final hasEvent = event != null;
-    final isSolo =
-        UserStorage.currentUser.value?.hasPlannerAccess ?? false;
+    final isSolo = UserStorage.currentUser.value?.hasPlannerAccess ?? false;
+    final title = hasEvent
+        ? event.title.toString()
+        : isSolo
+        ? 'Solo Photographer'
+        : 'No active event';
+    final detail = hasEvent
+        ? '${event.photosCount} photos ready in this workspace'
+        : isSolo
+        ? 'Your solo workspace is ready for capture and delivery.'
+        : 'Accept an invitation to connect a live event.';
+
     return Container(
-      clipBehavior: Clip.antiAlias,
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: hasEvent
-              ? [Colors.green.shade400, Colors.green.shade600]
-              : [Colors.grey.shade400, Colors.grey.shade600],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(22),
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        border: Border.all(color: AppColors.border),
         boxShadow: [
           BoxShadow(
-            color: (hasEvent ? Colors.green : Colors.grey).withValues(
-              alpha: 0.22,
-            ),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
+            color: Colors.black.withValues(alpha: 0.025),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
-      child: Stack(
+      child: Row(
         children: [
-          Positioned(
-            right: -34,
-            top: -50,
-            child: Container(
-              width: 150,
-              height: 150,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.08),
-                shape: BoxShape.circle,
-              ),
+          Container(
+            width: 82,
+            height: 82,
+            decoration: BoxDecoration(
+              gradient: hasEvent ? AppGradients.studio : null,
+              color: hasEvent ? null : AppColors.muted,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Stack(
+              children: [
+                Center(
+                  child: Icon(
+                    hasEvent
+                        ? Icons.photo_library_outlined
+                        : Icons.event_note_outlined,
+                    color: hasEvent ? Colors.white : AppColors.mutedForeground,
+                    size: 28,
+                  ),
+                ),
+                if (hasEvent)
+                  Positioned(
+                    right: 9,
+                    bottom: 9,
+                    child: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: const BoxDecoration(
+                        color: AppColors.primary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Row(
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(
-                    hasEvent ? Icons.event_available : Icons.event_busy,
-                    color: Colors.white,
-                    size: 30,
-                  ),
-                ),
-                const SizedBox(width: 15),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        hasEvent
-                            ? event.title
-                            : isSolo
-                            ? 'Solo Photographer'
-                            : 'No Active Event',
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          height: 1.15,
-                          fontWeight: FontWeight.w800,
-                        ),
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
-                      const SizedBox(height: 5),
-                      Text(
-                        hasEvent
-                            ? '${event.photosCount} photos'
-                            : isSolo
-                            ? 'Solo mode ready - no planner invitation needed'
-                            : 'Accept an invitation first',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.85),
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 8),
+                    AppPill(
+                      label: hasEvent
+                          ? 'Live'
+                          : isSolo
+                          ? 'Solo'
+                          : 'Waiting',
+                      color: hasEvent
+                          ? AppColors.success
+                          : AppColors.mutedForeground,
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 13,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.3),
+                const SizedBox(height: 7),
+                Text(
+                  detail,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 9),
+                Row(
+                  children: [
+                    Icon(
+                      hasEvent
+                          ? Icons.cloud_done_outlined
+                          : Icons.cloud_queue_outlined,
+                      size: 15,
+                      color: AppColors.primary,
                     ),
-                  ),
-                  child: Text(
-                    hasEvent
-                        ? 'Active'
-                        : isSolo
-                        ? 'Solo'
-                        : 'None',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                    const SizedBox(width: 5),
+                    Text(
+                      hasEvent
+                          ? 'Delivery workspace connected'
+                          : 'Not connected',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.mutedForeground,
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ],
             ),
@@ -780,20 +835,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       childAspectRatio: 1.3,
       children: [
         _ActionTile(
-          icon: Icons.cloud_upload,
-          title: 'Upload',
-          subtitle: 'Upload photos',
-          color: Colors.blue,
-          isDisabled: isDisabled,
-          onTap: isDisabled
-              ? null
-              : () => context.router.root.push(const UploadRoute()),
-        ),
-        _ActionTile(
-          icon: Icons.photo_library,
+          icon: Icons.photo_library_outlined,
           title: 'Gallery',
-          subtitle: 'View photos',
-          color: Colors.teal,
+          subtitle: 'Review uploaded media',
+          color: AppColors.secondary,
           isDisabled: isDisabled,
           onTap: isDisabled
               ? null
@@ -802,18 +847,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               : () => context.router.root.push(const EventImagesRoute()),
         ),
         _ActionTile(
-          icon: Icons.camera_alt,
+          icon: Icons.camera_alt_outlined,
           title: 'Camera',
-          subtitle: 'Take photos',
-          color: Colors.orange,
+          subtitle: 'Open capture tools',
+          color: AppColors.primary,
           isDisabled: false,
           onTap: () => context.router.root.push(const CameraRoute()),
         ),
         _ActionTile(
-          icon: Icons.qr_code_scanner,
+          icon: Icons.qr_code_scanner_rounded,
           title: 'Scan QR',
-          subtitle: 'Event QR',
-          color: Colors.purple,
+          subtitle: 'Guest delivery QR',
+          color: AppColors.secondary,
           isDisabled: false,
           onTap: () => Navigator.of(
             context,
@@ -822,8 +867,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _ActionTile(
           icon: Icons.workspace_premium_outlined,
           title: 'Plans',
-          subtitle: 'Buy or upgrade plan',
-          color: Colors.indigo,
+          subtitle: 'Storage & billing',
+          color: AppColors.tertiary,
           isDisabled: false,
           onTap: () => context.router.root.push(const PlansRoute()),
         ),
@@ -904,10 +949,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             leading: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.indigo.withValues(alpha: 0.15),
+                color: AppColors.secondarySoft,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.wifi, color: Colors.indigo, size: 20),
+              child: const Icon(
+                Icons.wifi,
+                color: AppColors.secondary,
+                size: 20,
+              ),
             ),
             title: const Text(
               'Wireless Import',
@@ -1033,32 +1082,34 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildUserQuickActions(BuildContext context) {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: _QuickActionBtn(
-            icon: Icons.qr_code_scanner,
-            label: 'Scan QR',
-            onTap: () => Navigator.of(
-              context,
-            ).push(MaterialPageRoute(builder: (_) => const EventQrScanPage())),
+        AppActionCard(
+          icon: Icons.qr_code_scanner_rounded,
+          title: 'Scan guest QR',
+          subtitle: 'Open a guest gallery or delivery link instantly.',
+          trailing: const AppPill(
+            label: 'Fast',
+            icon: Icons.bolt_rounded,
+            color: AppColors.secondary,
           ),
+          onTap: () => Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => const EventQrScanPage())),
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _QuickActionBtn(
-            icon: Icons.workspace_premium,
-            label: 'My Plan',
-            onTap: () {},
-          ),
+        const SizedBox(height: 10),
+        AppActionCard(
+          icon: Icons.workspace_premium_outlined,
+          title: 'Plans & billing',
+          subtitle: 'Manage storage, subscription features and credits.',
+          onTap: () => context.router.root.push(const PlansRoute()),
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _QuickActionBtn(
-            icon: Icons.history,
-            label: 'History',
-            onTap: () {},
-          ),
+        const SizedBox(height: 10),
+        AppActionCard(
+          icon: Icons.person_outline_rounded,
+          title: 'Account & contact',
+          subtitle: 'Keep your planner profile and contact details current.',
+          onTap: () => context.router.root.push(const ProfileRoute()),
         ),
       ],
     );
@@ -1066,113 +1117,129 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Widget _buildHeroSection(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Theme.of(context).colorScheme.primary,
-            Theme.of(context).colorScheme.primary.withValues(alpha: 0.7),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
+        gradient: AppGradients.brand,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.18),
+            blurRadius: 28,
+            offset: const Offset(0, 14),
+          ),
+        ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.camera_alt,
-                  color: Colors.white,
-                  size: 32,
-                ),
+          Positioned(
+            right: -54,
+            top: -58,
+            child: Container(
+              width: 170,
+              height: 170,
+              decoration: BoxDecoration(
+                color: AppColors.secondary.withValues(alpha: 0.24),
+                shape: BoxShape.circle,
               ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
+            ),
+          ),
+          Positioned(
+            right: 26,
+            bottom: -34,
+            child: Container(
+              width: 90,
+              height: 90,
+              decoration: BoxDecoration(
+                color: AppColors.tertiary.withValues(alpha: 0.22),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const AppGlassPill(
+                      label: 'Live photo delivery',
+                      icon: Icons.bolt_rounded,
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.tertiary,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        'FREE TO START',
+                        style: TextStyle(
+                          color: Color(0xFF422006),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.7,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Text(
-                  '📸 Free to start',
+                const SizedBox(height: 28),
+                const Text(
+                  'Your event photos,\nready in seconds.',
                   style: TextStyle(
                     color: Colors.white,
-                    fontWeight: FontWeight.w500,
+                    fontSize: 30,
+                    height: 1.06,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.9,
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'Capture Every\nMoment',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
-              height: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Access event photos instantly with QR scan',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.9),
-              fontSize: 14,
-            ),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () => context.router.root.push(const LoginRoute()),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: Theme.of(context).colorScheme.primary,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                const SizedBox(height: 10),
+                Text(
+                  'Photographers upload while guests discover and download through a simple QR experience.',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.88),
+                    fontSize: 13.5,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () =>
+                            context.router.root.push(const RegisterRoute()),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: AppColors.primaryDark,
+                        ),
+                        child: const Text('Create account'),
+                      ),
                     ),
-                  ),
-                  child: const Text(
-                    'Login',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () =>
-                      context.router.root.push(const RegisterRoute()),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () =>
+                            context.router.root.push(const LoginRoute()),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.7),
+                          ),
+                        ),
+                        child: const Text('Sign in'),
+                      ),
                     ),
-                  ),
-                  child: const Text(
-                    'Sign Up',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
+                  ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -1186,55 +1253,75 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         onTap: () => Navigator.of(
           context,
         ).push(MaterialPageRoute(builder: (_) => const EventQrScanPage())),
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        child: Ink(
           width: double.infinity,
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primaryContainer,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Theme.of(
-                context,
-              ).colorScheme.primary.withValues(alpha: 0.2),
-            ),
+            gradient: AppGradients.discovery,
+            borderRadius: BorderRadius.circular(AppRadius.xl),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.secondary.withValues(alpha: 0.16),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
+              ),
+            ],
           ),
           child: Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(12),
+                width: 52,
+                height: 52,
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary,
-                  borderRadius: BorderRadius.circular(12),
+                  color: Colors.white.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Icon(Icons.qr_code_scanner, color: Colors.white),
+                child: const Icon(
+                  Icons.qr_code_scanner_rounded,
+                  color: Colors.white,
+                  size: 26,
+                ),
               ),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Scan QR Code',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.onPrimaryContainer,
-                      ),
+                    const Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            'Have an event QR?',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        AppGlassPill(label: 'No login'),
+                      ],
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 5),
                     Text(
-                      'Open event photos without login',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onPrimaryContainer
-                            .withValues(alpha: 0.75),
+                      'Scan once to open your event gallery and find your photos.',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.82),
+                        fontSize: 12,
+                        height: 1.4,
                       ),
                     ),
                   ],
                 ),
               ),
-              Icon(
-                Icons.chevron_right,
-                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              const SizedBox(width: 8),
+              const Icon(
+                Icons.arrow_forward_rounded,
+                color: Colors.white,
+                size: 20,
               ),
             ],
           ),
@@ -1372,11 +1459,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     required VoidCallback onBuy,
   }) {
     final colors = {
-      'Silver': Colors.grey,
-      'Gold': Colors.amber,
-      'Platinum': Colors.blue,
+      'Silver': const Color(0xFF78716C),
+      'Gold': const Color(0xFFA16207),
+      'Platinum': AppColors.secondary,
     };
-    final color = colors[title] ?? Colors.grey;
+    final color = colors[title] ?? AppColors.primary;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -1832,15 +1919,15 @@ class _ActionTile extends StatelessWidget {
             color: AppColors.card,
             borderRadius: BorderRadius.circular(AppRadius.lg),
             border: Border.all(color: AppColors.border),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.primary.withValues(
-                  alpha: isDisabled ? 0 : 0.06,
-                ),
-                blurRadius: 18,
-                offset: const Offset(0, 6),
-              ),
-            ],
+            boxShadow: isDisabled
+                ? null
+                : [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.025),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1872,54 +1959,6 @@ class _ActionTile extends StatelessWidget {
                 style: const TextStyle(
                   fontSize: 12,
                   color: AppColors.mutedForeground,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickActionBtn extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  const _QuickActionBtn({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 10),
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              AppIconTile(icon: icon, size: 42, iconSize: 21),
-              const SizedBox(height: 9),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.foreground,
                 ),
               ),
             ],
@@ -1962,9 +2001,9 @@ class _FeatureRow extends StatelessWidget {
                 const SizedBox(height: 1),
                 Text(
                   subtitle,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    height: 1.4,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(height: 1.4),
                 ),
               ],
             ),

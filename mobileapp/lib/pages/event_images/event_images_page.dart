@@ -9,6 +9,8 @@ import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 import 'package:mobileapp/widgets/app_ui.dart';
 
+enum _MediaFilter { all, live, hidden }
+
 @RoutePage()
 class EventImagesPage extends StatefulWidget {
   const EventImagesPage({super.key});
@@ -20,6 +22,7 @@ class EventImagesPage extends StatefulWidget {
 class _EventImagesPageState extends State<EventImagesPage> {
   Future<List<EventImageModel>>? _future;
   String? _eventId;
+  _MediaFilter _filter = _MediaFilter.all;
   final _promptController = TextEditingController();
 
   @override
@@ -218,14 +221,36 @@ class _EventImagesPageState extends State<EventImagesPage> {
 
         return Scaffold(
           appBar: AppBar(
-            title: Text(activeEvent?.title ?? 'Uploaded images'),
+            toolbarHeight: 82,
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Uploaded media'),
+                const SizedBox(height: 3),
+                Text(
+                  activeEvent?.title ?? 'No active event',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.mutedForeground,
+                  ),
+                ),
+              ],
+            ),
             actions: [
               if (activeEvent != null)
-                IconButton(
+                IconButton.filledTonal(
                   tooltip: 'Refresh',
                   onPressed: () => _refresh(activeEvent),
-                  icon: const Icon(Icons.refresh),
+                  icon: const Icon(Icons.refresh_rounded, size: 20),
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppColors.muted,
+                    foregroundColor: AppColors.foreground,
+                  ),
                 ),
+              const SizedBox(width: 12),
             ],
           ),
           body: activeEvent == null
@@ -257,96 +282,193 @@ class _EventImagesPageState extends State<EventImagesPage> {
                       );
                     }
 
-                    return GridView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: images.length,
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                          ),
-                      itemBuilder: (context, index) {
-                        final image = images[index];
-                        return InkWell(
-                          onTap: () => _openImageActions(activeEvent, image),
-                          borderRadius: BorderRadius.circular(AppRadius.md),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(AppRadius.md),
-                            child: Stack(
-                              fit: StackFit.expand,
+                    final filteredImages = switch (_filter) {
+                      _MediaFilter.all => images,
+                      _MediaFilter.live =>
+                        images.where((image) => image.isPublished).toList(),
+                      _MediaFilter.hidden =>
+                        images.where((image) => !image.isPublished).toList(),
+                    };
+                    final liveCount = images
+                        .where((image) => image.isPublished)
+                        .length;
+
+                    return Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
                               children: [
-                                image.mediaType == 'video'
-                                    ? const ColoredBox(
-                                        color: Colors.black87,
-                                        child: Center(child: Icon(Icons.videocam_outlined, color: Colors.white, size: 42)),
-                                      )
-                                    : Image.network(
-                                        image.imageUrl,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, _, _) => const ColoredBox(
-                                          color: Colors.black12,
-                                          child: Center(child: Icon(Icons.broken_image_outlined)),
-                                        ),
-                                      ),
-                                Positioned(
-                                  top: 8,
-                                  right: 8,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 7,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: image.isPublished
-                                          ? Colors.green.shade700
-                                          : Colors.black54,
-                                      borderRadius: BorderRadius.circular(999),
-                                    ),
-                                    child: Text(
-                                      image.isPublished ? 'LIVE' : 'HIDDEN',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
+                                AppCategoryChip(
+                                  label: 'All ${images.length}',
+                                  icon: Icons.grid_view_rounded,
+                                  selected: _filter == _MediaFilter.all,
+                                  onTap: () => setState(
+                                    () => _filter = _MediaFilter.all,
                                   ),
                                 ),
-                                Positioned(
-                                  left: 8,
-                                  right: 8,
-                                  bottom: 8,
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.6),
-                                      borderRadius: BorderRadius.circular(999),
-                                    ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 6,
-                                      ),
-                                      child: Text(
-                                        image.isEnhanced
-                                            ? 'Enhanced'
-                                            : image.takenBy ?? 'Uploaded',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
+                                const SizedBox(width: 8),
+                                AppCategoryChip(
+                                  label: 'Live $liveCount',
+                                  icon: Icons.public_rounded,
+                                  color: AppColors.secondary,
+                                  selected: _filter == _MediaFilter.live,
+                                  onTap: () => setState(
+                                    () => _filter = _MediaFilter.live,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                AppCategoryChip(
+                                  label: 'Hidden ${images.length - liveCount}',
+                                  icon: Icons.visibility_off_outlined,
+                                  color: const Color(0xFF78716C),
+                                  selected: _filter == _MediaFilter.hidden,
+                                  onTap: () => setState(
+                                    () => _filter = _MediaFilter.hidden,
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                        );
-                      },
+                        ),
+                        Expanded(
+                          child: filteredImages.isEmpty
+                              ? const Padding(
+                                  padding: EdgeInsets.all(20),
+                                  child: AppEmptyState(
+                                    icon: Icons.filter_alt_off_outlined,
+                                    title: 'No media in this view',
+                                    message:
+                                        'Choose another filter to see uploaded media.',
+                                  ),
+                                )
+                              : GridView.builder(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    20,
+                                    0,
+                                    20,
+                                    28,
+                                  ),
+                                  itemCount: filteredImages.length,
+                                  gridDelegate:
+                                      const SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: 2,
+                                        crossAxisSpacing: 5,
+                                        mainAxisSpacing: 5,
+                                      ),
+                                  itemBuilder: (context, index) {
+                                    final image = filteredImages[index];
+                                    return InkWell(
+                                      onTap: () =>
+                                          _openImageActions(activeEvent, image),
+                                      borderRadius: BorderRadius.circular(10),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(10),
+                                        child: Stack(
+                                          fit: StackFit.expand,
+                                          children: [
+                                            image.mediaType == 'video'
+                                                ? const ColoredBox(
+                                                    color: Colors.black87,
+                                                    child: Center(
+                                                      child: Icon(
+                                                        Icons.videocam_outlined,
+                                                        color: Colors.white,
+                                                        size: 42,
+                                                      ),
+                                                    ),
+                                                  )
+                                                : Image.network(
+                                                    image.imageUrl,
+                                                    fit: BoxFit.cover,
+                                                    errorBuilder: (_, _, _) =>
+                                                        const ColoredBox(
+                                                          color: Colors.black12,
+                                                          child: Center(
+                                                            child: Icon(
+                                                              Icons
+                                                                  .broken_image_outlined,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                  ),
+                                            Positioned(
+                                              top: 8,
+                                              right: 8,
+                                              child: Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 7,
+                                                      vertical: 4,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: image.isPublished
+                                                      ? Colors.green.shade700
+                                                      : Colors.black54,
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                        999,
+                                                      ),
+                                                ),
+                                                child: Text(
+                                                  image.isPublished
+                                                      ? 'LIVE'
+                                                      : 'HIDDEN',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            Positioned(
+                                              left: 8,
+                                              right: 8,
+                                              bottom: 8,
+                                              child: DecoratedBox(
+                                                decoration: BoxDecoration(
+                                                  color: Colors.black
+                                                      .withValues(alpha: 0.6),
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                        999,
+                                                      ),
+                                                ),
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 10,
+                                                        vertical: 6,
+                                                      ),
+                                                  child: Text(
+                                                    image.isEnhanced
+                                                        ? 'Enhanced'
+                                                        : image.takenBy ??
+                                                              'Uploaded',
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
                     );
                   },
                 ),

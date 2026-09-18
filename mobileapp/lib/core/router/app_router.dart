@@ -136,10 +136,6 @@ List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
           label: 'Upload',
         ),
         BottomNavigationBarItem(
-          icon: Icon(Icons.workspace_premium_outlined),
-          label: 'Plans',
-        ),
-        BottomNavigationBarItem(
           icon: Icon(Icons.mail_outline),
           label: 'Invites',
         ),
@@ -157,10 +153,6 @@ List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
       BottomNavigationBarItem(
         icon: Icon(Icons.cloud_upload_outlined),
         label: 'Deliver',
-      ),
-      BottomNavigationBarItem(
-        icon: Icon(Icons.workspace_premium_outlined),
-        label: 'Plans',
       ),
       BottomNavigationBarItem(icon: Icon(Icons.mail_outline), label: 'Invites'),
       BottomNavigationBarItem(

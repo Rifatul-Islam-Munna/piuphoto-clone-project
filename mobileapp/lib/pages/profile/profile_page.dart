@@ -222,22 +222,34 @@ class _ProfilePageState extends State<ProfilePage> {
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('My profile'),
+            toolbarHeight: 82,
+            title: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Profile'),
+                SizedBox(height: 3),
+                Text(
+                  'Account, contact and workspace',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.mutedForeground,
+                  ),
+                ),
+              ],
+            ),
             actions: [
               if (user != null)
                 TextButton.icon(
                   onPressed: _saving ? null : () => _toggleEditing(user),
                   icon: Icon(
-                    _editing ? Icons.close : Icons.edit_outlined,
-                    color: Colors.white,
-                    size: 19,
+                    _editing ? Icons.close_rounded : Icons.edit_outlined,
+                    color: AppColors.primary,
+                    size: 18,
                   ),
-                  label: Text(
-                    _editing ? 'Cancel' : 'Edit',
-                    style: const TextStyle(color: Colors.white),
-                  ),
+                  label: Text(_editing ? 'Cancel' : 'Edit'),
                 ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
             ],
           ),
           body: user == null
@@ -252,7 +264,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   },
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
                     children: [
                       _ProfileHero(
                         user: user,
@@ -503,13 +515,13 @@ class _ProfileHero extends StatelessWidget {
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        gradient: AppGradients.brand,
-        borderRadius: BorderRadius.circular(22),
+        gradient: AppGradients.studio,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.22),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 28,
+            offset: const Offset(0, 14),
           ),
         ],
       ),

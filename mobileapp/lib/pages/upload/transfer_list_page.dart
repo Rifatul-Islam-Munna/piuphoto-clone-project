@@ -37,7 +37,26 @@ class TransferListPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
+      appBar: AppBar(
+        toolbarHeight: 82,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title),
+            const SizedBox(height: 3),
+            Text(
+              eventTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w500,
+                color: AppColors.mutedForeground,
+              ),
+            ),
+          ],
+        ),
+      ),
       body: ValueListenableBuilder<List<TransferLedgerItem>>(
         valueListenable: TransferLedgerStorage.items,
         builder: (context, allItems, _) {
@@ -59,7 +78,7 @@ class TransferListPage extends StatelessWidget {
           }
 
           return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
             itemCount: items.length,
             separatorBuilder: (_, _) => const SizedBox(height: 10),
             itemBuilder: (context, index) {

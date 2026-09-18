@@ -59,6 +59,8 @@ class EventModel {
   }
 }
 
+enum _EventFilter { all, published, drafts }
+
 class PhotographerModel {
   final String id;
   final String? name;
@@ -98,6 +100,7 @@ class _EventsListView extends StatefulWidget {
 
 class _EventsListViewState extends State<_EventsListView> {
   late Future<List<EventModel>> _future;
+  _EventFilter _filter = _EventFilter.all;
 
   @override
   void initState() {
@@ -129,26 +132,36 @@ class _EventsListViewState extends State<_EventsListView> {
 
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: 82,
         title: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(isPhotographer ? 'Shoots' : 'My events'),
+            Text(isPhotographer ? 'Shoots' : 'Events'),
+            const SizedBox(height: 3),
             Text(
               isPhotographer
-                  ? 'Events you are assigned to'
-                  : 'Events you manage',
-              style: TextStyle(
-                fontSize: 11,
+                  ? 'Assignments and active photo deliveries'
+                  : 'Create, organize and publish client events',
+              style: const TextStyle(
+                fontSize: 11.5,
                 fontWeight: FontWeight.w500,
-                color: Colors.white.withValues(alpha: 0.82),
+                color: AppColors.mutedForeground,
               ),
             ),
           ],
         ),
-        centerTitle: true,
-        toolbarHeight: 68,
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _refresh),
+          IconButton.filledTonal(
+            tooltip: 'Refresh',
+            onPressed: _refresh,
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+            style: IconButton.styleFrom(
+              backgroundColor: AppColors.muted,
+              foregroundColor: AppColors.foreground,
+            ),
+          ),
+          const SizedBox(width: 12),
         ],
       ),
       body: FutureBuilder<List<EventModel>>(
@@ -164,17 +177,35 @@ class _EventsListViewState extends State<_EventsListView> {
             return _buildEmptyState(context);
           }
 
+          final filteredEvents = switch (_filter) {
+            _EventFilter.all => events,
+            _EventFilter.published =>
+              events.where((event) => event.isPublished).toList(),
+            _EventFilter.drafts =>
+              events.where((event) => !event.isPublished).toList(),
+          };
+
           return RefreshIndicator(
             onRefresh: () async => _refresh(),
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: events.length,
-              itemBuilder: (context, index) {
-                return _EventCardItem(
-                  event: events[index],
-                  onTap: () => _openEventDetail(context, events[index]),
-                );
-              },
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+              children: [
+                _buildEventFilters(events),
+                const SizedBox(height: 16),
+                if (filteredEvents.isEmpty)
+                  const AppEmptyState(
+                    icon: Icons.filter_alt_off_outlined,
+                    title: 'Nothing in this view',
+                    message: 'Choose another filter to see your events.',
+                  )
+                else
+                  ...filteredEvents.map(
+                    (event) => _EventCardItem(
+                      event: event,
+                      onTap: () => _openEventDetail(context, event),
+                    ),
+                  ),
+              ],
             ),
           );
         },
@@ -182,16 +213,50 @@ class _EventsListViewState extends State<_EventsListView> {
       floatingActionButton: canCreateEvents
           ? FloatingActionButton.extended(
               onPressed: () => _showCreateEventDialog(context),
-              icon: const Icon(Icons.add),
-              label: const Text('Create Event'),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('New event'),
             )
           : null,
     );
   }
 
+  Widget _buildEventFilters(List<EventModel> events) {
+    final published = events.where((event) => event.isPublished).length;
+    final drafts = events.length - published;
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          AppCategoryChip(
+            label: 'All ${events.length}',
+            icon: Icons.grid_view_rounded,
+            selected: _filter == _EventFilter.all,
+            onTap: () => setState(() => _filter = _EventFilter.all),
+          ),
+          const SizedBox(width: 8),
+          AppCategoryChip(
+            label: 'Published $published',
+            icon: Icons.public_rounded,
+            color: AppColors.secondary,
+            selected: _filter == _EventFilter.published,
+            onTap: () => setState(() => _filter = _EventFilter.published),
+          ),
+          const SizedBox(width: 8),
+          AppCategoryChip(
+            label: 'Drafts $drafts',
+            icon: Icons.edit_note_rounded,
+            color: const Color(0xFFA16207),
+            selected: _filter == _EventFilter.drafts,
+            onTap: () => setState(() => _filter = _EventFilter.drafts),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEmptyState(BuildContext context) {
-    final canCreate =
-        UserStorage.currentUser.value?.hasPlannerAccess ?? false;
+    final canCreate = UserStorage.currentUser.value?.hasPlannerAccess ?? false;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -244,9 +309,9 @@ class _EventCardItem extends StatelessWidget {
         border: Border.all(color: AppColors.border),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.07),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
@@ -295,16 +360,18 @@ class _EventCardItem extends StatelessWidget {
                         ),
                         decoration: BoxDecoration(
                           color: event.isPublished
-                              ? Colors.green.withValues(alpha: 0.92)
-                              : Colors.orange.withValues(alpha: 0.92),
+                              ? AppColors.success
+                              : AppColors.tertiary,
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
                           event.isPublished ? 'Published' : 'Draft',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            color: event.isPublished
+                                ? Colors.white
+                                : const Color(0xFF422006),
                           ),
                         ),
                       ),
@@ -370,7 +437,11 @@ class _EventCardItem extends StatelessWidget {
     return const ColoredBox(
       color: AppColors.cream,
       child: Center(
-        child: Icon(Icons.image_outlined, size: 54, color: AppColors.primaryLight),
+        child: Icon(
+          Icons.image_outlined,
+          size: 54,
+          color: AppColors.primaryLight,
+        ),
       ),
     );
   }
@@ -792,15 +863,18 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                         ),
                         decoration: BoxDecoration(
                           color: _event.isPublished
-                              ? Colors.green
-                              : Colors.orange,
-                          borderRadius: BorderRadius.circular(20),
+                              ? AppColors.success
+                              : AppColors.tertiary,
+                          borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
                           _event.isPublished ? 'Published' : 'Draft',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
+                          style: TextStyle(
+                            color: _event.isPublished
+                                ? Colors.white
+                                : const Color(0xFF422006),
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
                           ),
                         ),
                       ),
@@ -833,22 +907,20 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                     child: Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primaryContainer.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(12),
+                        color: AppColors.secondarySoft,
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
                         border: Border.all(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.primary.withValues(alpha: 0.3),
+                          color: AppColors.secondary.withValues(alpha: 0.22),
                         ),
                       ),
                       child: Row(
                         children: [
-                          Icon(
-                            Icons.photo_library,
-                            color: Theme.of(context).colorScheme.primary,
-                            size: 28,
+                          const AppIconTile(
+                            icon: Icons.photo_library_outlined,
+                            size: 44,
+                            iconSize: 22,
+                            background: AppColors.secondarySoft,
+                            foreground: AppColors.secondary,
                           ),
                           const SizedBox(width: 12),
                           Expanded(
@@ -874,10 +946,10 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                               ],
                             ),
                           ),
-                          Icon(
-                            Icons.arrow_forward_ios,
-                            size: 16,
-                            color: Theme.of(context).colorScheme.primary,
+                          const Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 18,
+                            color: AppColors.secondary,
                           ),
                         ],
                       ),

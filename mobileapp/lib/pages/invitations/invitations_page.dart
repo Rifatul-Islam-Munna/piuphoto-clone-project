@@ -225,7 +225,24 @@ class _InvitationsPageState extends State<InvitationsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Invitations')),
+      appBar: AppBar(
+        toolbarHeight: 82,
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Invitations'),
+            SizedBox(height: 3),
+            Text(
+              'Join shoots and manage assignments',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w500,
+                color: AppColors.mutedForeground,
+              ),
+            ),
+          ],
+        ),
+      ),
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: FutureBuilder<List<EventInvitationModel>>(
@@ -250,7 +267,7 @@ class _InvitationsPageState extends State<InvitationsPage> {
               valueListenable: ActiveEventStorage.activeEvent,
               builder: (context, activeEvent, _) {
                 return ListView.separated(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
                   itemCount: invitations.length + 1,
                   separatorBuilder: (_, _) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
@@ -269,16 +286,16 @@ class _InvitationsPageState extends State<InvitationsPage> {
                         borderRadius: BorderRadius.circular(AppRadius.xl),
                         border: Border.all(
                           color: isActive
-                              ? AppColors.primary.withValues(alpha: 0.45)
+                              ? AppColors.secondary.withValues(alpha: 0.45)
                               : AppColors.border,
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.primary.withValues(
-                              alpha: isActive ? 0.12 : 0.05,
+                            color: Colors.black.withValues(
+                              alpha: isActive ? 0.055 : 0.025,
                             ),
-                            blurRadius: 20,
-                            offset: const Offset(0, 8),
+                            blurRadius: 22,
+                            offset: const Offset(0, 10),
                           ),
                         ],
                       ),
@@ -314,9 +331,9 @@ class _InvitationsPageState extends State<InvitationsPage> {
                                     ? Icons.check_circle_outline
                                     : Icons.info_outline,
                                 color: invitation.isPending
-                                    ? AppColors.secondary
+                                    ? AppColors.tertiary
                                     : invitation.isAccepted
-                                    ? Colors.green
+                                    ? AppColors.success
                                     : AppColors.mutedForeground,
                               ),
                             ],

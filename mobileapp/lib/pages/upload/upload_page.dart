@@ -66,6 +66,8 @@ class _PtpProbe {
 
 enum _WirelessImportMode { sharedNetwork, cameraHotspot }
 
+enum _UploadMode { quick, auto }
+
 @RoutePage()
 class UploadPage extends StatefulWidget {
   const UploadPage({super.key});
@@ -76,6 +78,7 @@ class UploadPage extends StatefulWidget {
 
 class _UploadPageState extends State<UploadPage> {
   final _picker = ImagePicker();
+  _UploadMode _uploadMode = _UploadMode.quick;
   final Dio _cameraDio = Dio();
   final List<_SelectedUploadFile> _selectedFiles = [];
   Timer? _wirelessTimer;
@@ -2043,7 +2046,22 @@ class _UploadPageState extends State<UploadPage> {
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Upload'),
+            toolbarHeight: 82,
+            title: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Upload'),
+                SizedBox(height: 3),
+                Text(
+                  'Capture, sync and deliver',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.mutedForeground,
+                  ),
+                ),
+              ],
+            ),
             actions: [
               if (activeEvent != null)
                 TextButton.icon(
@@ -2052,21 +2070,18 @@ class _UploadPageState extends State<UploadPage> {
                       : () => _showConnectedSessionSheet(activeEvent),
                   icon: Icon(
                     _liveConnectionActive
-                        ? Icons.camera_alt
-                        : Icons.keyboard_arrow_up,
-                    color: Colors.white,
-                    size: 19,
+                        ? Icons.camera_alt_rounded
+                        : Icons.tune_rounded,
+                    color: AppColors.primary,
+                    size: 18,
                   ),
-                  label: const Text(
-                    'Session',
-                    style: TextStyle(color: Colors.white),
-                  ),
+                  label: const Text('Session'),
                 ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
             ],
           ),
           body: ListView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
             children: [
               // ── Active event ──
               if (activeEvent == null)
@@ -2158,146 +2173,197 @@ class _UploadPageState extends State<UploadPage> {
                 const SizedBox(height: 10),
               ],
 
-              // ── Add photos once ──
-              Card(
-                margin: EdgeInsets.zero,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 14, 16, 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Add photos once',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          SizedBox(height: 3),
-                          Text(
-                            'Choose existing photos now, then tap Upload to active event.',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                        ],
-                      ),
+              AppSectionTitle(
+                title: 'Choose upload method',
+                actionLabel: _uploadMode == _UploadMode.quick
+                    ? 'Manual'
+                    : 'Automatic',
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<_UploadMode>(
+                  segments: const [
+                    ButtonSegment(
+                      value: _UploadMode.quick,
+                      icon: Icon(Icons.add_photo_alternate_outlined, size: 18),
+                      label: Text('Add photos'),
                     ),
-                    _uploadSourceTile(
-                      icon: Icons.photo_library_outlined,
-                      title: 'Phone photos',
-                      subtitle: 'Pick existing photos from this phone.',
-                      onTap: _uploading ? null : _pickPhoneImages,
+                    ButtonSegment(
+                      value: _UploadMode.auto,
+                      icon: Icon(Icons.sync_rounded, size: 18),
+                      label: Text('Auto sync'),
                     ),
-                    _uploadSourceTile(
-                      icon: Icons.camera_alt_outlined,
-                      title: 'Take a phone photo',
-                      subtitle: 'Open the phone camera and take one photo.',
-                      onTap: _uploading ? null : _pickCameraImage,
-                    ),
-                    _uploadSourceTile(
-                      icon: Icons.usb_outlined,
-                      title: 'USB / OTG camera',
-                      subtitle:
-                          'Connect a camera by cable and select photos from it.',
-                      onTap: _uploading || _otgBusy ? null : _pickOtgFiles,
-                    ),
-                    if (activeEvent != null)
-                      _uploadSourceTile(
-                        icon: Icons.image_outlined,
-                        title: 'Uploaded photos',
-                        subtitle: 'View photos already uploaded to this event.',
-                        onTap: () =>
-                            context.router.root.push(const EventImagesRoute()),
-                      ),
                   ],
+                  selected: {_uploadMode},
+                  showSelectedIcon: false,
+                  style: ButtonStyle(
+                    minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
+                    shape: WidgetStatePropertyAll(
+                      RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
+                    ),
+                    side: const WidgetStatePropertyAll(
+                      BorderSide(color: AppColors.border),
+                    ),
+                    textStyle: const WidgetStatePropertyAll(
+                      TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  onSelectionChanged: _uploading
+                      ? null
+                      : (selection) =>
+                            _safeSetState(() => _uploadMode = selection.first),
                 ),
               ),
+              const SizedBox(height: 12),
+
+              // ── Add photos once ──
+              if (_uploadMode == _UploadMode.quick)
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 14, 16, 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Add photos once',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            SizedBox(height: 3),
+                            Text(
+                              'Choose existing photos now, then tap Upload to active event.',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _uploadSourceTile(
+                        icon: Icons.photo_library_outlined,
+                        title: 'Phone photos',
+                        subtitle: 'Pick existing photos from this phone.',
+                        onTap: _uploading ? null : _pickPhoneImages,
+                      ),
+                      _uploadSourceTile(
+                        icon: Icons.camera_alt_outlined,
+                        title: 'Take a phone photo',
+                        subtitle: 'Open the phone camera and take one photo.',
+                        onTap: _uploading ? null : _pickCameraImage,
+                      ),
+                      _uploadSourceTile(
+                        icon: Icons.usb_outlined,
+                        title: 'USB / OTG camera',
+                        subtitle:
+                            'Connect a camera by cable and select photos from it.',
+                        onTap: _uploading || _otgBusy ? null : _pickOtgFiles,
+                      ),
+                      if (activeEvent != null)
+                        _uploadSourceTile(
+                          icon: Icons.image_outlined,
+                          title: 'Uploaded photos',
+                          subtitle:
+                              'View photos already uploaded to this event.',
+                          onTap: () => context.router.root.push(
+                            const EventImagesRoute(),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
 
               const SizedBox(height: 10),
 
               // ── Automatic external-camera upload ──
-              Card(
-                margin: EdgeInsets.zero,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 14, 16, 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Camera auto-upload',
-                            style: TextStyle(fontWeight: FontWeight.w700),
+              if (_uploadMode == _UploadMode.auto)
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 14, 16, 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Camera auto-upload',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'Start one camera connection. Existing camera photos are skipped; every new shot is imported automatically and sent to the backend.',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _autoUploadTile(
+                        icon: Icons.usb_outlined,
+                        title: 'USB / OTG camera',
+                        subtitle:
+                            'Cable connection using direct PTP/MTP first. No phone-gallery step.',
+                        flowText: 'Camera → app private cache → backend',
+                        active: _otgImporting,
+                        busy: _otgBusy,
+                        status: _otgStatus,
+                        onPressed: activeEvent == null || _uploading
+                            ? null
+                            : () => _toggleOtgAutoUpload(activeEvent),
+                      ),
+                      _autoUploadTile(
+                        icon: Icons.wifi_tethering,
+                        title: 'Wireless camera',
+                        subtitle:
+                            'Camera Wi-Fi / PTP-IP / supported network camera protocol.',
+                        flowText:
+                            'Camera → app → backend (or queue if offline)',
+                        active: _wirelessImporting,
+                        busy: _wirelessBusy || _wirelessScanning,
+                        status: _wirelessStatus,
+                        onPressed: activeEvent == null || _uploading
+                            ? null
+                            : () => _toggleWirelessAutoUpload(activeEvent),
+                        secondaryAction: _wirelessImporting
+                            ? null
+                            : _openWifiSettings,
+                      ),
+                      ExpansionTile(
+                        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+                        title: const Text(
+                          'Phone-only auto-upload',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
                           ),
-                          SizedBox(height: 4),
-                          Text(
-                            'Start one camera connection. Existing camera photos are skipped; every new shot is imported automatically and sent to the backend.',
-                            style: TextStyle(fontSize: 12),
+                        ),
+                        subtitle: const Text(
+                          'Only for photos saved by the phone itself. OTG and wireless cameras do not use this.',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        children: [
+                          _autoUploadTile(
+                            icon: Icons.phone_android_outlined,
+                            title: 'Watch phone gallery',
+                            subtitle:
+                                'Optional: auto-upload new photos that appear in this phone gallery.',
+                            flowText: 'Phone gallery → app → backend',
+                            active: _galleryImporting,
+                            busy: _galleryBusy,
+                            status: _galleryStatus,
+                            onPressed: activeEvent == null || _uploading
+                                ? null
+                                : () => _togglePhoneAutoUpload(activeEvent),
                           ),
                         ],
                       ),
-                    ),
-                    _autoUploadTile(
-                      icon: Icons.usb_outlined,
-                      title: 'USB / OTG camera',
-                      subtitle:
-                          'Cable connection using direct PTP/MTP first. No phone-gallery step.',
-                      flowText: 'Camera → app private cache → backend',
-                      active: _otgImporting,
-                      busy: _otgBusy,
-                      status: _otgStatus,
-                      onPressed: activeEvent == null || _uploading
-                          ? null
-                          : () => _toggleOtgAutoUpload(activeEvent),
-                    ),
-                    _autoUploadTile(
-                      icon: Icons.wifi_tethering,
-                      title: 'Wireless camera',
-                      subtitle:
-                          'Camera Wi-Fi / PTP-IP / supported network camera protocol.',
-                      flowText: 'Camera → app → backend (or queue if offline)',
-                      active: _wirelessImporting,
-                      busy: _wirelessBusy || _wirelessScanning,
-                      status: _wirelessStatus,
-                      onPressed: activeEvent == null || _uploading
-                          ? null
-                          : () => _toggleWirelessAutoUpload(activeEvent),
-                      secondaryAction: _wirelessImporting
-                          ? null
-                          : _openWifiSettings,
-                    ),
-                    ExpansionTile(
-                      tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-                      title: const Text(
-                        'Phone-only auto-upload',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Only for photos saved by the phone itself. OTG and wireless cameras do not use this.',
-                        style: TextStyle(fontSize: 11),
-                      ),
-                      children: [
-                        _autoUploadTile(
-                          icon: Icons.phone_android_outlined,
-                          title: 'Watch phone gallery',
-                          subtitle:
-                              'Optional: auto-upload new photos that appear in this phone gallery.',
-                          flowText: 'Phone gallery → app → backend',
-                          active: _galleryImporting,
-                          busy: _galleryBusy,
-                          status: _galleryStatus,
-                          onPressed: activeEvent == null || _uploading
-                              ? null
-                              : () => _togglePhoneAutoUpload(activeEvent),
-                        ),
-                      ],
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
 
               const SizedBox(height: 10),
 
@@ -2412,21 +2478,23 @@ class _UploadPageState extends State<UploadPage> {
               const SizedBox(height: 4),
 
               // ── Enhanced toggle ──
-              SwitchListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                title: const Text(
-                  'Enhanced image',
-                  style: TextStyle(fontSize: 14),
+              if (_uploadMode == _UploadMode.quick)
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                  title: const Text(
+                    'Enhanced image',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  value: _isEnhanced,
+                  onChanged: _uploading
+                      ? null
+                      : (value) => _safeSetState(() => _isEnhanced = value),
                 ),
-                value: _isEnhanced,
-                onChanged: _uploading
-                    ? null
-                    : (value) => _safeSetState(() => _isEnhanced = value),
-              ),
 
               // ── Selected files preview ──
-              if (_selectedFiles.isNotEmpty) ...[
+              if (_uploadMode == _UploadMode.quick &&
+                  _selectedFiles.isNotEmpty) ...[
                 Card(
                   child: ListTile(
                     dense: true,
@@ -2462,7 +2530,8 @@ class _UploadPageState extends State<UploadPage> {
                 ),
               ],
 
-              if (_uploadStatus != null) ...[
+              if (_uploadMode == _UploadMode.quick &&
+                  _uploadStatus != null) ...[
                 const SizedBox(height: 6),
                 _statusText(_uploadStatus!),
               ],
@@ -2470,18 +2539,19 @@ class _UploadPageState extends State<UploadPage> {
               const SizedBox(height: 14),
 
               // ── Upload button ──
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: activeEvent == null || _uploading
-                      ? null
-                      : () => _submit(activeEvent),
-                  icon: const Icon(Icons.cloud_upload_outlined),
-                  label: _uploading
-                      ? Text('Uploading ${_selectedFiles.length}...')
-                      : const Text('Upload to active event'),
+              if (_uploadMode == _UploadMode.quick)
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: activeEvent == null || _uploading
+                        ? null
+                        : () => _submit(activeEvent),
+                    icon: const Icon(Icons.cloud_upload_outlined),
+                    label: _uploading
+                        ? Text('Uploading ${_selectedFiles.length}...')
+                        : const Text('Upload to active event'),
+                  ),
                 ),
-              ),
               const SizedBox(height: 8),
             ],
           ),
@@ -3072,11 +3142,47 @@ class _UploadPageState extends State<UploadPage> {
   }) {
     return ListTile(
       enabled: onTap != null,
-      dense: true,
-      leading: Icon(icon, size: 22),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
-      trailing: const Icon(Icons.chevron_right, size: 20),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: AppIconTile(
+        icon: icon,
+        size: 42,
+        iconSize: 20,
+        background: onTap == null ? AppColors.muted : AppColors.cream,
+        foreground: onTap == null
+            ? AppColors.mutedForeground
+            : AppColors.primary,
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: AppColors.foreground,
+        ),
+      ),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Text(
+          subtitle,
+          style: const TextStyle(
+            fontSize: 12,
+            color: AppColors.mutedForeground,
+          ),
+        ),
+      ),
+      trailing: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: AppColors.muted,
+          borderRadius: BorderRadius.circular(11),
+        ),
+        child: const Icon(
+          Icons.chevron_right_rounded,
+          size: 19,
+          color: AppColors.mutedForeground,
+        ),
+      ),
       onTap: onTap,
     );
   }

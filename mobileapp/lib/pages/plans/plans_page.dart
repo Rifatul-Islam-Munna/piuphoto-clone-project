@@ -25,11 +25,25 @@ class _PlansPageState extends State<PlansPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Plans & Billing'),
-        centerTitle: true,
+        toolbarHeight: 82,
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Plans & billing'),
+            SizedBox(height: 3),
+            Text(
+              'Storage, delivery tools and credits',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w500,
+                color: AppColors.mutedForeground,
+              ),
+            ),
+          ],
+        ),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -46,11 +60,11 @@ class _PlansPageState extends State<PlansPage> {
 
   Widget _buildBillingToggle() {
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3)),
+        color: AppColors.muted,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         children: [
@@ -79,14 +93,18 @@ class _PlansPageState extends State<PlansPage> {
       children: [
         Text(
           'Subscription Plans',
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 4),
         Text(
           'Choose the perfect plan for your needs',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
-              ),
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.7),
+          ),
         ),
         const SizedBox(height: 16),
         FutureBuilder<List<Map<String, dynamic>>>(
@@ -100,22 +118,29 @@ class _PlansPageState extends State<PlansPage> {
             }
             final plans = snapshot.data ?? [];
             final filteredPlans = plans
-                .where((p) => p['billingUnit'] == (_isYearly ? 'PER_YEAR' : 'PER_MONTH'))
+                .where(
+                  (p) =>
+                      p['billingUnit'] ==
+                      (_isYearly ? 'PER_YEAR' : 'PER_MONTH'),
+                )
                 .toList();
             if (filteredPlans.isEmpty) {
               return _buildDefaultPlans();
             }
             return Column(
               children: filteredPlans
-                  .map((plan) => _PlanCard(
-                        plan: plan,
-                        isYearly: _isYearly,
-                        onBuy: () => _openMobilePaymentSheet(
-                          endpoint: '/subscription-plan/mobile-payment-sheet',
-                          verifyEndpoint: '/subscription-plan/verify-mobile-payment',
-                          data: {'id': plan['_id']},
-                        ),
-                      ))
+                  .map(
+                    (plan) => _PlanCard(
+                      plan: plan,
+                      isYearly: _isYearly,
+                      onBuy: () => _openMobilePaymentSheet(
+                        endpoint: '/subscription-plan/mobile-payment-sheet',
+                        verifyEndpoint:
+                            '/subscription-plan/verify-mobile-payment',
+                        data: {'id': plan['_id']},
+                      ),
+                    ),
+                  )
                   .toList(),
             );
           },
@@ -127,25 +152,85 @@ class _PlansPageState extends State<PlansPage> {
   Widget _buildDefaultPlans() {
     final plans = _isYearly
         ? [
-            {'title': 'Silver', 'price': 199.0, 'features': ['50GB Storage', 'Unlimited Photographers', 'Brand Card', 'URL Customization', 'AI Reviewer']},
-            {'title': 'Gold', 'price': 799.0, 'features': ['300GB Storage', 'AI Retouch & Search', 'Video Live', 'Premium Features'], 'popular': true},
-            {'title': 'Platinum', 'price': 2999.0, 'features': ['1TB Storage', 'Premium Branding', 'API Access', 'Best for Events']},
+            {
+              'title': 'Silver',
+              'price': 199.0,
+              'features': [
+                '50GB Storage',
+                'Unlimited Photographers',
+                'Brand Card',
+                'URL Customization',
+                'AI Reviewer',
+              ],
+            },
+            {
+              'title': 'Gold',
+              'price': 799.0,
+              'features': [
+                '300GB Storage',
+                'AI Retouch & Search',
+                'Video Live',
+                'Premium Features',
+              ],
+              'popular': true,
+            },
+            {
+              'title': 'Platinum',
+              'price': 2999.0,
+              'features': [
+                '1TB Storage',
+                'Premium Branding',
+                'API Access',
+                'Best for Events',
+              ],
+            },
           ]
         : [
-            {'title': 'Silver', 'price': 19.9, 'features': ['50GB Storage', 'Unlimited Photographers', 'Brand Card', 'URL Customization', 'AI Reviewer']},
-            {'title': 'Gold', 'price': 79.9, 'features': ['300GB Storage', 'AI Retouch & Search', 'Video Live', 'Premium Features'], 'popular': true},
-            {'title': 'Platinum', 'price': 299.9, 'features': ['1TB Storage', 'Premium Branding', 'Video Live', 'API Access']},
+            {
+              'title': 'Silver',
+              'price': 19.9,
+              'features': [
+                '50GB Storage',
+                'Unlimited Photographers',
+                'Brand Card',
+                'URL Customization',
+                'AI Reviewer',
+              ],
+            },
+            {
+              'title': 'Gold',
+              'price': 79.9,
+              'features': [
+                '300GB Storage',
+                'AI Retouch & Search',
+                'Video Live',
+                'Premium Features',
+              ],
+              'popular': true,
+            },
+            {
+              'title': 'Platinum',
+              'price': 299.9,
+              'features': [
+                '1TB Storage',
+                'Premium Branding',
+                'Video Live',
+                'API Access',
+              ],
+            },
           ];
     return Column(
       children: plans
-          .map((plan) => _DefaultPlanCard(
-                title: plan['title'] as String,
-                price: plan['price'] as double,
-                features: plan['features'] as List<String>,
-                isPopular: plan['popular'] == true,
-                isYearly: _isYearly,
-                onBuy: () {},
-              ))
+          .map(
+            (plan) => _DefaultPlanCard(
+              title: plan['title'] as String,
+              price: plan['price'] as double,
+              features: plan['features'] as List<String>,
+              isPopular: plan['popular'] == true,
+              isYearly: _isYearly,
+              onBuy: () {},
+            ),
+          )
           .toList(),
     );
   }
@@ -156,14 +241,18 @@ class _PlansPageState extends State<PlansPage> {
       children: [
         Text(
           'Credit Addons',
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 4),
         Text(
           'Buy extra credits anytime',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
-              ),
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.7),
+          ),
         ),
         const SizedBox(height: 16),
         FutureBuilder<List<Map<String, dynamic>>>(
@@ -178,14 +267,16 @@ class _PlansPageState extends State<PlansPage> {
             final addons = snapshot.data ?? [];
             return Column(
               children: addons
-                  .map((addon) => _AddonCard(
-                        addon: addon,
-                        onBuy: () => _openMobilePaymentSheet(
-                          endpoint: '/addon/mobile-payment-sheet',
-                          verifyEndpoint: '/addon/verify-mobile-payment',
-                          data: {'addonId': addon['_id']},
-                        ),
-                      ))
+                  .map(
+                    (addon) => _AddonCard(
+                      addon: addon,
+                      onBuy: () => _openMobilePaymentSheet(
+                        endpoint: '/addon/mobile-payment-sheet',
+                        verifyEndpoint: '/addon/verify-mobile-payment',
+                        data: {'addonId': addon['_id']},
+                      ),
+                    ),
+                  )
                   .toList(),
             );
           },
@@ -195,13 +286,17 @@ class _PlansPageState extends State<PlansPage> {
   }
 
   Future<List<Map<String, dynamic>>> _loadPlans() async {
-    final response = await DioHelper.get('/subscription-plan/get-all?limit=100&isActive=true');
+    final response = await DioHelper.get(
+      '/subscription-plan/get-all?limit=100&isActive=true',
+    );
     final data = response.data['data'] as List? ?? [];
     return data.map((item) => Map<String, dynamic>.from(item as Map)).toList();
   }
 
   Future<List<Map<String, dynamic>>> _loadAddons() async {
-    final response = await DioHelper.get('/addon/get-all?limit=100&isActive=true');
+    final response = await DioHelper.get(
+      '/addon/get-all?limit=100&isActive=true',
+    );
     final data = response.data['data'] as List? ?? [];
     return data.map((item) => Map<String, dynamic>.from(item as Map)).toList();
   }
@@ -223,8 +318,7 @@ class _PlansPageState extends State<PlansPage> {
         response.data['data'] as Map? ?? {},
       );
       final publishableKey = paymentData['publishableKey']?.toString();
-      final clientSecret =
-          paymentData['paymentIntentClientSecret']?.toString();
+      final clientSecret = paymentData['paymentIntentClientSecret']?.toString();
       final paymentIntentId = paymentData['paymentIntentId']?.toString();
 
       if (publishableKey == null ||
@@ -292,19 +386,30 @@ class _ToggleButton extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+        padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 14),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.primary : Colors.transparent,
-          borderRadius: BorderRadius.circular(999),
+          color: isSelected ? AppColors.card : Colors.transparent,
+          borderRadius: BorderRadius.circular(13),
           border: Border.all(
-            color: isSelected ? AppColors.primary : AppColors.border,
+            color: isSelected ? AppColors.border : Colors.transparent,
           ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.035),
+                    blurRadius: 12,
+                    offset: const Offset(0, 5),
+                  ),
+                ]
+              : null,
         ),
         child: Text(
           label,
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: isSelected ? Colors.white : AppColors.mutedForeground,
+            color: isSelected
+                ? AppColors.foreground
+                : AppColors.mutedForeground,
             fontWeight: FontWeight.w700,
             fontSize: 13,
           ),
@@ -329,13 +434,18 @@ class _PlanCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final title = plan['title']?.toString() ?? '';
     final price = (plan['discount_price'] ?? plan['price'] ?? 0).toString();
-    final originalPrice = plan['discount_price'] != null && plan['price'] != null
+    final originalPrice =
+        plan['discount_price'] != null && plan['price'] != null
         ? plan['price'].toString()
         : null;
     final isPopular = plan['isPopular'] == true;
-    
-    final features = FeatureMapping.normalizeFeatures(plan['features'] as List?);
-    final permissions = FeatureMapping.normalizePermissions(plan['permissions'] as List?);
+
+    final features = FeatureMapping.normalizeFeatures(
+      plan['features'] as List?,
+    );
+    final permissions = FeatureMapping.normalizePermissions(
+      plan['permissions'] as List?,
+    );
     final allItems = [...features, ...permissions];
 
     final tierColor = _getTierColor(title);
@@ -365,9 +475,7 @@ class _PlanCard extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: tierColor.withValues(alpha: 0.1),
-              border: Border(
-                bottom: BorderSide(color: AppColors.border),
-              ),
+              border: Border(bottom: BorderSide(color: AppColors.border)),
             ),
             child: Row(
               children: [
@@ -385,11 +493,18 @@ class _PlanCard extends StatelessWidget {
                     children: [
                       Row(
                         children: [
-                          Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                          Text(
+                            title,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
                           if (isPopular) ...[
                             const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 9,
+                                vertical: 3,
+                              ),
                               decoration: BoxDecoration(
                                 gradient: AppGradients.brand,
                                 borderRadius: BorderRadius.circular(999),
@@ -410,14 +525,35 @@ class _PlanCard extends StatelessWidget {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Text('\$$price', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: tierColor, letterSpacing: -0.5)),
+                          Text(
+                            '\$$price',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                              color: tierColor,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
                           Padding(
                             padding: const EdgeInsets.only(bottom: 3),
-                            child: Text(isYearly ? '/year' : '/month', style: const TextStyle(fontSize: 12, color: AppColors.mutedForeground)),
+                            child: Text(
+                              isYearly ? '/year' : '/month',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.mutedForeground,
+                              ),
+                            ),
                           ),
                           if (originalPrice != null) ...[
                             const SizedBox(width: 8),
-                            Text('\$$originalPrice', style: const TextStyle(fontSize: 12, decoration: TextDecoration.lineThrough, color: AppColors.mutedForeground)),
+                            Text(
+                              '\$$originalPrice',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                decoration: TextDecoration.lineThrough,
+                                color: AppColors.mutedForeground,
+                              ),
+                            ),
                           ],
                         ],
                       ),
@@ -431,26 +567,34 @@ class _PlanCard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
-                children: allItems.map((item) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.check_circle, size: 18, color: tierColor),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          item,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            height: 1.4,
-                            color: AppColors.foreground,
-                          ),
+                children: allItems
+                    .map(
+                      (item) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.check_circle,
+                              size: 18,
+                              color: tierColor,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                item,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  height: 1.4,
+                                  color: AppColors.foreground,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
-                )).toList(),
+                    )
+                    .toList(),
               ),
             ),
           Padding(
@@ -480,10 +624,10 @@ class _PlanCard extends StatelessWidget {
 
   Color _getTierColor(String title) {
     final lower = title.toLowerCase();
-    if (lower.contains('platinum')) return Colors.blue;
-    if (lower.contains('gold')) return Colors.amber;
-    if (lower.contains('silver')) return Colors.grey;
-    return Colors.purple;
+    if (lower.contains('platinum')) return AppColors.secondary;
+    if (lower.contains('gold')) return const Color(0xFFA16207);
+    if (lower.contains('silver')) return const Color(0xFF78716C);
+    return AppColors.primary;
   }
 }
 
@@ -507,7 +651,7 @@ class _DefaultPlanCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tierColor = _getTierColor(title);
-    
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       clipBehavior: Clip.antiAlias,
@@ -533,9 +677,7 @@ class _DefaultPlanCard extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: tierColor.withValues(alpha: 0.1),
-              border: Border(
-                bottom: BorderSide(color: AppColors.border),
-              ),
+              border: Border(bottom: BorderSide(color: AppColors.border)),
             ),
             child: Row(
               children: [
@@ -553,11 +695,18 @@ class _DefaultPlanCard extends StatelessWidget {
                     children: [
                       Row(
                         children: [
-                          Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                          Text(
+                            title,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
                           if (isPopular) ...[
                             const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 9,
+                                vertical: 3,
+                              ),
                               decoration: BoxDecoration(
                                 gradient: AppGradients.brand,
                                 borderRadius: BorderRadius.circular(999),
@@ -578,8 +727,22 @@ class _DefaultPlanCard extends StatelessWidget {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Text('\$${price.toStringAsFixed(price.truncateToDouble() == price ? 0 : 2)}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold, color: tierColor)),
-                          Text(isYearly ? '/year' : '/month', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6))),
+                          Text(
+                            '\$${price.toStringAsFixed(price.truncateToDouble() == price ? 0 : 2)}',
+                            style: Theme.of(context).textTheme.headlineSmall
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: tierColor,
+                                ),
+                          ),
+                          Text(
+                            isYearly ? '/year' : '/month',
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurface
+                                      .withValues(alpha: 0.6),
+                                ),
+                          ),
                         ],
                       ),
                     ],
@@ -591,16 +754,25 @@ class _DefaultPlanCard extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
-              children: features.map((f) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Icon(Icons.check_circle, size: 18, color: tierColor),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(f, style: Theme.of(context).textTheme.bodyMedium)),
-                  ],
-                ),
-              )).toList(),
+              children: features
+                  .map(
+                    (f) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          Icon(Icons.check_circle, size: 18, color: tierColor),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              f,
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                  .toList(),
             ),
           ),
           Padding(
@@ -630,10 +802,10 @@ class _DefaultPlanCard extends StatelessWidget {
 
   Color _getTierColor(String title) {
     final lower = title.toLowerCase();
-    if (lower.contains('platinum')) return Colors.blue;
-    if (lower.contains('gold')) return Colors.amber;
-    if (lower.contains('silver')) return Colors.grey;
-    return Colors.purple;
+    if (lower.contains('platinum')) return AppColors.secondary;
+    if (lower.contains('gold')) return const Color(0xFFA16207);
+    if (lower.contains('silver')) return const Color(0xFF78716C);
+    return AppColors.primary;
   }
 }
 
@@ -641,10 +813,7 @@ class _AddonCard extends StatelessWidget {
   final Map<String, dynamic> addon;
   final VoidCallback onBuy;
 
-  const _AddonCard({
-    required this.addon,
-    required this.onBuy,
-  });
+  const _AddonCard({required this.addon, required this.onBuy});
 
   @override
   Widget build(BuildContext context) {
@@ -659,7 +828,9 @@ class _AddonCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.15)),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.15),
+        ),
       ),
       child: Row(
         children: [
@@ -669,23 +840,50 @@ class _AddonCard extends StatelessWidget {
               color: Theme.of(context).colorScheme.secondaryContainer,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(Icons.add_circle, color: Theme.of(context).colorScheme.secondary, size: 28),
+            child: Icon(
+              Icons.add_circle,
+              color: Theme.of(context).colorScheme.secondary,
+              size: 28,
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(color: Theme.of(context).colorScheme.secondaryContainer, borderRadius: BorderRadius.circular(6)),
-                  child: Text('$credits Credits', style: TextStyle(color: Theme.of(context).colorScheme.onSecondaryContainer, fontSize: 12, fontWeight: FontWeight.bold)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.secondaryContainer,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '$credits Credits',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSecondaryContainer,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
                 if (description.isNotEmpty) ...[
                   const SizedBox(height: 4),
-                  Text(description, style: Theme.of(context).textTheme.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  Text(
+                    description,
+                    style: Theme.of(context).textTheme.bodySmall,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ],
               ],
             ),
@@ -693,13 +891,24 @@ class _AddonCard extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text('\$${price.toStringAsFixed(2)}', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
+              Text(
+                '\$${price.toStringAsFixed(2)}',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
               const SizedBox(height: 8),
               FilledButton(
                 onPressed: onBuy,
                 style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
                 ),
                 child: const Text('Buy'),
               ),

@@ -22,14 +22,12 @@ class MainShellPage extends StatelessWidget {
                       const HomeRoute(),
                       const EventsRoute(),
                       const UploadRoute(),
-                      const PlansRoute(),
                       const InvitationsRoute(),
                       const ProfileRoute(),
                     ]
                   : [
                       const HomeRoute(),
                       const UploadRoute(),
-                      const PlansRoute(),
                       const InvitationsRoute(),
                       const ProfileRoute(),
                     ])
@@ -63,15 +61,26 @@ class _AppBottomNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: AppColors.card,
-        border: Border(top: BorderSide(color: AppColors.border)),
-      ),
+    return Container(
+      color: AppColors.background,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: SafeArea(
         top: false,
-        child: SizedBox(
-          height: 68,
+        minimum: const EdgeInsets.only(bottom: 2),
+        child: Container(
+          height: 70,
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: AppColors.border),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 26,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
           child: Row(
             children: [
               for (var i = 0; i < items.length; i++)
@@ -114,28 +123,40 @@ class _NavItemTile extends StatelessWidget {
       label: label,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        child: AnimatedScale(
-          scale: selected ? 1.08 : 1.0,
-          duration: const Duration(milliseconds: 200),
+        borderRadius: BorderRadius.circular(18),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
           curve: Curves.easeOutCubic,
+          margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 7),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.accentSoft : Colors.transparent,
+            borderRadius: BorderRadius.circular(17),
+          ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(iconData, size: 23, color: accent),
-              const SizedBox(height: 5),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                width: selected ? 28 : 24,
+                height: 24,
+                alignment: Alignment.center,
+                child: Icon(iconData, size: selected ? 21 : 20, color: accent),
+              ),
+              const SizedBox(height: 3),
               AnimatedDefaultTextStyle(
                 duration: const Duration(milliseconds: 200),
                 style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  fontSize: 10.5,
+                  height: 1,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                   color: accent,
-                  letterSpacing: 0.1,
+                  letterSpacing: 0,
                 ),
                 child: Text(
                   label,
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  overflow: TextOverflow.fade,
+                  softWrap: false,
                 ),
               ),
             ],

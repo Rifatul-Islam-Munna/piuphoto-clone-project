@@ -155,10 +155,7 @@ class _EventQrScanPageState extends State<EventQrScanPage>
               width: 264,
               height: 264,
               decoration: BoxDecoration(
-                border: Border.all(
-                  color: AppColors.primaryLight,
-                  width: 3,
-                ),
+                border: Border.all(color: AppColors.primaryLight, width: 3),
                 borderRadius: BorderRadius.circular(28),
                 boxShadow: [
                   BoxShadow(
@@ -226,9 +223,7 @@ class _EventQrScanPageState extends State<EventQrScanPage>
                     ? Colors.black.withValues(alpha: 0.7)
                     : Theme.of(context).colorScheme.errorContainer,
                 borderRadius: BorderRadius.circular(999),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.12),
-                ),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
@@ -256,11 +251,29 @@ class _EventQrScanPageState extends State<EventQrScanPage>
 
   @override
   Widget build(BuildContext context) {
+    final scanning = _cameraAccess == _CameraAccess.granted;
     return Scaffold(
-      appBar: AppBar(title: const Text('Scan Guest QR')),
-      body: _cameraAccess == _CameraAccess.granted
-          ? _scannerBody()
-          : _permissionBody(),
+      appBar: AppBar(
+        backgroundColor: scanning ? Colors.black : AppColors.background,
+        foregroundColor: scanning ? Colors.white : AppColors.foreground,
+        toolbarHeight: 76,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Scan guest QR'),
+            const SizedBox(height: 3),
+            Text(
+              'Open the guest delivery experience',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w500,
+                color: scanning ? Colors.white70 : AppColors.mutedForeground,
+              ),
+            ),
+          ],
+        ),
+      ),
+      body: scanning ? _scannerBody() : _permissionBody(),
     );
   }
 

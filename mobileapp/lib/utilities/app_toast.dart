@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 
 class AppToast {
   AppToast._();
@@ -7,20 +8,13 @@ class AppToast {
 
   static void success(String message) {
     messengerKey.currentState?.showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-      ),
+      SnackBar(content: Text(message), backgroundColor: AppColors.success),
     );
   }
 
   static void error(String message) {
     messengerKey.currentState?.showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-      ),
+      SnackBar(content: Text(message), backgroundColor: AppColors.destructive),
     );
   }
 }
-
