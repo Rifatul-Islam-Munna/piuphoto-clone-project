@@ -217,40 +217,12 @@ class _UploadPageState extends State<UploadPage> {
       try {
         cameraImages = await OtgFilePicker.connectedCameraImages();
       } on MissingPluginException {
-        cameraImages = const [];
-      } on PlatformException {
-        cameraImages = const [];
-      }
-
-      if (cameraImages.isNotEmpty && mounted) {
-        final selectedIds = await _selectConnectedCameraImages(cameraImages);
-        if (selectedIds != null && selectedIds.isNotEmpty) {
-          final files = await OtgFilePicker.importConnectedCameraImages(
-            selectedIds,
-          );
-          _addSelectedFiles(
-            files
-                .map(
-                  (file) =>
-                      _SelectedUploadFile(path: file.path, name: file.name),
-                )
-                .toList(),
-          );
-          return;
-        }
-      }
-
+      // OTG native channel is unavailable. Do not expose build errors to users.
+      // Use normal picker fallback.
       final files = await OtgFilePicker.pickImages();
-      if (files.isEmpty) return;
       _addSelectedFiles(
-        files
-            .map(
-              (file) => _SelectedUploadFile(path: file.path, name: file.name),
-            )
-            .toList(),
+        files.map((file) => _SelectedUploadFile(path: file.path, name: file.name)).toList(),
       );
-    } on MissingPluginException {
-      AppToast.error('Rebuild app once to enable OTG picker');
     } catch (error) {
       AppToast.error('Failed to read connected camera: $error');
     }
