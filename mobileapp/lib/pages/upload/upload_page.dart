@@ -698,7 +698,6 @@ class _UploadPageState extends State<UploadPage> {
             ? imageLinks.toSet()
             : imageLinks.sublist(imageLinks.length - 500).toSet(),
       );
-      }
     } catch (_) {
       return null;
     }
@@ -1621,7 +1620,6 @@ class _UploadPageState extends State<UploadPage> {
         _safeSetState(
           () => _otgStatus = 'Restart app once to enable OTG auto-upload',
         );
-      }
     } catch (_) {
       if (_otgActive(generation)) {
         _safeSetState(() {
@@ -1780,9 +1778,9 @@ class _UploadPageState extends State<UploadPage> {
       try {
         final deleted = await GalleryAutoImport.deleteImage(image.id);
         if (deleted) {
-          deletedIds.add(image.id);
-        }
-      } catch (_) {}
+          deletedIds.add(image.id
+      );
+    } catch (_) {}
     }
 
     await UploadedGalleryStorage.removeIds(deletedIds);
@@ -1937,7 +1935,6 @@ class _UploadPageState extends State<UploadPage> {
         error.response?.data?['message']?.toString() ??
             'Failed to upload images',
       );
-      }
     } catch (_) {
       AppToast.error('Failed to upload images');
     } finally {
