@@ -223,6 +223,7 @@ class _UploadPageState extends State<UploadPage> {
       _addSelectedFiles(
         files.map((file) => _SelectedUploadFile(path: file.path, name: file.name)).toList(),
       );
+      }
     } catch (error) {
       AppToast.error('Failed to read connected camera: $error');
     }
@@ -697,6 +698,7 @@ class _UploadPageState extends State<UploadPage> {
             ? imageLinks.toSet()
             : imageLinks.sublist(imageLinks.length - 500).toSet(),
       );
+      }
     } catch (_) {
       return null;
     }
@@ -1935,6 +1937,7 @@ class _UploadPageState extends State<UploadPage> {
         error.response?.data?['message']?.toString() ??
             'Failed to upload images',
       );
+      }
     } catch (_) {
       AppToast.error('Failed to upload images');
     } finally {
