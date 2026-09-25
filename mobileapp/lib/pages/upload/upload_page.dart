@@ -217,12 +217,16 @@ class _UploadPageState extends State<UploadPage> {
       try {
         cameraImages = await OtgFilePicker.connectedCameraImages();
       } on MissingPluginException {
-      // OTG native channel is unavailable. Do not expose build errors to users.
-      // Use normal picker fallback.
-      final files = await OtgFilePicker.pickImages();
-      _addSelectedFiles(
-        files.map((file) => _SelectedUploadFile(path: file.path, name: file.name)).toList(),
-      );
+        // OTG native channel is unavailable. Do not expose build errors to users.
+        // Use normal picker fallback.
+        final files = await OtgFilePicker.pickImages();
+        _addSelectedFiles(
+          files
+              .map(
+                (file) => _SelectedUploadFile(path: file.path, name: file.name),
+              )
+              .toList(),
+        );
       }
     } catch (error) {
       AppToast.error('Failed to read connected camera: $error');
@@ -1620,6 +1624,7 @@ class _UploadPageState extends State<UploadPage> {
         _safeSetState(
           () => _otgStatus = 'Restart app once to enable OTG auto-upload',
         );
+      }
     } catch (_) {
       if (_otgActive(generation)) {
         _safeSetState(() {
@@ -1778,9 +1783,9 @@ class _UploadPageState extends State<UploadPage> {
       try {
         final deleted = await GalleryAutoImport.deleteImage(image.id);
         if (deleted) {
-          deletedIds.add(image.id
-      );
-    } catch (_) {}
+          deletedIds.add(image.id);
+        }
+      } catch (_) {}
     }
 
     await UploadedGalleryStorage.removeIds(deletedIds);
