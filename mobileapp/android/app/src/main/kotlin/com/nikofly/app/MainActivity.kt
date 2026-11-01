@@ -30,10 +30,10 @@ import java.io.FileOutputStream
 import java.util.ArrayDeque
 
 class MainActivity : FlutterFragmentActivity() {
-    private val otgChannel = "piuphoto/otg_picker"
-    private val settingsChannel = "piuphoto/device_settings"
-    private val galleryChannel = "piuphoto/gallery_import"
-    private val downloadsChannel = "piuphoto/image_downloads"
+    private val otgChannel = "airpix/otg_picker"
+    private val settingsChannel = "airpix/device_settings"
+    private val galleryChannel = "airpix/gallery_import"
+    private val downloadsChannel = "airpix/image_downloads"
     private val pickOtgRequest = 4817
     private val deleteImageRequest = 4818
     private val pickOtgSourceRequest = 4819
@@ -241,7 +241,7 @@ class MainActivity : FlutterFragmentActivity() {
                 val directSupported = supportsDirectMtp(device)
                 val name = usbDeviceLabel(device)
                 Log.i(
-                    "PiuPhotoCamera",
+                    "AirPixCamera",
                     "USB candidate name=$name id=${device.deviceId} permission=$hasPermission directMtp=$directSupported",
                 )
                 mapOf(
@@ -279,7 +279,7 @@ class MainActivity : FlutterFragmentActivity() {
                         }
                     )
                 val images = if (limit != null && limit > 0) sorted.take(limit) else sorted
-                Log.i("PiuPhotoCamera", "USB/PTP images found=${images.size} total=${sorted.size} devices=${devices.size} limit=$limit")
+                Log.i("AirPixCamera", "USB/PTP images found=${images.size} total=${sorted.size} devices=${devices.size} limit=$limit")
                 runOnUiThread { result.success(images) }
             } catch (error: Exception) {
                 runOnUiThread { result.error("USB_CAMERA_READ_FAILED", error.message, null) }
@@ -661,7 +661,7 @@ class MainActivity : FlutterFragmentActivity() {
                 put(MediaStore.Images.Media.DISPLAY_NAME, filename)
                 put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/PiuPhoto")
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/AirPix")
                     put(MediaStore.Images.Media.IS_PENDING, 1)
                 }
             }

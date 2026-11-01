@@ -23,7 +23,7 @@ class GalleryImportImage {
 class GalleryAutoImport {
   const GalleryAutoImport._();
 
-  static const _channel = MethodChannel('piuphoto/gallery_import');
+  static const _channel = MethodChannel('airpix/gallery_import');
 
   static Future<List<GalleryImportImage>> recentImages({
     required int sinceMs,

@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 class ImageDownloads {
   const ImageDownloads._();
 
-  static const _channel = MethodChannel('piuphoto/image_downloads');
+  static const _channel = MethodChannel('airpix/image_downloads');
 
   static Future<bool> saveImage({
     required Uint8List bytes,

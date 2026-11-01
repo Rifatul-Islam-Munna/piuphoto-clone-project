@@ -10,109 +10,26 @@ import UniformTypeIdentifiers
     case readWrite
   }
 
-  private let otgChannelName = "piuphoto/otg_picker"
-  private let settingsChannelName = "piuphoto/device_settings"
-  private let galleryChannelName = "piuphoto/gallery_import"
-  private let downloadsChannelName = "piuphoto/image_downloads"
+  private let otgChannelName = "airpix/otg_picker"
+  private let settingsChannelName = "airpix/device_settings"
+  private let galleryChannelName = "airpix/gallery_import"
+  private let downloadsChannelName = "airpix/image_downloads"
   private var otgResult: FlutterResult?
   private var otgSourceResult: FlutterResult?
   private var otgAllowsMultipleSelection = false
   private var otgSourceBookmark: Data?
   private let cameraBrowser = ICDeviceBrowser()
   private var connectedCameras: [ICCameraDevice] = []
+  private var readyCameras: Set<ObjectIdentifier> = []
+  private var cameraCatalogWaiters: [() -> Void] = []
+  private var cameraDeviceWaiters: [() -> Void] = []
+  private var cameraSessionRetries: [ObjectIdentifier: Int] = [:]
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     let didFinish = super.application(application, didFinishLaunchingWithOptions: launchOptions)
-
-    if let controller = window?.rootViewController as? FlutterViewController {
-      let otgChannel = FlutterMethodChannel(
-        name: otgChannelName,
-        binaryMessenger: controller.binaryMessenger
-      )
-      otgChannel.setMethodCallHandler { [weak self] call, result in
-        guard let self else { return }
-        switch call.method {
-        case "pickImage", "pickImages":
-          self.pickExternalImage(
-            allowsMultipleSelection: call.method == "pickImages",
-            result: result
-          )
-        case "connectedCameraDevices":
-          self.listConnectedCameraDevices(result: result)
-        case "connectedCameraImages":
-          let arguments = call.arguments as? [String: Any]
-          let limit = (arguments?["limit"] as? NSNumber)?.intValue
-          self.listConnectedCameraImages(limit: limit, result: result)
-        case "importConnectedCameraImages":
-          let arguments = call.arguments as? [String: Any]
-          let ids = arguments?["ids"] as? [String] ?? []
-          self.importConnectedCameraImages(ids: ids, result: result)
-        case "pickSource":
-          self.pickExternalSource(result: result)
-        case "recentSourceImages":
-          let arguments = call.arguments as? [String: Any]
-          let excludeIds = Set(arguments?["excludeIds"] as? [String] ?? [])
-          self.fetchRecentSourceImages(excludeIds: excludeIds, result: result)
-        default:
-          result(FlutterMethodNotImplemented)
-        }
-      }
-
-      let settingsChannel = FlutterMethodChannel(
-        name: settingsChannelName,
-        binaryMessenger: controller.binaryMessenger
-      )
-      settingsChannel.setMethodCallHandler { call, result in
-        guard call.method == "openWifiSettings" else {
-          result(FlutterMethodNotImplemented)
-          return
-        }
-
-        guard let url = URL(string: UIApplication.openSettingsURLString) else {
-          result(
-            FlutterError(
-              code: "OPEN_SETTINGS_FAILED",
-              message: "Unable to create settings URL",
-              details: nil
-            )
-          )
-          return
-        }
-
-        UIApplication.shared.open(url) { success in
-          if success {
-            result(nil)
-          } else {
-            result(
-              FlutterError(
-                code: "OPEN_SETTINGS_FAILED",
-                message: "Unable to open settings",
-                details: nil
-              )
-            )
-          }
-        }
-      }
-
-      let galleryChannel = FlutterMethodChannel(
-        name: galleryChannelName,
-        binaryMessenger: controller.binaryMessenger
-      )
-      galleryChannel.setMethodCallHandler { [weak self] call, result in
-        self?.handleGalleryCall(call, result: result)
-      }
-
-      let downloadsChannel = FlutterMethodChannel(
-        name: downloadsChannelName,
-        binaryMessenger: controller.binaryMessenger
-      )
-      downloadsChannel.setMethodCallHandler { [weak self] call, result in
-        self?.handleDownloadsCall(call, result: result)
-      }
-    }
 
     cameraBrowser.delegate = self
     if #available(iOS 15.2, *) {
@@ -125,6 +42,111 @@ import UniformTypeIdentifiers
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    // With the UIScene lifecycle, `window` is nil during didFinishLaunching, so method
+    // channels MUST be registered here or Dart gets MissingPluginException.
+    registerNativeChannels(messenger: engineBridge.applicationRegistrar.messenger())
+  }
+
+  private func registerNativeChannels(messenger: FlutterBinaryMessenger) {
+    let otgChannel = FlutterMethodChannel(
+      name: otgChannelName,
+      binaryMessenger: messenger
+    )
+    otgChannel.setMethodCallHandler { [weak self] call, result in
+      guard let self else { return }
+      switch call.method {
+      case "pickImage", "pickImages":
+        self.pickExternalImage(
+          allowsMultipleSelection: call.method == "pickImages",
+          result: result
+        )
+      case "connectedCameraDevices":
+        self.listConnectedCameraDevices(result: result)
+      case "connectedCameraImages":
+        let arguments = call.arguments as? [String: Any]
+        let limit = (arguments?["limit"] as? NSNumber)?.intValue
+        self.listConnectedCameraImages(limit: limit, result: result)
+      case "importConnectedCameraImages":
+        let arguments = call.arguments as? [String: Any]
+        let ids = arguments?["ids"] as? [String] ?? []
+        self.importConnectedCameraImages(ids: ids, result: result)
+      case "pickSource":
+        self.pickExternalSource(result: result)
+      case "recentSourceImages":
+        let arguments = call.arguments as? [String: Any]
+        let excludeIds = Set(arguments?["excludeIds"] as? [String] ?? [])
+        self.fetchRecentSourceImages(excludeIds: excludeIds, result: result)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    let settingsChannel = FlutterMethodChannel(
+      name: settingsChannelName,
+      binaryMessenger: messenger
+    )
+    settingsChannel.setMethodCallHandler { call, result in
+      guard call.method == "openWifiSettings" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+
+      guard let url = URL(string: UIApplication.openSettingsURLString) else {
+        result(
+          FlutterError(
+            code: "OPEN_SETTINGS_FAILED",
+            message: "Unable to create settings URL",
+            details: nil
+          )
+        )
+        return
+      }
+
+      UIApplication.shared.open(url) { success in
+        if success {
+          result(nil)
+        } else {
+          result(
+            FlutterError(
+              code: "OPEN_SETTINGS_FAILED",
+              message: "Unable to open settings",
+              details: nil
+            )
+          )
+        }
+      }
+    }
+
+    let galleryChannel = FlutterMethodChannel(
+      name: galleryChannelName,
+      binaryMessenger: messenger
+    )
+    galleryChannel.setMethodCallHandler { [weak self] call, result in
+      self?.handleGalleryCall(call, result: result)
+    }
+
+    let downloadsChannel = FlutterMethodChannel(
+      name: downloadsChannelName,
+      binaryMessenger: messenger
+    )
+    downloadsChannel.setMethodCallHandler { [weak self] call, result in
+      self?.handleDownloadsCall(call, result: result)
+    }
+  }
+
+  /// Finds the view controller to present pickers from. With UIScene, the
+  /// AppDelegate's `window` is nil, so look it up through the connected scenes.
+  private func topViewController() -> UIViewController? {
+    let sceneWindows = UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .flatMap { $0.windows }
+    let fallbackWindow: UIWindow? = window
+    let hostWindow = sceneWindows.first(where: { $0.isKeyWindow }) ?? sceneWindows.first ?? fallbackWindow
+    var top = hostWindow?.rootViewController
+    while let presented = top?.presentedViewController {
+      top = presented
+    }
+    return top
   }
 
   private func handleGalleryCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -209,20 +231,116 @@ import UniformTypeIdentifiers
   }
 
   private func listConnectedCameraImages(limit: Int?, result: @escaping FlutterResult) {
-    let allFiles = allCameraFiles()
-    let files: ArraySlice<(ICCameraDevice, ICCameraFile)>
-    if let limit, limit > 0 {
-      files = allFiles.prefix(limit)
-    } else {
-      files = allFiles[allFiles.startIndex..<allFiles.endIndex]
+    ensureCameraContentsAccess { [weak self] granted in
+      guard let self else { return }
+      guard granted else {
+        result(
+          FlutterError(
+            code: "CAMERA_ACCESS_DENIED",
+            message: "Connected camera access was denied",
+            details: nil
+          )
+        )
+        return
+      }
+
+      self.waitForCameraDevice(timeout: 6) { [weak self] in
+        guard let self else { return }
+        // The app shows a cancellable loading screen, so allow big memory cards time.
+        self.waitForCameraCatalog(timeout: 25) { [weak self] in
+          guard let self else { return }
+          let allFiles = self.allCameraFiles()
+          let files: ArraySlice<(ICCameraDevice, ICCameraFile)>
+          if let limit, limit > 0 {
+            files = allFiles.prefix(limit)
+          } else {
+            files = allFiles[allFiles.startIndex..<allFiles.endIndex]
+          }
+          result(files.map { camera, file in
+            [
+              "id": self.cameraFileId(camera, file),
+              "name": file.originalFilename ?? file.name ?? "camera-image.jpg",
+              "size": String(file.fileSize),
+            ]
+          })
+        }
+      }
     }
-    result(files.map { camera, file in
-      [
-        "id": cameraFileId(camera, file),
-        "name": file.originalFilename ?? file.name ?? "camera-image.jpg",
-        "size": String(file.fileSize),
-      ]
-    })
+  }
+
+  /// A camera plugged in moments ago (or before permission was granted) may not be
+  /// reported yet. Re-scan and wait briefly for one to appear.
+  private func waitForCameraDevice(timeout: TimeInterval, _ completion: @escaping () -> Void) {
+    if !connectedCameras.isEmpty {
+      completion()
+      return
+    }
+
+    cameraBrowser.stop()
+    cameraBrowser.start()
+
+    var finished = false
+    let finish: () -> Void = {
+      if finished { return }
+      finished = true
+      completion()
+    }
+    cameraDeviceWaiters.append(finish)
+    DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: finish)
+  }
+
+  /// iOS requires explicit permission before an app can read a USB camera's files.
+  /// Only an explicit denial blocks; other states still attempt the read.
+  private func ensureCameraContentsAccess(_ completion: @escaping (Bool) -> Void) {
+    if #available(iOS 14.0, *) {
+      let current = cameraBrowser.contentsAuthorizationStatus
+      if current == .authorized {
+        completion(true)
+        return
+      }
+      if current == .denied || current == .restricted {
+        completion(false)
+        return
+      }
+      cameraBrowser.requestContentsAuthorization { status in
+        DispatchQueue.main.async {
+          completion(status != .denied && status != .restricted)
+        }
+      }
+      return
+    }
+    completion(true)
+  }
+
+  /// A freshly plugged-in camera reports no files until its catalog is loaded.
+  /// Wait (bounded) for every connected camera to become ready.
+  private func waitForCameraCatalog(timeout: TimeInterval, _ completion: @escaping () -> Void) {
+    let notReady = connectedCameras.filter { !readyCameras.contains(ObjectIdentifier($0)) }
+    if notReady.isEmpty {
+      completion()
+      return
+    }
+
+    for camera in notReady where !camera.hasOpenSession {
+      camera.requestOpenSession()
+    }
+
+    var finished = false
+    let finish: () -> Void = {
+      if finished { return }
+      finished = true
+      completion()
+    }
+    cameraCatalogWaiters.append(finish)
+    DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: finish)
+  }
+
+  private func flushCameraCatalogWaitersIfReady() {
+    let allReady = connectedCameras.allSatisfy { readyCameras.contains(ObjectIdentifier($0)) }
+    guard allReady, !cameraCatalogWaiters.isEmpty else { return }
+    let waiters = cameraCatalogWaiters
+    cameraCatalogWaiters.removeAll()
+    waiters.forEach { $0() }
   }
 
   private func importConnectedCameraImages(ids: [String], result: @escaping FlutterResult) {
@@ -240,7 +358,12 @@ import UniformTypeIdentifiers
       group.enter()
       let imageId = cameraFileId(camera, file)
       let filename = sanitizeFilename(file.originalFilename ?? file.name ?? "camera-image.jpg")
+      // One folder per camera file: cameras reuse names (IMG_0001.JPG) across folders,
+      // so a shared folder with overwrite would silently replace one photo with another.
       let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("camera_import", isDirectory: true)
+        .appendingPathComponent(sanitizeFilename(imageId), isDirectory: true)
+      try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       let options: [ICDownloadOption: Any] = [
         .downloadsDirectoryURL: directory,
         .saveAsFilename: filename,
@@ -273,6 +396,17 @@ import UniformTypeIdentifiers
       return
     }
 
+    guard let presenter = topViewController() else {
+      result(
+        FlutterError(
+          code: "NO_PRESENTER",
+          message: "Unable to open the file picker",
+          details: nil
+        )
+      )
+      return
+    }
+
     otgResult = result
     otgAllowsMultipleSelection = allowsMultipleSelection
     let picker: UIDocumentPickerViewController
@@ -283,7 +417,7 @@ import UniformTypeIdentifiers
     }
     picker.delegate = self
     picker.allowsMultipleSelection = allowsMultipleSelection
-    window?.rootViewController?.present(picker, animated: true)
+    presenter.present(picker, animated: true)
   }
 
   private func pickExternalSource(result: @escaping FlutterResult) {
@@ -292,6 +426,17 @@ import UniformTypeIdentifiers
         FlutterError(
           code: "PICK_IN_PROGRESS",
           message: "A source picker is already open",
+          details: nil
+        )
+      )
+      return
+    }
+
+    guard let presenter = topViewController() else {
+      result(
+        FlutterError(
+          code: "NO_PRESENTER",
+          message: "Unable to open the folder picker",
           details: nil
         )
       )
@@ -307,7 +452,7 @@ import UniformTypeIdentifiers
     }
     picker.delegate = self
     picker.allowsMultipleSelection = false
-    window?.rootViewController?.present(picker, animated: true)
+    presenter.present(picker, animated: true)
   }
 
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
@@ -731,24 +876,62 @@ import UniformTypeIdentifiers
 
   func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
     guard let camera = device as? ICCameraDevice else { return }
-    if !connectedCameras.contains(where: { $0 === camera }) {
-      connectedCameras.append(camera)
+    DispatchQueue.main.async {
+      if !self.connectedCameras.contains(where: { $0 === camera }) {
+        self.connectedCameras.append(camera)
+      }
+      camera.delegate = self
+      if !camera.hasOpenSession {
+        camera.requestOpenSession()
+      }
+
+      let waiters = self.cameraDeviceWaiters
+      self.cameraDeviceWaiters.removeAll()
+      waiters.forEach { $0() }
     }
-    camera.delegate = self
-    camera.requestOpenSession()
   }
 
   func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
-    connectedCameras.removeAll { $0 === device }
+    forgetCamera(device)
   }
 
-  func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {}
+  func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {
+    let key = ObjectIdentifier(device)
+    guard error != nil else {
+      DispatchQueue.main.async { self.cameraSessionRetries[key] = nil }
+      return
+    }
+    // Cameras that are waking up or busy often refuse the first session; retry a few times.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+      let attempts = self.cameraSessionRetries[key] ?? 0
+      guard attempts < 3,
+            self.connectedCameras.contains(where: { $0 === device }),
+            !device.hasOpenSession
+      else { return }
+      self.cameraSessionRetries[key] = attempts + 1
+      device.requestOpenSession()
+    }
+  }
   func device(_ device: ICDevice, didCloseSessionWithError error: Error?) {}
   func didRemove(_ device: ICDevice) {
-    connectedCameras.removeAll { $0 === device }
+    forgetCamera(device)
   }
 
-  func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {}
+  private func forgetCamera(_ device: ICDevice) {
+    DispatchQueue.main.async {
+      self.connectedCameras.removeAll { $0 === device }
+      self.readyCameras.remove(ObjectIdentifier(device))
+      self.cameraSessionRetries[ObjectIdentifier(device)] = nil
+      self.flushCameraCatalogWaitersIfReady()
+    }
+  }
+
+  func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
+    DispatchQueue.main.async {
+      self.readyCameras.insert(ObjectIdentifier(device))
+      self.flushCameraCatalogWaitersIfReady()
+    }
+  }
 
   func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}
 

@@ -57,6 +57,35 @@ class _SelectedUploadFile {
   final String name;
 }
 
+/// Outcome of trying to read photos straight off a USB-connected camera.
+sealed class _CameraRead {
+  const _CameraRead();
+}
+
+final class _CameraPhotos extends _CameraRead {
+  const _CameraPhotos(this.images);
+
+  final List<ConnectedCameraImage> images;
+}
+
+/// No readable camera (or it has no photos): fall back to the file picker.
+final class _NoCameraPhotos extends _CameraRead {
+  const _NoCameraPhotos();
+}
+
+final class _CameraAccessDenied extends _CameraRead {
+  const _CameraAccessDenied({required this.fixInSettings});
+
+  /// iOS keeps the choice in Settings; Android asks again on the next attempt.
+  final bool fixInSettings;
+}
+
+const _cameraDeniedCodes = {
+  'CAMERA_ACCESS_DENIED',
+  'USB_PERMISSION_DENIED',
+  'USB_PERMISSION_REQUIRED',
+};
+
 class _PtpProbe {
   const _PtpProbe(this.camera, this.images);
 
@@ -90,6 +119,7 @@ class _UploadPageState extends State<UploadPage> {
   bool _galleryBusy = false;
   bool _otgImporting = false;
   bool _otgBusy = false;
+  bool _usbPickInProgress = false;
   bool _otgNativeCameraMode = false;
   bool _freeingSpace = false;
   bool _autoImporting = false;
@@ -212,24 +242,196 @@ class _UploadPageState extends State<UploadPage> {
   }
 
   Future<void> _pickOtgFiles() async {
+    if (_usbPickInProgress) return; // Ignore double taps.
+    _usbPickInProgress = true;
     try {
-      List<ConnectedCameraImage> cameraImages = const [];
-      try {
-        cameraImages = await OtgFilePicker.connectedCameraImages();
-      } on MissingPluginException {
-        // OTG native channel is unavailable. Do not expose build errors to users.
-        // Use normal picker fallback.
-        final files = await OtgFilePicker.pickImages();
-        _addSelectedFiles(
-          files
-              .map(
-                (file) => _SelectedUploadFile(path: file.path, name: file.name),
-              )
-              .toList(),
-        );
+      final read = await _withCameraProgress(
+        'Connecting to camera…\nKeep it switched on and connected.',
+        _readConnectedCameraImages(),
+      );
+      if (read == null || !mounted) return; // Cancelled, or page closed.
+
+      switch (read) {
+        case _CameraAccessDenied(:final fixInSettings):
+          await _showCameraAccessHelp(fixInSettings: fixInSettings);
+        case _NoCameraPhotos():
+          await _pickOtgFilesFromFiles();
+        case _CameraPhotos(:final images):
+          await _importFromCamera(images);
       }
-    } catch (error) {
-      AppToast.error('Failed to read connected camera: $error');
+    } catch (error, stackTrace) {
+      // Last resort: never leave the user stuck — offer the file picker instead.
+      debugPrint('USB camera flow failed: $error\n$stackTrace');
+      await _pickOtgFilesFromFiles();
+    } finally {
+      _usbPickInProgress = false;
+    }
+  }
+
+  Future<_CameraRead> _readConnectedCameraImages() async {
+    try {
+      final images = await OtgFilePicker.connectedCameraImages();
+      return images.isEmpty ? const _NoCameraPhotos() : _CameraPhotos(images);
+    } on PlatformException catch (error) {
+      if (_cameraDeniedCodes.contains(error.code)) {
+        return _CameraAccessDenied(fixInSettings: Platform.isIOS);
+      }
+      debugPrint('USB camera read failed (${error.code}): ${error.message}');
+      return const _NoCameraPhotos();
+    } on MissingPluginException catch (error) {
+      debugPrint('USB camera channel unavailable: $error');
+      return const _NoCameraPhotos();
+    }
+  }
+
+  Future<void> _importFromCamera(List<ConnectedCameraImage> images) async {
+    final selectedIds = await _selectConnectedCameraImages(images);
+    if (selectedIds == null || selectedIds.isEmpty || !mounted) return;
+
+    final count = selectedIds.length;
+    List<OtgPickedFile>? imported;
+    try {
+      imported = await _withCameraProgress(
+        'Copying $count ${count == 1 ? 'photo' : 'photos'} from camera…',
+        _importCameraImagesWithRetry(selectedIds),
+      );
+    } on PlatformException catch (error) {
+      if (_cameraDeniedCodes.contains(error.code)) {
+        if (mounted) await _showCameraAccessHelp(fixInSettings: Platform.isIOS);
+        return;
+      }
+      debugPrint('USB camera import failed (${error.code}): ${error.message}');
+      AppToast.error(
+        'Could not copy photos from the camera. Keep it connected and try again.',
+      );
+      return;
+    }
+    if (imported == null) return; // Cancelled.
+
+    if (imported.isEmpty) {
+      AppToast.error(
+        'Could not copy photos from the camera. Keep it connected and try again.',
+      );
+      return;
+    }
+
+    _addSelectedFiles(
+      imported
+          .map((file) => _SelectedUploadFile(path: file.path, name: file.name))
+          .toList(),
+    );
+    final missed = count - imported.length;
+    if (missed > 0) {
+      AppToast.error(
+        '$missed ${missed == 1 ? 'photo' : 'photos'} could not be copied. Select them again to retry.',
+      );
+    }
+  }
+
+  /// Copies the selected photos, retrying once for any the camera failed to send.
+  Future<List<OtgPickedFile>> _importCameraImagesWithRetry(
+    List<String> ids,
+  ) async {
+    final imported = await OtgFilePicker.importConnectedCameraImages(ids);
+    final importedIds = imported.map((file) => file.id).nonNulls.toSet();
+    final missing = ids.where((id) => !importedIds.contains(id)).toList();
+    final platformReportsIds = imported.isEmpty || importedIds.isNotEmpty;
+    if (missing.isEmpty || !platformReportsIds) return imported;
+
+    final retried = await OtgFilePicker.importConnectedCameraImages(missing);
+    return [...imported, ...retried];
+  }
+
+  Future<void> _pickOtgFilesFromFiles() async {
+    try {
+      final files = await OtgFilePicker.pickImages();
+      _addSelectedFiles(
+        files
+            .map(
+              (file) => _SelectedUploadFile(path: file.path, name: file.name),
+            )
+            .toList(),
+      );
+    } on MissingPluginException catch (error) {
+      debugPrint('File picker channel unavailable: $error');
+      AppToast.error(
+        'USB camera is not supported in this version of AirPix. Please update the app.',
+      );
+    } on PlatformException catch (error) {
+      debugPrint('File picker failed (${error.code}): ${error.message}');
+      AppToast.error('Could not open your files. Please try again.');
+    }
+  }
+
+  Future<void> _showCameraAccessHelp({required bool fixInSettings}) async {
+    final openSettings = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Allow camera access'),
+        content: Text(
+          fixInSettings
+              ? 'AirPix needs permission to read photos from your connected camera. Allow it in Settings, then try again.'
+              : 'Tap USB / OTG camera again and choose Allow when your phone asks to access the camera.',
+        ),
+        actions: [
+          if (fixInSettings)
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Not now'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, fixInSettings),
+            child: Text(fixInSettings ? 'Open Settings' : 'OK'),
+          ),
+        ],
+      ),
+    );
+    // null means dismissed by tapping outside; only an explicit tap opens Settings.
+    if (openSettings == true) await openAppSettings();
+  }
+
+  /// Runs [task] behind a cancellable progress dialog, shown only if it takes
+  /// longer than a moment. Returns null if the user taps Cancel.
+  Future<T?> _withCameraProgress<T>(String message, Future<T> task) async {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final cancelled = Completer<T?>();
+    final route = DialogRoute<void>(
+      context: context,
+      themes: InheritedTheme.capture(from: context, to: navigator.context),
+      barrierDismissible: false,
+      builder: (_) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Row(
+            children: [
+              const SizedBox.square(
+                dimension: 28,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+              const SizedBox(width: 20),
+              Expanded(child: Text(message)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                if (!cancelled.isCompleted) cancelled.complete(null);
+              },
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+      ),
+    );
+    // Short delay so an instant result does not flash a dialog.
+    final showTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted && !cancelled.isCompleted) unawaited(navigator.push(route));
+    });
+    try {
+      return await Future.any<T?>([task, cancelled.future]);
+    } finally {
+      showTimer.cancel();
+      if (route.isActive) navigator.removeRoute(route);
     }
   }
 

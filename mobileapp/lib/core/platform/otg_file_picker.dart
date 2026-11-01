@@ -89,7 +89,7 @@ class OtgSourceSelection {
 class OtgFilePicker {
   OtgFilePicker._();
 
-  static const _channel = MethodChannel('piuphoto/otg_picker');
+  static const _channel = MethodChannel('airpix/otg_picker');
 
   static Future<OtgPickedFile?> pickImage() async {
     final result = await _channel.invokeMapMethod<String, dynamic>('pickImage');
