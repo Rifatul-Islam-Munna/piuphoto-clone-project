@@ -40,6 +40,16 @@ import UniformTypeIdentifiers
     return didFinish
   }
 
+  override func applicationDidBecomeActive(_ application: UIApplication) {
+    super.applicationDidBecomeActive(application)
+    // A camera may be attached while the app is inactive or before iOS
+    // grants external-camera access; retry discovery when returning.
+    if connectedCameras.isEmpty {
+      cameraBrowser.stop()
+      cameraBrowser.start()
+    }
+  }
+
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     // With the UIScene lifecycle, `window` is nil during didFinishLaunching, so method
@@ -62,6 +72,8 @@ import UniformTypeIdentifiers
         )
       case "connectedCameraDevices":
         self.listConnectedCameraDevices(result: result)
+      case "cameraConnectionDiagnostics":
+        self.cameraConnectionDiagnostics(result: result)
       case "connectedCameraImages":
         let arguments = call.arguments as? [String: Any]
         let limit = (arguments?["limit"] as? NSNumber)?.intValue
@@ -218,16 +230,97 @@ import UniformTypeIdentifiers
   }
 
   private func listConnectedCameraDevices(result: @escaping FlutterResult) {
-    result(connectedCameras.enumerated().map { index, camera in
-      let id = camera.uuidString ?? "camera-\(index)"
-      let name = camera.name ?? "Connected camera"
-      return [
-        "id": id,
-        "name": name,
-        "hasPermission": true,
-        "directSupported": true,
-      ] as [String: Any]
-    })
+    ensureCameraContentsAccess { [weak self] granted in
+      guard let self else { return }
+      guard granted else {
+        result(FlutterError(
+          code: "CAMERA_ACCESS_DENIED",
+          message: "Permission to read the connected camera was denied",
+          details: nil
+        ))
+        return
+      }
+      self.waitForCameraDevice(timeout: 6) { [weak self] in
+        guard let self else { return }
+        result(self.connectedCameras.enumerated().map { index, camera in
+          let id = camera.uuidString ?? "camera-\(index)"
+          let name = camera.name ?? "Connected camera"
+          return [
+            "id": id,
+            "name": name,
+            "hasPermission": true,
+            "directSupported": true,
+          ] as [String: Any]
+        })
+      }
+    }
+  }
+
+  /// Returns the actual iOS PTP transport state, without opening Photos/Files.
+  private func cameraConnectionDiagnostics(result: @escaping FlutterResult) {
+    ensureCameraContentsAccess { [weak self] granted in
+      guard let self else { return }
+      guard granted else {
+        result([
+          "status": "permission-denied",
+          "message": "External camera access is blocked. Check AirPix permissions in iPhone Settings.",
+          "cameras": [] as [[String: Any]],
+          "totalImages": 0,
+        ] as [String: Any])
+        return
+      }
+
+      self.waitForCameraDevice(timeout: 6) { [weak self] in
+        guard let self else { return }
+        guard !self.connectedCameras.isEmpty else {
+          result([
+            "status": "no-camera",
+            "message": "No USB/PTP camera found. Check the data cable, iPhone adapter and camera USB transfer mode.",
+            "cameras": [] as [[String: Any]],
+            "totalImages": 0,
+          ] as [String: Any])
+          return
+        }
+
+        self.waitForCameraCatalog(timeout: 12) { [weak self] in
+          guard let self else { return }
+          let cameras: [[String: Any]] = self.connectedCameras.map { camera in
+            [
+              "name": camera.name ?? "Connected camera",
+              "id": camera.uuidString ?? "camera",
+              "sessionOpen": camera.hasOpenSession,
+              "catalogReady": self.readyCameras.contains(ObjectIdentifier(camera)),
+              "catalogProgress": camera.contentCatalogPercentCompleted,
+              "imageCount": (camera.mediaFiles ?? []).compactMap { $0 as? ICCameraFile }
+                .filter { self.isCameraImageFile($0) }.count,
+            ] as [String: Any]
+          }
+          let ready = !cameras.isEmpty && cameras.allSatisfy { $0["catalogReady"] as? Bool == true }
+          let count = cameras.reduce(0) { $0 + ($1["imageCount"] as? Int ?? 0) }
+          let message: String
+          let status: String
+          if cameras.isEmpty {
+            status = "no-camera"
+            message = "The USB camera disconnected during scanning. Reconnect and retry."
+          } else if !ready {
+            status = "catalog-loading"
+            message = "Camera detected but its file catalog is still loading. Keep camera on and retry."
+          } else if count == 0 {
+            status = "ready"
+            message = "Camera connected, but no supported images were found on its storage."
+          } else {
+            status = "ready"
+            message = "Camera connection ready. \(count) image(s) available for direct import."
+          }
+          result([
+            "status": status,
+            "message": message,
+            "cameras": cameras,
+            "totalImages": count,
+          ] as [String: Any])
+        }
+      }
+    }
   }
 
   private func listConnectedCameraImages(limit: Int?, result: @escaping FlutterResult) {
@@ -246,10 +339,36 @@ import UniformTypeIdentifiers
 
       self.waitForCameraDevice(timeout: 6) { [weak self] in
         guard let self else { return }
+        guard !self.connectedCameras.isEmpty else {
+          result(FlutterError(
+            code: "NO_CAMERA_CONNECTED",
+            message: "No USB/PTP camera detected. Check cable, adapter and USB mode.",
+            details: nil
+          ))
+          return
+        }
         // The app shows a cancellable loading screen, so allow big memory cards time.
         self.waitForCameraCatalog(timeout: 25) { [weak self] in
           guard let self else { return }
+          guard !self.connectedCameras.isEmpty else {
+            result(FlutterError(
+              code: "NO_CAMERA_CONNECTED",
+              message: "USB camera disconnected during scanning.",
+              details: nil
+            ))
+            return
+          }
           let allFiles = self.allCameraFiles()
+          if allFiles.isEmpty && self.connectedCameras.contains(where: {
+            !self.readyCameras.contains(ObjectIdentifier($0))
+          }) {
+            result(FlutterError(
+              code: "CAMERA_CATALOG_LOADING",
+              message: "Camera detected, but its photos have not finished loading. Keep the camera on and try again.",
+              details: nil
+            ))
+            return
+          }
           let files: ArraySlice<(ICCameraDevice, ICCameraFile)>
           if let limit, limit > 0 {
             files = allFiles.prefix(limit)
@@ -346,39 +465,63 @@ import UniformTypeIdentifiers
   private func importConnectedCameraImages(ids: [String], result: @escaping FlutterResult) {
     let wanted = Set(ids)
     let files = allCameraFiles().filter { wanted.contains(cameraFileId($0.0, $0.1)) }
-    if files.isEmpty {
-      result([])
+    // PTP cameras commonly support only one data transfer at a time.
+    // Serial downloads also avoid exhausting memory on large RAW batches.
+    downloadCameraFiles(files, at: 0, downloaded: [], result: result)
+  }
+
+  private func downloadCameraFiles(
+    _ files: [(ICCameraDevice, ICCameraFile)],
+    at index: Int,
+    downloaded: [[String: String]],
+    result: @escaping FlutterResult
+  ) {
+    guard index < files.count else {
+      result(downloaded)
       return
     }
 
-    let group = DispatchGroup()
-    let lock = NSLock()
-    var imported: [[String: String]] = []
-    for (camera, file) in files {
-      group.enter()
-      let imageId = cameraFileId(camera, file)
-      let filename = sanitizeFilename(file.originalFilename ?? file.name ?? "camera-image.jpg")
-      // One folder per camera file: cameras reuse names (IMG_0001.JPG) across folders,
-      // so a shared folder with overwrite would silently replace one photo with another.
-      let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("camera_import", isDirectory: true)
-        .appendingPathComponent(sanitizeFilename(imageId), isDirectory: true)
-      try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-      let options: [ICDownloadOption: Any] = [
-        .downloadsDirectoryURL: directory,
-        .saveAsFilename: filename,
-        .overwrite: true,
-      ]
-      file.requestDownload(options: options) { path, error in
-        defer { group.leave() }
-        guard error == nil, let path, !path.isEmpty else { return }
-        let finalPath = path.hasPrefix("/") ? path : directory.appendingPathComponent(path).path
-        lock.lock()
-        imported.append(["id": imageId, "path": finalPath, "name": filename])
-        lock.unlock()
+    let (camera, file) = files[index]
+    let imageId = cameraFileId(camera, file)
+    let filename = sanitizeFilename(file.originalFilename ?? file.name ?? "camera-image.jpg")
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("camera_import", isDirectory: true)
+      .appendingPathComponent(sanitizeFilename(imageId), isDirectory: true)
+    do {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    } catch {
+      NSLog("[AirPix USB] Unable to create import folder for %@: %@", filename, String(describing: error))
+      downloadCameraFiles(files, at: index + 1, downloaded: downloaded, result: result)
+      return
+    }
+
+    let options: [ICDownloadOption: Any] = [
+      .downloadsDirectoryURL: directory,
+      .saveAsFilename: filename,
+      .overwrite: true,
+    ]
+    file.requestDownload(options: options) { [weak self] path, error in
+      DispatchQueue.main.async {
+        guard let self else {
+          result(downloaded)
+          return
+        }
+        var updated = downloaded
+        if let error {
+          NSLog("[AirPix USB] Camera download failed for %@: %@", filename, String(describing: error))
+        } else if let path, !path.isEmpty {
+          let resolvedPath = path.hasPrefix("/")
+            ? path
+            : directory.appendingPathComponent(path).path
+          if FileManager.default.fileExists(atPath: resolvedPath) {
+            updated.append(["id": imageId, "path": resolvedPath, "name": filename])
+          } else {
+            NSLog("[AirPix USB] Download reported success but missing file: %@", resolvedPath)
+          }
+        }
+        self.downloadCameraFiles(files, at: index + 1, downloaded: updated, result: result)
       }
     }
-    group.notify(queue: .main) { result(imported) }
   }
 
   private func pickExternalImage(
@@ -879,6 +1022,7 @@ import UniformTypeIdentifiers
     DispatchQueue.main.async {
       if !self.connectedCameras.contains(where: { $0 === camera }) {
         self.connectedCameras.append(camera)
+        NSLog("[AirPix USB] Detected camera: %@", camera.name ?? "Unnamed USB camera")
       }
       camera.delegate = self
       if !camera.hasOpenSession {
@@ -897,10 +1041,12 @@ import UniformTypeIdentifiers
 
   func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {
     let key = ObjectIdentifier(device)
-    guard error != nil else {
+    guard let error else {
+      NSLog("[AirPix USB] Opened camera session: %@", device.name ?? "Camera")
       DispatchQueue.main.async { self.cameraSessionRetries[key] = nil }
       return
     }
+    NSLog("[AirPix USB] Failed to open session for %@: %@", device.name ?? "Camera", String(describing: error))
     // Cameras that are waking up or busy often refuse the first session; retry a few times.
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
       let attempts = self.cameraSessionRetries[key] ?? 0
@@ -928,6 +1074,8 @@ import UniformTypeIdentifiers
 
   func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
     DispatchQueue.main.async {
+      NSLog("[AirPix USB] Catalog ready: %@; media items: %d",
+            device.name ?? "Camera", device.mediaFiles?.count ?? 0)
       self.readyCameras.insert(ObjectIdentifier(device))
       self.flushCameraCatalogWaitersIfReady()
     }

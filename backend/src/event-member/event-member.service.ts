@@ -262,14 +262,14 @@ export class EventMemberService {
     const normalized = code.trim().toUpperCase();
     const [event, user] = await Promise.all([
       this.eventModel
-        .findOne({ joinCode: normalized, isActive: true })
+        .findOne({ joinCode: normalized, isActive: { $ne: false } })
         .select('userId title')
         .lean(),
       this.userModel.findById(userId).select('isActive').lean(),
     ]);
     if (!event)
       throw new NotFoundException('Invalid or inactive event join code');
-    if (!user?.isActive)
+    if (!user || user.isActive === false)
       throw new ForbiddenException('Active account required');
 
     const member = await this.memberModel
@@ -287,6 +287,7 @@ export class EventMemberService {
           },
           $set: {
             status: EventMemberStatus.ACTIVE,
+            canPublish: true,
             respondedAt: new Date(),
           },
         },

@@ -36,6 +36,85 @@ describe('EventMemberService', () => {
       {} as never,
     );
 
+  it('joins with a valid code and returns an active photographer membership', async () => {
+    const event = {
+      _id: new Types.ObjectId(eventId),
+      userId: new Types.ObjectId(ownerId),
+    };
+    const findOne = jest.fn().mockReturnValue(queryResult(event));
+    const findById = jest.fn().mockReturnValue(queryResult({ isActive: true }));
+    const membership = {
+      eventId: { _id: eventId, title: 'Event' },
+      role: EventMemberRole.PHOTOGRAPHER,
+      status: EventMemberStatus.ACTIVE,
+    };
+    const lean = jest.fn().mockResolvedValue(membership);
+    const populateAlbums = jest.fn().mockReturnValue({ lean });
+    const populateEvent = jest
+      .fn()
+      .mockReturnValue({ populate: populateAlbums });
+    const findOneAndUpdate = jest
+      .fn()
+      .mockReturnValue({ populate: populateEvent });
+    const service = new EventMemberService(
+      { findOneAndUpdate } as never,
+      { findOne } as never,
+      { findById } as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(service.joinByCode(' ab12cd34ef ', userId)).resolves.toEqual({
+      message: 'Joined event as photographer',
+      data: membership,
+    });
+    expect(findOne).toHaveBeenCalledWith({
+      joinCode: 'AB12CD34EF',
+      isActive: { $ne: false },
+    });
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventId: event._id,
+        role: EventMemberRole.PHOTOGRAPHER,
+      }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: EventMemberStatus.ACTIVE,
+          canPublish: true,
+        }),
+      }),
+      expect.objectContaining({ upsert: true }),
+    );
+  });
+
+  it('allows an older active user record without an explicit isActive property', async () => {
+    const findOne = jest
+      .fn()
+      .mockReturnValue(
+        queryResult({
+          _id: new Types.ObjectId(eventId),
+          userId: new Types.ObjectId(ownerId),
+        }),
+      );
+    const findById = jest.fn().mockReturnValue(queryResult({}));
+    const lean = jest.fn().mockResolvedValue({ eventId: { title: 'Event' } });
+    const findOneAndUpdate = jest.fn().mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({ lean }),
+      }),
+    });
+    const service = new EventMemberService(
+      { findOneAndUpdate } as never,
+      { findOne } as never,
+      { findById } as never,
+      {} as never,
+      {} as never,
+    );
+    await expect(
+      service.joinByCode('AB12CD34EF', userId),
+    ).resolves.toHaveProperty('message', 'Joined event as photographer');
+  });
+
   it('exposes both workspaces when a planner account is also a photographer', async () => {
     const memberModel = {
       distinct: jest.fn().mockResolvedValue([EventMemberRole.PHOTOGRAPHER]),

@@ -1,6 +1,8 @@
 import 'package:auto_route/auto_route.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/utils/event_join_code.dart';
 import 'package:mobileapp/core/network/mutation_wrapper.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
@@ -36,12 +38,28 @@ class _InvitationsPageState extends State<InvitationsPage> {
   }
 
   Future<List<EventInvitationModel>> _loadInvitations() async {
-    final responses = await Future.wait([
-      DioHelper.get('/event-members/mine'),
-      DioHelper.get('/event/my-photographer-invitations'),
-    ]);
+    // A legacy endpoint error must not hide valid team memberships.
+    Future<Object?> request(String path) async {
+      try {
+        return (await DioHelper.get(path)).data;
+      } catch (error) {
+        debugPrint('Could not load invitations from $path: $error');
+        return null;
+      }
+    }
 
-    final teamData = responses[0].data['data'] as List? ?? [];
+    final responses = await Future.wait([
+      request('/event-members/mine'),
+      request('/event/my-photographer-invitations'),
+    ]);
+    if (responses.every((response) => response == null)) {
+      throw Exception('Could not load invitations. Check your connection.');
+    }
+
+    final teamResponse = responses[0];
+    final teamData = teamResponse is Map
+        ? (teamResponse['data'] as List? ?? [])
+        : <dynamic>[];
     final teamInvitations = teamData
         .where((item) {
           final role = (item as Map)['role']?.toString();
@@ -58,7 +76,10 @@ class _InvitationsPageState extends State<InvitationsPage> {
         .map((item) => item.event?.id)
         .whereType<String>()
         .toSet();
-    final legacyData = responses[1].data['data'] as List? ?? [];
+    final legacyResponse = responses[1];
+    final legacyData = legacyResponse is Map
+        ? (legacyResponse['data'] as List? ?? [])
+        : <dynamic>[];
     final legacyInvitations = legacyData
         .map(
           (item) => EventInvitationModel.fromJson(
@@ -141,33 +162,71 @@ class _InvitationsPageState extends State<InvitationsPage> {
     }
   }
 
+  String _joinErrorText(Object error) {
+    if (error is DioException) {
+      final responseData = error.response?.data;
+      final message = responseData is Map ? responseData['message'] : null;
+      if (message is String && message.trim().isNotEmpty) return message;
+      if (message is List && message.isNotEmpty) return message.join('. ');
+      if (error.response?.statusCode == 401) {
+        return 'Session expired. Please sign in again.';
+      }
+      if (error.response?.statusCode == 403) {
+        return 'Your account is not allowed to join this event.';
+      }
+      if (error.response?.statusCode == 404) {
+        return 'Event code not found or the event is inactive.';
+      }
+    }
+    return 'Could not join. Check your connection and try again.';
+  }
+
   Future<void> _joinWithCode() async {
-    final code = _joinCodeController.text.trim().toUpperCase();
-    if (code.length < 6) {
-      AppToast.error('Enter a valid event join code');
+    if (_joiningByCode) return;
+    final code = normalizeEventJoinCode(_joinCodeController.text);
+    if (!isValidEventJoinCode(code)) {
+      AppToast.error('Enter the event code or paste the planner invite link.');
       return;
     }
+    FocusScope.of(context).unfocus();
     setState(() => _joiningByCode = true);
     try {
       final response = await DioHelper.post(
         '/event-members/join',
         data: {'code': code},
       );
-      final data = response.data is Map ? response.data['data'] : null;
-      final eventData = data is Map ? data['eventId'] : null;
+      // Server returns {message, data: membership}; eventId lives in membership.
+      dynamic member = response.data;
+      if (member is Map && member['data'] is Map) member = member['data'];
+      if (member is Map && member['eventId'] == null && member['data'] is Map) {
+        member = member['data'];
+      }
+      final eventData = member is Map ? member['eventId'] : null;
+      String? title;
       if (eventData is Map) {
         final event = EventSummary.fromJson(
           Map<String, dynamic>.from(eventData),
         );
         if (event.id.isNotEmpty) {
           await ActiveEventStorage.saveActiveEvent(event);
+          title = event.title;
         }
       }
+
       _joinCodeController.clear();
-      AppToast.success('Joined event as photographer');
-      await _refresh();
+      if (mounted) {
+        AppToast.success(
+          title == null ? 'Joined event as photographer' : 'Joined $title',
+        );
+      }
+      // A refresh failure after a successful join must not report a join failure.
+      try {
+        await _refresh();
+      } catch (error) {
+        debugPrint('Joined, invitation refresh failed: $error');
+      }
     } catch (error) {
-      AppToast.error('Could not join event. Check the code and try again.');
+      if (mounted) AppToast.error(_joinErrorText(error));
     } finally {
       if (mounted) setState(() => _joiningByCode = false);
     }
@@ -183,13 +242,19 @@ class _InvitationsPageState extends State<InvitationsPage> {
         TextField(
           controller: _joinCodeController,
           textCapitalization: TextCapitalization.characters,
+          textInputAction: TextInputAction.done,
           autocorrect: false,
+          enableSuggestions: false,
           decoration: const InputDecoration(
-            labelText: 'Event code',
-            hintText: 'A1B2C3D4E5',
-            prefixIcon: Icon(Icons.qr_code_2_outlined, size: 20),
+            labelText: 'Event join code',
+            hintText: 'e.g. AB12CD34EF',
+            helperText: 'Paste the 10-character code or planner invite link.',
+            helperMaxLines: 2,
+            prefixIcon: Icon(Icons.key_outlined, size: 20),
           ),
-          onSubmitted: (_) => _joiningByCode ? null : _joinWithCode(),
+          onSubmitted: (_) {
+            if (!_joiningByCode) _joinWithCode();
+          },
         ),
         const SizedBox(height: 12),
         SizedBox(
@@ -254,9 +319,17 @@ class _InvitationsPageState extends State<InvitationsPage> {
 
             if (snapshot.hasError) {
               return ListView(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(20),
                 children: [
-                  Text('Failed to load invitations: ${snapshot.error}'),
+                  _joinCodeCard(),
+                  const SizedBox(height: 18),
+                  const Text('Could not load invitation history. Try again.'),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: _refresh,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
+                  ),
                 ],
               );
             }

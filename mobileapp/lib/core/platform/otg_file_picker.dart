@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'package:mobileapp/core/platform/usb_camera_diagnostics.dart';
 
 class OtgPickedFile {
   const OtgPickedFile({required this.path, required this.name, this.id});
@@ -117,6 +118,19 @@ class OtgFilePicker {
         )
         .where((file) => file.path.isNotEmpty && file.name.isNotEmpty)
         .toList();
+  }
+
+  static Future<UsbCameraDiagnostics> cameraConnectionDiagnostics() async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>(
+      'cameraConnectionDiagnostics',
+    );
+    if (result == null) {
+      throw PlatformException(
+        code: 'NO_CAMERA_STATUS',
+        message: 'The iOS USB camera connection status is unavailable.',
+      );
+    }
+    return UsbCameraDiagnostics.fromMap(result);
   }
 
   static Future<List<ConnectedCameraDevice>> connectedCameraDevices() async {
