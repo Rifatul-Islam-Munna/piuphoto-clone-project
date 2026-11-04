@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.IntentSender
+import android.content.pm.PackageManager
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
@@ -46,10 +47,13 @@ class MainActivity : FlutterFragmentActivity() {
     private var pendingMultiPick = false
     private var otgSourceUri: Uri? = null
     private var usbReceiverRegistered = false
+    // Selected manually by the photographer after inspecting USB diagnostics.
+    // Never probe arbitrary accessories without an explicit tap.
+    private var manuallySelectedUsbDeviceId: Int? = null
     private val cameraUsbHints = setOf(
         "canon", "nikon", "sony", "fujifilm", "fuji", "panasonic", "lumix",
         "olympus", "om digital", "pentax", "ricoh", "leica", "hasselblad",
-        "gopro", "dji", "sigma", "kodak", "phase one", "camera"
+        "gopro", "dji", "sigma", "kodak", "phase one", "camera", "ptp", "mtp", "imaging"
     )
     private val cameraUsbVendorIds = setOf(
         0x04A9, // Canon
@@ -97,6 +101,11 @@ class MainActivity : FlutterFragmentActivity() {
                     "pickImage" -> pickOtgImage(result)
                     "pickImages" -> pickOtgImages(result)
                     "connectedCameraDevices" -> listConnectedCameraDevices(result)
+                    "useUsbDeviceAsCamera" -> {
+                        val id = call.argument<String>("deviceId")?.toIntOrNull()
+                        selectUsbDeviceAsCamera(id, result)
+                    }
+                    "cameraConnectionDiagnostics" -> cameraConnectionDiagnostics(result)
                     "connectedCameraImages" -> {
                         val limit = call.argument<Number>("limit")?.toInt()
                         listConnectedCameraImages(limit, result)
@@ -178,19 +187,46 @@ class MainActivity : FlutterFragmentActivity() {
 
     private fun looksLikeCameraUsbDevice(device: UsbDevice): Boolean {
         if (hasStillImageInterface(device)) return true
+        val interfaceClasses = (0 until device.interfaceCount)
+            .map { device.getInterface(it).interfaceClass }
+        // Camera brands also ship card readers and UVC accessories; neither
+        // exposes stored photos through PTP/MTP merely by being that brand.
+        if (device.deviceClass == UsbConstants.USB_CLASS_MASS_STORAGE ||
+            device.deviceClass == UsbConstants.USB_CLASS_VIDEO ||
+            UsbConstants.USB_CLASS_MASS_STORAGE in interfaceClasses ||
+            UsbConstants.USB_CLASS_VIDEO in interfaceClasses) return false
         if (device.vendorId in cameraUsbVendorIds) return true
         val label = usbDeviceLabel(device).lowercase()
         return cameraUsbHints.any { hint -> label.contains(hint) }
     }
 
+    private fun selectUsbDeviceAsCamera(deviceId: Int?, result: MethodChannel.Result) {
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val device = manager.deviceList.values.firstOrNull { it.deviceId == deviceId }
+        if (device == null) {
+            result.error("USB_CAMERA_DISCONNECTED", "USB device was unplugged. Reconnect it and run diagnostics again.", null)
+            return
+        }
+        if (device.deviceClass == UsbConstants.USB_CLASS_HUB) {
+            result.error("USB_UNSUPPORTED_DEVICE", "A USB hub is not itself a camera. Connect the camera to the hub.", null)
+            return
+        }
+        manuallySelectedUsbDeviceId = device.deviceId
+        Log.i("AirPixCamera", "Manually selected USB camera candidate id=${device.deviceId}")
+        result.success(true)
+    }
+
     private fun cameraUsbDevices(): List<UsbDevice> {
         val manager = getSystemService(Context.USB_SERVICE) as UsbManager
-        // The user explicitly opened the camera/OTG flow, so do not reject an
-        // otherwise valid PTP/MTP camera just because it reports a vendor-specific
-        // USB class or an unknown vendor ID. Known camera devices stay first; any
-        // other attached non-hub USB device is probed as a safe fallback.
+        // Only request USB permission for an imaging/PTP/MTP candidate. Probing
+        // unrelated devices (keyboards, hubs, chargers, SD readers) is misleading
+        // and could prevent the real camera from being queried.
         return manager.deviceList.values
-            .filter { device -> device.deviceClass != UsbConstants.USB_CLASS_HUB }
+            .filter { device ->
+                device.deviceClass != UsbConstants.USB_CLASS_HUB &&
+                    (looksLikeCameraUsbDevice(device) ||
+                        device.deviceId == manuallySelectedUsbDeviceId)
+            }
             .sortedWith(
                 compareByDescending<UsbDevice> { looksLikeCameraUsbDevice(it) }
                     .thenByDescending { hasStillImageInterface(it) }
@@ -232,6 +268,134 @@ class MainActivity : FlutterFragmentActivity() {
         manager.requestPermission(device, intent)
     }
 
+    // USB host can enumerate attached devices, including accessories which are
+    // not cameras. No peripheral appearing here does NOT prove the cable is bad.
+    private fun usbConnectionOverview(): Map<String, Any> {
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val peripherals = manager.deviceList.values.sortedBy { it.deviceId }
+        val summaries = peripherals.map { device ->
+            val classes = (0 until device.interfaceCount)
+                .map { device.getInterface(it).interfaceClass }
+            val category = when {
+                device.deviceClass == UsbConstants.USB_CLASS_HUB ||
+                    UsbConstants.USB_CLASS_HUB in classes -> "USB hub"
+                hasStillImageInterface(device) -> "PTP / still-image interface"
+                UsbConstants.USB_CLASS_MASS_STORAGE in classes ||
+                    device.deviceClass == UsbConstants.USB_CLASS_MASS_STORAGE -> "USB mass storage / SD reader"
+                UsbConstants.USB_CLASS_VIDEO in classes ||
+                    device.deviceClass == UsbConstants.USB_CLASS_VIDEO -> "USB video / webcam (UVC)"
+                looksLikeCameraUsbDevice(device) -> "Camera-maker device (PTP not confirmed)"
+                else -> "Other USB accessory (not confirmed as camera)"
+            }
+            mapOf<String, Any>(
+                "id" to device.deviceId.toString(),
+                "name" to usbDeviceLabel(device),
+                "category" to category,
+                "vendorId" to device.vendorId,
+                "productId" to device.productId,
+                "usbClass" to device.deviceClass,
+                "interfaceClasses" to classes,
+                "hasPermission" to manager.hasPermission(device),
+                "cameraCandidate" to looksLikeCameraUsbDevice(device),
+            )
+        }
+        return mapOf(
+            "usbEnumerationAvailable" to true,
+            "usbHostSupported" to packageManager.hasSystemFeature(PackageManager.FEATURE_USB_HOST),
+            "usbDevices" to summaries,
+            "connectionNote" to "Android can list connected USB devices, but cannot detect an empty OTG adapter or guarantee a cable is passing data until a USB peripheral enumerates.",
+        )
+    }
+
+    private fun cameraConnectionDiagnostics(result: MethodChannel.Result) {
+        val overview = usbConnectionOverview()
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val candidates = cameraUsbDevices()
+        if (candidates.isEmpty()) {
+            val otherUsbDevices = manager.deviceList.isNotEmpty()
+            val hostSupported = packageManager.hasSystemFeature(PackageManager.FEATURE_USB_HOST)
+            result.success(
+                mapOf(
+                    "status" to if (!hostSupported) "host-unsupported"
+                        else if (otherUsbDevices) "unsupported-device" else "no-camera",
+                    "message" to if (!hostSupported)
+                        "This Android device does not declare USB host/OTG support. Direct camera import may not be available on this phone."
+                    else if (otherUsbDevices)
+                        "USB device(s) are detected, but none advertises a supported PTP camera. Check the device type below and switch camera USB mode to PTP/Photo Transfer if possible."
+                    else
+                        "Android reports no attached USB peripheral. Check OTG host mode, data cable, camera power and USB mode. An empty adapter cannot be detected by this test.",
+                    "cameras" to emptyList<Map<String, Any>>(),
+                    "totalImages" to 0,
+                ) + overview,
+            )
+            return
+        }
+        val notPermitted = candidates.filter { !manager.hasPermission(it) }
+        if (notPermitted.isNotEmpty()) {
+            result.success(
+                mapOf(
+                    "status" to "permission-required",
+                    "message" to "Android detected a possible camera-class USB device, but AirPix has not been granted access. Tap Connected camera and approve the USB permission prompt. Camera compatibility is confirmed only after opening its PTP/MTP session.",
+                    "cameras" to candidates.map {
+                        mapOf(
+                            "name" to usbDeviceLabel(it),
+                            "sessionOpen" to false,
+                            "catalogReady" to false,
+                            "catalogProgress" to 0,
+                            "imageCount" to 0,
+                            "sessionError" to "USB device permission required",
+                        )
+                    },
+                    "totalImages" to 0,
+                ) + overview,
+            )
+            return
+        }
+        Thread {
+            try {
+                val cameras = candidates.map { device ->
+                    val images = enumerateMtpImages(device)
+                    mapOf<String, Any>(
+                        "name" to usbDeviceLabel(device),
+                        "sessionOpen" to (images != null),
+                        "catalogReady" to (images != null),
+                        "catalogProgress" to (if (images != null) 100 else 0),
+                        "imageCount" to (images?.size ?: 0),
+                        "sessionError" to (if (images == null)
+                            "PTP/MTP session could not be opened" else ""),
+                    )
+                }
+                val count = cameras.sumOf { it["imageCount"] as Int }
+                val open = cameras.any { it["sessionOpen"] == true }
+                val status = when {
+                    !open -> "session-failed"
+                    count == 0 -> "empty-media"
+                    else -> "ready"
+                }
+                val message = when (status) {
+                    "session-failed" -> "The USB camera was detected, but Android could not open its photo-transfer session. Check camera PTP/MTP mode, its power and whether another app is using it."
+                    "empty-media" -> "The USB camera session opened, but no supported photos were listed. Check the memory card, camera mode and stored image formats."
+                    else -> "USB camera ready. $count photo(s) available for import."
+                }
+                runOnUiThread {
+                    result.success(
+                        mapOf(
+                            "status" to status,
+                            "message" to message,
+                            "cameras" to cameras,
+                            "totalImages" to count,
+                        ) + overview,
+                    )
+                }
+            } catch (error: Exception) {
+                Log.e("AirPixCamera", "USB diagnostics failed", error)
+                runOnUiThread {
+                    result.error("USB_DIAGNOSTICS_FAILED", error.message ?: "Could not inspect camera", null)
+                }
+            }
+        }.start()
+    }
+
     private fun listConnectedCameraDevices(result: MethodChannel.Result) {
         val manager = getSystemService(Context.USB_SERVICE) as UsbManager
         val devices = cameraUsbDevices()
@@ -270,8 +434,18 @@ class MainActivity : FlutterFragmentActivity() {
         }
         Thread {
             try {
-                val sorted = devices.flatMap { enumerateMtpImages(it) }
-                    .sortedWith(
+                val scanned = devices.map { device -> enumerateMtpImages(device) }
+                if (scanned.all { it == null }) {
+                    runOnUiThread {
+                        result.error(
+                            "USB_CAMERA_SESSION_FAILED",
+                            "A USB camera is detected but its PTP/MTP photo-transfer session could not be opened. Check camera USB mode, cable and power.",
+                            null,
+                        )
+                    }
+                    return@Thread
+                }
+                val sorted = scanned.filterNotNull().flatten().sortedWith(
                         compareByDescending<Map<String, String>> {
                             it["modifiedMs"]?.toLongOrNull() ?: 0L
                         }.thenByDescending {
@@ -296,8 +470,8 @@ class MainActivity : FlutterFragmentActivity() {
         return null
     }
 
-    private fun enumerateMtpImages(device: UsbDevice): List<Map<String, String>> {
-        val mtp = openMtpDevice(device) ?: return emptyList()
+    private fun enumerateMtpImages(device: UsbDevice): List<Map<String, String>>? {
+        val mtp = openMtpDevice(device) ?: return null
         return try {
             val result = mutableListOf<Map<String, String>>()
             val storageIds = mtp.storageIds ?: intArrayOf()
@@ -339,6 +513,14 @@ class MainActivity : FlutterFragmentActivity() {
         val manager = getSystemService(Context.USB_SERVICE) as UsbManager
         val devices = cameraUsbDevices().associateBy { it.deviceId }
         val requestedDeviceIds = ids.mapNotNull { it.substringBefore('|').toIntOrNull() }.toSet()
+        if (requestedDeviceIds.isEmpty()) {
+            result.error("USB_CAMERA_SELECTION_INVALID", "Select photos from the connected camera again.", null)
+            return
+        }
+        if (requestedDeviceIds.any { it !in devices }) {
+            result.error("USB_CAMERA_DISCONNECTED", "The camera was disconnected. Reconnect it and refresh the photo list.", null)
+            return
+        }
         val missingPermission = requestedDeviceIds
             .mapNotNull { devices[it] }
             .firstOrNull { !manager.hasPermission(it) }
@@ -361,8 +543,10 @@ class MainActivity : FlutterFragmentActivity() {
                 }.groupBy({ it.first }, { it.second })
 
                 for ((deviceId, handles) in grouped) {
-                    val device = devices[deviceId] ?: continue
-                    val mtp = openMtpDevice(device) ?: continue
+                    val device = devices[deviceId]
+                        ?: throw IllegalStateException("Camera disconnected during transfer")
+                    val mtp = openMtpDevice(device)
+                        ?: throw IllegalStateException("Camera refused to open its USB photo-transfer session")
                     try {
                         for (handle in handles) {
                             val info = mtp.getObjectInfo(handle) ?: continue
@@ -372,9 +556,22 @@ class MainActivity : FlutterFragmentActivity() {
                         mtp.close()
                     }
                 }
-                runOnUiThread { result.success(imported) }
+                if (imported.isEmpty()) {
+                    runOnUiThread {
+                        result.error(
+                            "USB_CAMERA_IMPORT_FAILED",
+                            "The camera did not send any selected photos. Keep it awake, check cable/USB mode and available phone storage, then retry.",
+                            null,
+                        )
+                    }
+                } else {
+                    runOnUiThread { result.success(imported) }
+                }
             } catch (error: Exception) {
-                runOnUiThread { result.error("USB_CAMERA_IMPORT_FAILED", error.message, null) }
+                Log.e("AirPixCamera", "USB camera import failed", error)
+                runOnUiThread {
+                    result.error("USB_CAMERA_IMPORT_FAILED", error.message ?: "USB camera photo transfer failed", null)
+                }
             }
         }.start()
     }

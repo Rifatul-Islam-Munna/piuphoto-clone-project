@@ -14,6 +14,7 @@ import 'package:mobileapp/core/platform/device_settings.dart';
 import 'package:mobileapp/core/platform/gallery_auto_import.dart';
 import 'package:mobileapp/core/platform/network_camera_discovery.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
+import 'package:mobileapp/core/platform/usb_camera_guidance.dart';
 import 'package:mobileapp/core/platform/ptp_ip_camera.dart';
 import 'package:mobileapp/core/platform/upnp_camera_media.dart';
 import 'package:mobileapp/core/router/app_router.dart';
@@ -68,9 +69,11 @@ final class _CameraPhotos extends _CameraRead {
   final List<ConnectedCameraImage> images;
 }
 
-/// No readable camera (or it has no photos): fall back to the file picker.
+/// Camera scan failed or returned no readable files; offer explicit alternatives.
 final class _NoCameraPhotos extends _CameraRead {
-  const _NoCameraPhotos();
+  const _NoCameraPhotos(this.guidance);
+
+  final UsbCameraGuidance guidance;
 }
 
 final class _CameraCatalogLoading extends _CameraRead {
@@ -258,8 +261,8 @@ class _UploadPageState extends State<UploadPage> {
       switch (read) {
         case _CameraAccessDenied(:final fixInSettings):
           await _showCameraAccessHelp(fixInSettings: fixInSettings);
-        case _NoCameraPhotos():
-          await _showExternalCameraChoices();
+        case _NoCameraPhotos(:final guidance):
+          await _showExternalCameraChoices(guidance: guidance);
         case _CameraCatalogLoading():
           await _showExternalCameraChoices(catalogLoading: true);
         case _CameraPhotos(:final images):
@@ -267,7 +270,11 @@ class _UploadPageState extends State<UploadPage> {
       }
     } catch (error, stackTrace) {
       debugPrint('USB camera flow failed: $error\n$stackTrace');
-      if (mounted) await _showExternalCameraChoices();
+      if (mounted) {
+        await _showExternalCameraChoices(
+          guidance: UsbCameraGuidance.forStatus('unknown', message: '$error'),
+        );
+      }
     } finally {
       _usbPickInProgress = false;
     }
@@ -276,7 +283,22 @@ class _UploadPageState extends State<UploadPage> {
   Future<_CameraRead> _readConnectedCameraImages() async {
     try {
       final images = await OtgFilePicker.connectedCameraImages();
-      return images.isEmpty ? const _NoCameraPhotos() : _CameraPhotos(images);
+      if (images.isNotEmpty) return _CameraPhotos(images);
+      // An empty photo list is not proof of a disconnected camera. Inspect
+      // the actual transport state before choosing an error message.
+      final diagnostic = await OtgFilePicker.cameraConnectionDiagnostics();
+      if (diagnostic.status == 'permission-denied') {
+        return const _CameraAccessDenied(fixInSettings: true);
+      }
+      if (diagnostic.status == 'catalog-loading') {
+        return const _CameraCatalogLoading();
+      }
+      return _NoCameraPhotos(
+        UsbCameraGuidance.forStatus(
+          diagnostic.status == 'ready' ? 'empty-media' : diagnostic.status,
+          message: diagnostic.message,
+        ),
+      );
     } on PlatformException catch (error) {
       if (_cameraDeniedCodes.contains(error.code)) {
         return _CameraAccessDenied(fixInSettings: Platform.isIOS);
@@ -285,10 +307,12 @@ class _UploadPageState extends State<UploadPage> {
         return const _CameraCatalogLoading();
       }
       debugPrint('USB camera read failed (${error.code}): ${error.message}');
-      return const _NoCameraPhotos();
+      return _NoCameraPhotos(
+        UsbCameraGuidance.forStatus(error.code, message: error.message),
+      );
     } on MissingPluginException catch (error) {
       debugPrint('USB camera channel unavailable: $error');
-      return const _NoCameraPhotos();
+      return _NoCameraPhotos(UsbCameraGuidance.forStatus('missing_plugin'));
     }
   }
 
@@ -309,9 +333,14 @@ class _UploadPageState extends State<UploadPage> {
         return;
       }
       debugPrint('USB camera import failed (${error.code}): ${error.message}');
-      AppToast.error(
-        'Could not copy photos from the camera. Keep it connected and try again.',
-      );
+      if (mounted) {
+        await _showExternalCameraChoices(
+          guidance: UsbCameraGuidance.forStatus(
+            error.code,
+            message: error.message,
+          ),
+        );
+      }
       return;
     }
     if (imported == null) return; // Cancelled.
@@ -350,18 +379,15 @@ class _UploadPageState extends State<UploadPage> {
     return [...imported, ...retried];
   }
 
-  /// Live state from iOS ImageCaptureCore, not the iPhone photo library.
+  /// Reports the actual native USB transport, not phone Photos/MediaStore.
   Future<void> _diagnoseUsbCamera() async {
-    if (!Platform.isIOS) {
-      AppToast.error('This diagnostic is currently available on iPhone.');
-      return;
-    }
     try {
       final diagnostic = await _withCameraProgress(
         'Checking USB camera and reading its photo catalog...',
         OtgFilePicker.cameraConnectionDiagnostics(),
       );
       if (!mounted || diagnostic == null) return;
+      final guidance = UsbCameraGuidance.forStatus(diagnostic.status);
 
       await showDialog<void>(
         context: context,
@@ -372,7 +398,109 @@ class _UploadPageState extends State<UploadPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              Text(
+                guidance.title,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
               Text(diagnostic.message),
+              const SizedBox(height: 12),
+              const Text(
+                'Connection checklist',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              _usbDiagnosticStep(
+                '1. USB accessory',
+                diagnostic.usbEnumerationAvailable
+                    ? (diagnostic.usbHostSupported == false
+                          ? 'USB host / OTG not supported by this phone'
+                          : diagnostic.usbDevices.isEmpty
+                          ? 'No attached USB peripheral enumerated'
+                          : '${diagnostic.usbDevices.length} USB device(s) detected')
+                    : 'iOS cannot inspect the adapter separately',
+              ),
+              _usbDiagnosticStep(
+                '2. Camera discovered',
+                diagnostic.cameras.isEmpty
+                    ? 'No compatible wired camera found'
+                    : '${diagnostic.cameras.length} camera(s) found',
+              ),
+              _usbDiagnosticStep(
+                '3. Camera session',
+                diagnostic.cameras.any((camera) => camera.sessionOpen)
+                    ? 'Open'
+                    : 'Not open',
+              ),
+              _usbDiagnosticStep(
+                '4. Camera photos',
+                diagnostic.totalImages > 0
+                    ? '${diagnostic.totalImages} available for import'
+                    : diagnostic.status == 'catalog-loading'
+                    ? 'Catalog still loading'
+                    : 'No compatible photos listed',
+              ),
+              if (diagnostic.connectionNote.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  diagnostic.connectionNote,
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ],
+              if (diagnostic.usbDevices.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Attached USB devices',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                for (final device in diagnostic.usbDevices) ...[
+                  const SizedBox(height: 7),
+                  Text(
+                    device.name,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  Text(
+                    '${device.category} · ${device.usbIdentifier}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  Text(
+                    device.cameraCandidate
+                        ? (device.hasPermission
+                              ? 'Possible camera; USB permission granted'
+                              : 'Possible camera; USB permission needed')
+                        : 'Not identified as a PTP camera',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  if (Platform.isAndroid &&
+                      !device.cameraCandidate &&
+                      device.category.startsWith('Other USB'))
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.usb_outlined),
+                        label: const Text('Try as PTP camera'),
+                        onPressed: () async {
+                          try {
+                            await OtgFilePicker.useUsbDeviceAsCamera(device.id);
+                            if (dialogContext.mounted) {
+                              Navigator.pop(dialogContext);
+                            }
+                            if (mounted) unawaited(_pickOtgFiles());
+                          } on PlatformException catch (error) {
+                            AppToast.error(
+                              UsbCameraGuidance.forStatus(
+                                error.code,
+                                message: error.message,
+                              ).details,
+                            );
+                          }
+                        },
+                      ),
+                    ),
+                ],
+              ],
+              const SizedBox(height: 12),
+              Text('What to do: ${guidance.nextSteps}'),
               const SizedBox(height: 10),
               for (final camera in diagnostic.cameras) ...[
                 const Divider(),
@@ -387,17 +515,28 @@ class _UploadPageState extends State<UploadPage> {
                   'Photo index: ${camera.catalogReady ? "Ready" : "${camera.catalogProgress}% loaded"}',
                 ),
                 Text('Supported images found: ${camera.imageCount}'),
+                if (camera.transportType.isNotEmpty)
+                  Text('Transport: ${camera.transportType}'),
+                if (Platform.isIOS)
+                  Text(
+                    camera.wiredConfirmed
+                        ? 'Wired USB transport identified'
+                        : 'USB transport not independently confirmed',
+                  ),
+                if (camera.sessionError.isNotEmpty)
+                  Text(
+                    'Session error: ${camera.sessionError}',
+                    style: const TextStyle(color: Colors.redAccent),
+                  ),
               ],
               if (diagnostic.cameras.isEmpty) ...[
                 const Text(
-                  'Check that the iPhone adapter supports data transfer. '
-                  'On the camera, enable PTP/Photo Transfer, unlock the iPhone, '
-                  'and allow access if prompted.',
+                  'Check that the camera uses a USB data cable and PTP / Photo Transfer mode. An OTG adapter alone does not prove the camera is accessible.',
                 ),
               ],
               const SizedBox(height: 8),
               const Text(
-                'Photos on this iPhone are not counted. This checks only the wired camera.',
+                'Phone gallery photos are not counted. This only checks the wired camera.',
                 style: TextStyle(fontSize: 12),
               ),
             ],
@@ -422,7 +561,7 @@ class _UploadPageState extends State<UploadPage> {
         ),
       );
     } on MissingPluginException {
-      AppToast.error('USB diagnostics need the newest iOS app build.');
+      AppToast.error('USB diagnostics require a freshly rebuilt app.');
     } on PlatformException catch (error) {
       AppToast.error(error.message ?? 'Unable to check USB camera connection.');
     } catch (error) {
@@ -430,6 +569,23 @@ class _UploadPageState extends State<UploadPage> {
       AppToast.error('Could not check USB camera connection.');
     }
   }
+
+  Widget _usbDiagnosticStep(String title, String details) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 155,
+          child: Text(
+            title,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+        Expanded(child: Text(details, style: const TextStyle(fontSize: 12))),
+      ],
+    ),
+  );
 
   Future<void> _pickOtgFilesFromFiles() async {
     try {
@@ -453,7 +609,10 @@ class _UploadPageState extends State<UploadPage> {
   }
 
   /// Keep external-camera detection separate from iPhone Photos and Files.
-  Future<void> _showExternalCameraChoices({bool catalogLoading = false}) async {
+  Future<void> _showExternalCameraChoices({
+    bool catalogLoading = false,
+    UsbCameraGuidance? guidance,
+  }) async {
     if (!mounted) return;
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -466,9 +625,10 @@ class _UploadPageState extends State<UploadPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                catalogLoading
-                    ? 'Camera detected — still reading photos'
-                    : 'No readable USB camera photos detected',
+                guidance?.title ??
+                    (catalogLoading
+                        ? 'Camera detected — still reading photos'
+                        : 'No readable USB camera photos detected'),
                 style: const TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w700,
@@ -476,12 +636,11 @@ class _UploadPageState extends State<UploadPage> {
               ),
               const SizedBox(height: 10),
               Text(
-                catalogLoading
-                    ? 'The camera is connected, but iOS has not finished loading its photo catalog. '
-                          'Keep the camera awake and retry. Large memory cards may take longer.'
-                    : 'Turn on the camera, use a compatible USB data cable or adapter, '
-                          'select PTP / Photo Transfer on the camera, and approve the iPhone access prompt. '
-                          'Not all camera models expose photos directly to iOS.',
+                guidance == null
+                    ? (catalogLoading
+                          ? 'The camera is connected, but the phone has not finished loading its photo catalog. Keep it awake and retry.'
+                          : 'No photos were listed from a wired USB camera. Check the data cable, adapter, camera power and PTP / Photo Transfer mode.')
+                    : '${guidance.details}\n\nTry this: ${guidance.nextSteps}',
               ),
               const SizedBox(height: 12),
               ListTile(
@@ -1888,12 +2047,13 @@ class _UploadPageState extends State<UploadPage> {
         );
         if (!_otgActive(generation)) return;
         if (cameraImages.isEmpty) {
-          if (mounted) {
-            _safeSetState(() {
-              _otgStatus =
-                  'USB camera session active. Waiting for camera/photos...';
-            });
-          }
+          final devices = await OtgFilePicker.connectedCameraDevices();
+          if (!_otgActive(generation)) return;
+          _safeSetState(() {
+            _otgStatus = devices.isEmpty
+                ? 'USB camera disconnected. Check the OTG cable, camera power and USB mode.'
+                : 'Camera found. Waiting for photos from its memory card...';
+          });
           return;
         }
 
@@ -1986,14 +2146,25 @@ class _UploadPageState extends State<UploadPage> {
     } on MissingPluginException {
       if (_otgActive(generation)) {
         _safeSetState(
-          () => _otgStatus = 'Restart app once to enable OTG auto-upload',
+          () => _otgStatus =
+              'Install a new app build to enable USB camera access.',
         );
       }
-    } catch (_) {
+    } on PlatformException catch (error) {
+      if (_otgActive(generation)) {
+        final advice = UsbCameraGuidance.forStatus(
+          error.code,
+          message: error.message,
+        );
+        _safeSetState(
+          () => _otgStatus = '${advice.title}. ${advice.nextSteps}',
+        );
+      }
+    } catch (error) {
       if (_otgActive(generation)) {
         _safeSetState(() {
           _otgStatus =
-              'OTG auto-upload failed. Reconnect source, keep app open.';
+              'OTG auto-upload failed: $error. Reconnect the camera and retry.';
         });
       }
     } finally {
@@ -2016,7 +2187,11 @@ class _UploadPageState extends State<UploadPage> {
           } on PlatformException catch (error) {
             // A slow camera catalog is not a disconnected camera.
             // Continue in direct mode and detect the next shots when ready.
-            if (_cameraDeniedCodes.contains(error.code)) rethrow;
+            if (_cameraDeniedCodes.contains(error.code) ||
+                error.code == 'CAMERA_SESSION_FAILED' ||
+                error.code == 'USB_CAMERA_SESSION_FAILED') {
+              rethrow;
+            }
             debugPrint('Connected camera catalog not ready yet: ${error.code}');
           }
           if (!_otgActive(generation)) return;
@@ -2024,7 +2199,11 @@ class _UploadPageState extends State<UploadPage> {
         }
         if (!_otgActive(generation)) return;
       } on PlatformException catch (error) {
-        if (_cameraDeniedCodes.contains(error.code)) rethrow;
+        if (_cameraDeniedCodes.contains(error.code) ||
+            error.code == 'CAMERA_SESSION_FAILED' ||
+            error.code == 'USB_CAMERA_SESSION_FAILED') {
+          rethrow;
+        }
         debugPrint('Camera detection failed: ${error.code}');
       } on MissingPluginException {
         devices = const [];
@@ -2641,14 +2820,13 @@ class _UploadPageState extends State<UploadPage> {
                             'Read directly from a compatible USB/PTP camera. Not iPhone photos.',
                         onTap: _uploading || _otgBusy ? null : _pickOtgFiles,
                       ),
-                      if (Platform.isIOS)
-                        _uploadSourceTile(
-                          icon: Icons.fact_check_outlined,
-                          title: 'Test USB camera connection',
-                          subtitle:
-                              'Check camera name, cable connection, photo index and file count.',
-                          onTap: _uploading ? null : _diagnoseUsbCamera,
-                        ),
+                      _uploadSourceTile(
+                        icon: Icons.fact_check_outlined,
+                        title: 'Test USB camera connection',
+                        subtitle:
+                            'Check camera name, cable connection, photo index and file count.',
+                        onTap: _uploading ? null : _diagnoseUsbCamera,
+                      ),
                       _uploadSourceTile(
                         icon: Icons.sd_storage_outlined,
                         title: 'SD card / USB storage (Files)',
@@ -2709,16 +2887,15 @@ class _UploadPageState extends State<UploadPage> {
                             ? null
                             : () => _toggleOtgAutoUpload(activeEvent),
                       ),
-                      if (Platform.isIOS)
-                        _uploadSourceTile(
-                          icon: Icons.fact_check_outlined,
-                          title: 'Test wired camera connection',
-                          subtitle:
-                              'Check USB/PTP detection before starting auto-upload.',
-                          onTap: _otgBusy || _uploading
-                              ? null
-                              : _diagnoseUsbCamera,
-                        ),
+                      _uploadSourceTile(
+                        icon: Icons.fact_check_outlined,
+                        title: 'Test wired camera connection',
+                        subtitle:
+                            'Check USB/PTP detection before starting auto-upload.',
+                        onTap: _otgBusy || _uploading
+                            ? null
+                            : _diagnoseUsbCamera,
+                      ),
                       _autoUploadTile(
                         icon: Icons.wifi_tethering,
                         title: 'Wireless camera',

@@ -1,43 +1,59 @@
-﻿# AirPix USB / OTG Camera Testing
+# AirPix wired USB / OTG camera validation
 
-## What AirPix supports
+## Separate photo sources (do not conflate them)
 
-- Connected camera (USB / OTG): native iOS ImageCaptureCore discovers a PTP camera, opens its session, reads camera images and copies selected files into AirPix for upload.
-- SD card / USB storage (Files): select files from the connected drive under Files > Browse > Locations. This is distinct from direct PTP camera access.
-- iPhone photos: access existing iPhone photo-library images. This should never silently replace the USB camera route.
+- **Connected camera (USB / OTG)**: reads directly from a compatible USB PTP/MTP camera over native iOS ImageCaptureCore or Android USB Host/MTP. It does not read photos from the phone's built-in camera or gallery.
+- **SD card / USB storage (Files)**: opens the operating system file picker. The user must choose their attached drive, not On My iPhone / internal phone storage.
+- **Phone photos**: images already stored on the phone.
+- **Wireless camera**: camera-to-phone Wi-Fi/PTP-IP, not the OTG cable.
 
-## How to validate on an actual iPhone
+## Physical iPhone / camera test (required before promising client hardware works)
 
-1. Install a freshly built iOS app (changes in Swift require a native rebuild).
-2. Unlock the iPhone. Connect a good-quality USB data cable and compatible camera adapter. For Lightning iPhones, a powered Lightning-to-USB 3 adapter may be required.
-3. Turn on the camera, select PTP / Photo Transfer mode if available, and grant any Apple camera-access permission prompt.
-4. Go to AirPix > Upload > Test USB camera connection.
-5. Read the report: camera name, USB session open/closed, camera media catalog progress, readable image count.
-6. Tap Copy report to capture the result for support.
-7. If the camera is ready and lists images, choose Connected camera (USB / OTG), select a photo and upload it.
-8. If it is a mass-storage or SD card reader, choose SD card / USB storage (Files), then the EXTERNAL drive under Locations, not On My iPhone.
+1. Install a *fresh native iOS build*. Hot reload cannot update `AppDelegate.swift`.
+2. Unlock the iPhone, connect a **USB data** cable and a compatible powered adapter if necessary (some Lightning iPhones require a powered Lightning-to-USB 3 Camera Adapter).
+3. Turn the camera on; set USB mode to **PTP / Photo Transfer** and allow any iOS camera access prompt. Ensure photos exist on the camera's card.
+4. In **AirPix > Upload**, choose **Test USB camera connection** and inspect status, camera name, session open, media catalog, and readable image count.
+5. If status is ready with images, tap **Connected camera (USB / OTG)**, select a test photo and confirm it is copied into the app.
+6. Upload the copied photo to an active event. Confirm the uploaded image in that event.
+7. Try disconnecting the cable during a scan/import and verify the error is clear. Reconnect and retry.
+8. If the camera uses Mass Storage instead of PTP, use the **SD card / USB storage (Files)** option. Do not mistake selecting iPhone photos for a successful OTG connection.
 
-If AirPix cannot see the camera, open the built-in iOS Photos app and check Imports / connected devices. If Photos does not see it either, investigate USB compatibility, cable, camera USB mode, power and firmware first.
+If iOS does not find the camera, check the built-in Photos **Imports** view as an independent detection test. If Photos does not recognize it either, investigate power, USB mode, cable/adapter and device compatibility. An app cannot determine *which* of these causes an undetected camera from a "no camera" result alone.
 
-## Diagnostic meanings
+## Physical Android / camera test
 
-- permission-denied: camera access denied by iOS; check iPhone Settings.
-- no-camera: iOS ImageCaptureCore found no connected USB/PTP camera.
-- catalog-loading: camera found, but its media catalog is not yet ready. Keep it on and retry.
-- ready and 0 images: camera found but no compatible photos were listed.
-- ready and a positive image count: try importing a photo. Native logging uses the label [AirPix USB].
+1. Install a fresh Android build and confirm the phone supports USB Host/OTG.
+2. Connect the camera with a data cable and turn it on in PTP/MTP Photo Transfer mode.
+3. Tap **Connected camera (USB / OTG)** and **Allow** the Android USB device permission prompt.
+4. If it does not connect, tap **Test USB camera connection**. Status can distinguish USB permission, unsupported device/protocol, failed session and empty media.
+5. Select and import an actual photo, then upload it to the event.
+6. Try a USB flash drive/keyboard without a camera attached: the app should not show a misleading camera permission prompt.
+7. Remove/reconnect the camera during import and check the error and retry path.
 
-## Limitations
+## What each report status means
 
-- Cameras vary widely in supported USB protocols; PTP support on a desktop does not guarantee direct iPhone PTP compatibility.
-- The Swift iOS native code cannot be compiled or device-tested on the Windows development PC. Use a Mac/Xcode or Codemagic iOS build plus a physical iPhone/camera to verify.
-- A connected USB camera is not the same as the phone's built-in camera or its photo library.
+| Status | Meaning / next action |
+| --- | --- |
+| `permission-denied` | iOS app lacks external camera access; allow camera permission in iPhone Settings |
+| `permission-required` | Android detects USB camera but lacks USB device permission; tap Connect and Allow |
+| `no-camera` | No compatible camera was detected; this does *not* prove which cable, adapter, power or camera-mode issue caused it |
+| `unsupported-device` | Android sees a USB accessory but no supported PTP/MTP camera candidate; change USB mode or use Files for SD storage |
+| `session-failed` | Camera was detected but camera photo-transfer session failed; check PTP mode, busy camera, cable/power |
+| `catalog-loading` | Camera session exists but photo list has not completed; keep camera awake, retry |
+| `empty-media` | Camera session opened but no supported photos were found; verify card and supported file formats |
+| `ready` | Camera session and photos available; try importing a real file |
+
+**Support report**: tap **Copy report** in USB diagnostics. It includes status, native message, camera, USB session state, catalog progress, image count and session error. Send this plus iPhone/Android version, camera brand/model, USB mode and cable/adapter information to engineering. Native iOS logs are labeled `[AirPix USB]`; Android logs use `AirPixCamera`.
+
+## Boundaries of verification
+
+- Automated Flutter tests validate native method channel data conversion and error guidance; an Android debug build validates Kotlin compilation.
+- Windows cannot build Swift iOS code or prove that a physical iPhone/adapter/camera enumerates. A macOS/Xcode or Codemagic iOS build and an actual iPhone with the client's camera are required.
+- USB enumeration APIs do not reliably distinguish a disconnected cable from an incompatible adapter or a camera that is powered off. Error wording must never assert a unique hardware cause without evidence.
 
 ## References
 
-Apple ImageCaptureCore: https://developer.apple.com/documentation/imagecapturecore/
-Apple iPhone camera import: https://support.apple.com/en-gb/guide/iphone/iph480caa1f3/26/ios/26
-Apple external storage: https://support.apple.com/en-asia/guide/iphone/iph95baac91f/ios
-Microsoft PTP driver: https://learn.microsoft.com/en-us/windows-hardware/drivers/image/ptp-driver
-gphoto2: https://github.com/gphoto/libgphoto2
-
+- Apple ImageCaptureCore: https://developer.apple.com/documentation/imagecapturecore/
+- Apple iPhone photo import: https://support.apple.com/guide/iphone/import-photos-and-videos-iph480caa1f3/ios
+- Android MtpDevice: https://developer.android.com/reference/android/mtp/MtpDevice
+- Android USB Host: https://developer.android.com/develop/connectivity/usb/host

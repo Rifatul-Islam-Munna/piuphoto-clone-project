@@ -127,10 +127,18 @@ class OtgFilePicker {
     if (result == null) {
       throw PlatformException(
         code: 'NO_CAMERA_STATUS',
-        message: 'The iOS USB camera connection status is unavailable.',
+        message: 'Native wired USB camera diagnostics are unavailable in this app build.',
       );
     }
     return UsbCameraDiagnostics.fromMap(result);
+  }
+
+  /// Android only. The user explicitly selected this USB accessory after
+  /// viewing its class/vendor details; it is not automatically treated as PTP.
+  static Future<void> useUsbDeviceAsCamera(String deviceId) async {
+    await _channel.invokeMethod<bool>('useUsbDeviceAsCamera', {
+      'deviceId': deviceId,
+    });
   }
 
   static Future<List<ConnectedCameraDevice>> connectedCameraDevices() async {

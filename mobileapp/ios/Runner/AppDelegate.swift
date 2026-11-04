@@ -19,11 +19,16 @@ import UniformTypeIdentifiers
   private var otgAllowsMultipleSelection = false
   private var otgSourceBookmark: Data?
   private let cameraBrowser = ICDeviceBrowser()
+  // iOS has no public, general-purpose USB host inventory for arbitrary OTG
+  // adapters. ImageCaptureCore can report compatible camera devices only.
+  private let wiredVisibilityNote = "iPhone does not expose a list of arbitrary OTG cables, hubs or adapters to AirPix. This check uses ImageCaptureCore to detect supported cameras, not the adapter alone."
   private var connectedCameras: [ICCameraDevice] = []
   private var readyCameras: Set<ObjectIdentifier> = []
   private var cameraCatalogWaiters: [() -> Void] = []
   private var cameraDeviceWaiters: [() -> Void] = []
   private var cameraSessionRetries: [ObjectIdentifier: Int] = [:]
+  private var cameraSessionErrors: [ObjectIdentifier: String] = [:]
+  private var cameraAccessRestricted: Set<ObjectIdentifier> = []
 
   override func application(
     _ application: UIApplication,
@@ -215,6 +220,23 @@ import UniformTypeIdentifiers
     return extensions.contains(String(ext))
   }
 
+  private func isCameraCatalogReady(_ camera: ICCameraDevice) -> Bool {
+    readyCameras.contains(ObjectIdentifier(camera)) || camera.contentCatalogPercentCompleted >= 100
+  }
+
+  private func isClearlyWirelessCamera(_ camera: ICCameraDevice) -> Bool {
+    let transport = (camera.transportType ?? "").lowercased()
+    return transport.contains("tcp") || transport.contains("bonjour") ||
+      transport.contains("bluetooth") || transport.contains("wifi") ||
+      transport.contains("proximity")
+  }
+
+  private func hasWiredCameraEvidence(_ camera: ICCameraDevice) -> Bool {
+    let transport = (camera.transportType ?? "").lowercased()
+    return transport.contains("usb") || transport.contains("massstorage") ||
+      camera.usbVendorID != 0 || camera.usbProductID != 0
+  }
+
   private func allCameraFiles() -> [(ICCameraDevice, ICCameraFile)] {
     var files: [(ICCameraDevice, ICCameraFile)] = []
     for camera in connectedCameras {
@@ -266,6 +288,8 @@ import UniformTypeIdentifiers
           "message": "External camera access is blocked. Check AirPix permissions in iPhone Settings.",
           "cameras": [] as [[String: Any]],
           "totalImages": 0,
+          "usbEnumerationAvailable": false,
+          "connectionNote": self.wiredVisibilityNote,
         ] as [String: Any])
         return
       }
@@ -278,6 +302,8 @@ import UniformTypeIdentifiers
             "message": "No USB/PTP camera found. Check the data cable, iPhone adapter and camera USB transfer mode.",
             "cameras": [] as [[String: Any]],
             "totalImages": 0,
+            "usbEnumerationAvailable": false,
+            "connectionNote": self.wiredVisibilityNote,
           ] as [String: Any])
           return
         }
@@ -289,25 +315,43 @@ import UniformTypeIdentifiers
               "name": camera.name ?? "Connected camera",
               "id": camera.uuidString ?? "camera",
               "sessionOpen": camera.hasOpenSession,
-              "catalogReady": self.readyCameras.contains(ObjectIdentifier(camera)),
+              "catalogReady": self.isCameraCatalogReady(camera),
               "catalogProgress": camera.contentCatalogPercentCompleted,
+              "sessionError": self.cameraSessionErrors[ObjectIdentifier(camera)] ?? "",
+              "transportType": camera.transportType ?? "unknown",
+              "usbVendorId": Int(camera.usbVendorID),
+              "usbProductId": Int(camera.usbProductID),
+              "wiredConfirmed": self.hasWiredCameraEvidence(camera),
               "imageCount": (camera.mediaFiles ?? []).compactMap { $0 as? ICCameraFile }
                 .filter { self.isCameraImageFile($0) }.count,
             ] as [String: Any]
           }
           let ready = !cameras.isEmpty && cameras.allSatisfy { $0["catalogReady"] as? Bool == true }
+          let anySessionOpen = self.connectedCameras.contains { $0.hasOpenSession }
+          let locked = self.connectedCameras.contains {
+            self.cameraAccessRestricted.contains(ObjectIdentifier($0))
+          }
+          let sessionIssue = self.connectedCameras.compactMap {
+            self.cameraSessionErrors[ObjectIdentifier($0)]
+          }.first
           let count = cameras.reduce(0) { $0 + ($1["imageCount"] as? Int ?? 0) }
           let message: String
           let status: String
           if cameras.isEmpty {
             status = "no-camera"
             message = "The USB camera disconnected during scanning. Reconnect and retry."
-          } else if !ready {
+          } else if locked {
+            status = "camera-locked"
+            message = "The connected camera or device is locked and has not allowed access to its photos. Unlock it and approve access on the device, then retry."
+          } else if !anySessionOpen {
+            status = "session-failed"
+            message = "Camera detected, but iOS could not open its USB photo-transfer session. \(sessionIssue ?? "Check camera PTP mode, cable, power and whether another app is using it.")"
+          } else if !ready && count == 0 {
             status = "catalog-loading"
-            message = "Camera detected but its file catalog is still loading. Keep camera on and retry."
+            message = "USB session opened, but the camera has not finished listing photos. Keep it awake and retry."
           } else if count == 0 {
-            status = "ready"
-            message = "Camera connected, but no supported images were found on its storage."
+            status = "empty-media"
+            message = "Camera connected, but no supported image files were found. Check its memory card and photo-transfer mode."
           } else {
             status = "ready"
             message = "Camera connection ready. \(count) image(s) available for direct import."
@@ -317,6 +361,8 @@ import UniformTypeIdentifiers
             "message": message,
             "cameras": cameras,
             "totalImages": count,
+            "usbEnumerationAvailable": false,
+            "connectionNote": self.wiredVisibilityNote,
           ] as [String: Any])
         }
       }
@@ -359,8 +405,29 @@ import UniformTypeIdentifiers
             return
           }
           let allFiles = self.allCameraFiles()
+          if self.connectedCameras.contains(where: {
+            self.cameraAccessRestricted.contains(ObjectIdentifier($0))
+          }) {
+            result(FlutterError(
+              code: "CAMERA_DEVICE_LOCKED",
+              message: "The connected camera/device is locked. Unlock it and approve photo access, then retry.",
+              details: nil
+            ))
+            return
+          }
+          if !self.connectedCameras.contains(where: { $0.hasOpenSession }) {
+            let reason = self.connectedCameras.compactMap {
+              self.cameraSessionErrors[ObjectIdentifier($0)]
+            }.first ?? "Camera refused to open a USB photo-transfer session."
+            result(FlutterError(
+              code: "CAMERA_SESSION_FAILED",
+              message: "\(reason) Check PTP mode, cable/adapter and camera power.",
+              details: nil
+            ))
+            return
+          }
           if allFiles.isEmpty && self.connectedCameras.contains(where: {
-            !self.readyCameras.contains(ObjectIdentifier($0))
+            !self.isCameraCatalogReady($0)
           }) {
             result(FlutterError(
               code: "CAMERA_CATALOG_LOADING",
@@ -423,7 +490,7 @@ import UniformTypeIdentifiers
       }
       cameraBrowser.requestContentsAuthorization { status in
         DispatchQueue.main.async {
-          completion(status != .denied && status != .restricted)
+          completion(status == .authorized)
         }
       }
       return
@@ -434,7 +501,7 @@ import UniformTypeIdentifiers
   /// A freshly plugged-in camera reports no files until its catalog is loaded.
   /// Wait (bounded) for every connected camera to become ready.
   private func waitForCameraCatalog(timeout: TimeInterval, _ completion: @escaping () -> Void) {
-    let notReady = connectedCameras.filter { !readyCameras.contains(ObjectIdentifier($0)) }
+    let notReady = connectedCameras.filter { !isCameraCatalogReady($0) }
     if notReady.isEmpty {
       completion()
       return
@@ -455,7 +522,7 @@ import UniformTypeIdentifiers
   }
 
   private func flushCameraCatalogWaitersIfReady() {
-    let allReady = connectedCameras.allSatisfy { readyCameras.contains(ObjectIdentifier($0)) }
+    let allReady = connectedCameras.allSatisfy { isCameraCatalogReady($0) }
     guard allReady, !cameraCatalogWaiters.isEmpty else { return }
     let waiters = cameraCatalogWaiters
     cameraCatalogWaiters.removeAll()
@@ -464,7 +531,16 @@ import UniformTypeIdentifiers
 
   private func importConnectedCameraImages(ids: [String], result: @escaping FlutterResult) {
     let wanted = Set(ids)
+    guard !wanted.isEmpty else { result([]); return }
     let files = allCameraFiles().filter { wanted.contains(cameraFileId($0.0, $0.1)) }
+    guard !files.isEmpty else {
+      result(FlutterError(
+        code: "CAMERA_FILES_MISSING",
+        message: "The selected photos are no longer available on the USB camera. Reconnect it, refresh the photo list and retry.",
+        details: nil
+      ))
+      return
+    }
     // PTP cameras commonly support only one data transfer at a time.
     // Serial downloads also avoid exhausting memory on large RAW batches.
     downloadCameraFiles(files, at: 0, downloaded: [], result: result)
@@ -474,10 +550,19 @@ import UniformTypeIdentifiers
     _ files: [(ICCameraDevice, ICCameraFile)],
     at index: Int,
     downloaded: [[String: String]],
+    failures: [String] = [],
     result: @escaping FlutterResult
   ) {
     guard index < files.count else {
-      result(downloaded)
+      if downloaded.isEmpty && !failures.isEmpty {
+        result(FlutterError(
+          code: "CAMERA_IMPORT_FAILED",
+          message: "Camera photo transfer failed: \(failures.first ?? "Unknown error"). Check the cable, camera power, available iPhone storage and camera USB mode.",
+          details: ["failedCount": failures.count]
+        ))
+      } else {
+        result(downloaded)
+      }
       return
     }
 
@@ -491,7 +576,8 @@ import UniformTypeIdentifiers
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     } catch {
       NSLog("[AirPix USB] Unable to create import folder for %@: %@", filename, String(describing: error))
-      downloadCameraFiles(files, at: index + 1, downloaded: downloaded, result: result)
+      downloadCameraFiles(files, at: index + 1, downloaded: downloaded,
+                          failures: failures + ["Unable to create the download folder: \(error.localizedDescription)"], result: result)
       return
     }
 
@@ -507,19 +593,29 @@ import UniformTypeIdentifiers
           return
         }
         var updated = downloaded
+        var updatedFailures = failures
         if let error {
           NSLog("[AirPix USB] Camera download failed for %@: %@", filename, String(describing: error))
-        } else if let path, !path.isEmpty {
-          let resolvedPath = path.hasPrefix("/")
-            ? path
-            : directory.appendingPathComponent(path).path
-          if FileManager.default.fileExists(atPath: resolvedPath) {
-            updated.append(["id": imageId, "path": resolvedPath, "name": filename])
+          updatedFailures.append("\(filename): \(error.localizedDescription)")
+        } else {
+          // ImageCaptureCore may supply an absolute path, a file URL, or a filename.
+          let returnedURL = path.flatMap { URL(string: $0) }
+          let resolvedPath: String = returnedURL?.isFileURL == true
+            ? (returnedURL?.path ?? "")
+            : (path?.hasPrefix("/") == true ? path! : directory.appendingPathComponent(path ?? filename).path)
+          let fallback = directory.appendingPathComponent(filename).path
+          let existing = [resolvedPath, fallback].first {
+            !$0.isEmpty && FileManager.default.fileExists(atPath: $0)
+          }
+          if let existing {
+            updated.append(["id": imageId, "path": existing, "name": filename])
           } else {
-            NSLog("[AirPix USB] Download reported success but missing file: %@", resolvedPath)
+            NSLog("[AirPix USB] Camera download returned no file for %@ (path: %@)", filename, path ?? "nil")
+            updatedFailures.append("\(filename): no downloaded file was saved")
           }
         }
-        self.downloadCameraFiles(files, at: index + 1, downloaded: updated, result: result)
+        self.downloadCameraFiles(files, at: index + 1, downloaded: updated,
+                                 failures: updatedFailures, result: result)
       }
     }
   }
@@ -1019,6 +1115,12 @@ import UniformTypeIdentifiers
 
   func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
     guard let camera = device as? ICCameraDevice else { return }
+    // Do not confuse an ImageCaptureCore network camera with USB/OTG.
+    if isClearlyWirelessCamera(camera) {
+      NSLog("[AirPix USB] Ignoring wireless camera in wired-only browser: %@ (%@)",
+            camera.name ?? "Camera", camera.transportType ?? "unknown")
+      return
+    }
     DispatchQueue.main.async {
       if !self.connectedCameras.contains(where: { $0 === camera }) {
         self.connectedCameras.append(camera)
@@ -1043,10 +1145,16 @@ import UniformTypeIdentifiers
     let key = ObjectIdentifier(device)
     guard let error else {
       NSLog("[AirPix USB] Opened camera session: %@", device.name ?? "Camera")
-      DispatchQueue.main.async { self.cameraSessionRetries[key] = nil }
+      DispatchQueue.main.async {
+        self.cameraSessionRetries[key] = nil
+        self.cameraSessionErrors[key] = nil
+      }
       return
     }
     NSLog("[AirPix USB] Failed to open session for %@: %@", device.name ?? "Camera", String(describing: error))
+    DispatchQueue.main.async {
+      self.cameraSessionErrors[key] = error.localizedDescription
+    }
     // Cameras that are waking up or busy often refuse the first session; retry a few times.
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
       let attempts = self.cameraSessionRetries[key] ?? 0
@@ -1068,6 +1176,8 @@ import UniformTypeIdentifiers
       self.connectedCameras.removeAll { $0 === device }
       self.readyCameras.remove(ObjectIdentifier(device))
       self.cameraSessionRetries[ObjectIdentifier(device)] = nil
+      self.cameraSessionErrors[ObjectIdentifier(device)] = nil
+      self.cameraAccessRestricted.remove(ObjectIdentifier(device))
       self.flushCameraCatalogWaitersIfReady()
     }
   }
@@ -1103,9 +1213,19 @@ import UniformTypeIdentifiers
 
   func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}
 
-  func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {}
+  func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {
+    DispatchQueue.main.async {
+      self.cameraAccessRestricted.insert(ObjectIdentifier(device))
+      NSLog("[AirPix USB] Photo access restricted by connected device: %@", device.name ?? "Camera")
+    }
+  }
 
-  func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {}
+  func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {
+    DispatchQueue.main.async {
+      self.cameraAccessRestricted.remove(ObjectIdentifier(device))
+      NSLog("[AirPix USB] Photo access restriction cleared: %@", device.name ?? "Camera")
+    }
+  }
 
   func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
 }
