@@ -1,17 +1,24 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:dio/dio.dart';
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobileapp/core/guest/guest_qr_payload.dart';
+import 'package:mobileapp/core/guest/guest_qr_preparation.dart';
+import 'package:mobileapp/core/guest/guest_face_delivery.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/platform/canon_ccapi_camera.dart';
+import 'package:mobileapp/core/platform/camera_ftp_receiver.dart';
+import 'package:mobileapp/core/platform/transfer_screen_awake.dart';
 import 'package:mobileapp/core/platform/device_settings.dart';
 import 'package:mobileapp/core/platform/gallery_auto_import.dart';
+import 'package:mobileapp/core/platform/live_camera_capture.dart';
 import 'package:mobileapp/core/platform/network_camera_discovery.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/platform/usb_camera_guidance.dart';
@@ -19,19 +26,23 @@ import 'package:mobileapp/core/platform/ptp_ip_camera.dart';
 import 'package:mobileapp/core/platform/upnp_camera_media.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
+import 'package:mobileapp/core/storage/camera_ftp_profile_storage.dart';
+import 'package:mobileapp/core/storage/usb_camera_upload_mode_storage.dart';
 import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/storage/uploaded_gallery_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
-import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
+import 'package:mobileapp/pages/upload/camera_transfer_page.dart';
 import 'package:mobileapp/pages/upload/transfer_list_page.dart';
+import 'package:mobileapp/pages/upload/usb_camera_upload_mode_selector.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 import 'package:mobileapp/widgets/app_ui.dart';
 import 'package:mobileapp/widgets/intrinsic_qr_image.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -94,13 +105,39 @@ const _cameraDeniedCodes = {
 };
 
 class _PtpProbe {
-  const _PtpProbe(this.camera, this.images);
+  const _PtpProbe(this.camera);
 
   final PtpIpCamera camera;
-  final List<PtpIpImage> images;
 }
 
-enum _WirelessImportMode { sharedNetwork, cameraHotspot }
+enum _WirelessImportMode { ftp, sharedNetwork, cameraHotspot }
+
+class _WirelessCaptureTarget {
+  const _WirelessCaptureTarget({
+    required this.event,
+    required this.mode,
+    required this.isEnhanced,
+    this.albumId,
+  });
+  final EventSummary event;
+  final _WirelessImportMode mode;
+  final bool isEnhanced;
+  final String? albumId;
+}
+
+class _UsbCaptureTarget {
+  const _UsbCaptureTarget({
+    required this.event,
+    required this.uploadMode,
+    required this.isEnhanced,
+    this.albumId,
+  });
+
+  final EventSummary event;
+  final LiveCameraUploadMode uploadMode;
+  final bool isEnhanced;
+  final String? albumId;
+}
 
 enum _UploadMode { quick, auto }
 
@@ -112,14 +149,24 @@ class UploadPage extends StatefulWidget {
   State<UploadPage> createState() => _UploadPageState();
 }
 
-class _UploadPageState extends State<UploadPage> {
+class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   final _picker = ImagePicker();
   _UploadMode _uploadMode = _UploadMode.quick;
   final Dio _cameraDio = Dio();
   final List<_SelectedUploadFile> _selectedFiles = [];
   Timer? _wirelessTimer;
   Timer? _galleryTimer;
-  Timer? _otgTimer;
+  LiveCameraCapture? _liveCamera;
+  String? _liveCameraEventId;
+  Future<void>? _usbShutdown;
+  String? _usbReleaseIssue;
+  bool _otgStarting = false;
+  bool _usbStartRequested = false;
+  bool _usbModeSaving = false;
+  bool _guestQrPreparing = false;
+  LiveCameraUploadMode _usbUploadMode = LiveCameraUploadMode.newShotsOnly;
+  LiveCameraUploadMode _usbSessionUploadMode =
+      LiveCameraUploadMode.newShotsOnly;
   bool _isEnhanced = false;
   bool _uploading = false;
   bool _galleryImporting = false;
@@ -127,28 +174,44 @@ class _UploadPageState extends State<UploadPage> {
   bool _otgImporting = false;
   bool _otgBusy = false;
   bool _usbPickInProgress = false;
-  bool _otgNativeCameraMode = false;
   bool _freeingSpace = false;
   bool _autoImporting = false;
   bool _wirelessScanning = false;
   bool _wirelessBusy = false;
   bool _disposed = false;
+  final _receiverOwnerId =
+      '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 31)}';
   bool _resolvingSoloEvent = false;
   bool _soloEventResolved = false;
-  bool _connectionSheetOpen = false;
+  bool _connectionPageOpen = false;
+  CameraFtpReceiver? _ftpReceiver;
+  CameraFtpConnection? _ftpConnection;
+  bool _ftpStarting = false;
+  bool _ftpHasReceived = false;
+  Future<void>? _wirelessShutdown;
+  String? _wirelessAwakeOwner;
+  String? _receivingEventId;
+  String? _sessionKind;
+  DateTime? _sessionStartedAt;
+  bool _wiredPhotoReceived = false;
+  final _sessionStatus = ValueNotifier<CameraTransferSessionStatus>(
+    const CameraTransferSessionStatus(
+      connectionLabel: 'No camera connected',
+      message: 'Connect your camera to receive new photos.',
+      isActive: false,
+    ),
+  );
   int _wirelessGeneration = 0;
   int _otgGeneration = 0;
   int _galleryGeneration = 0;
   int _wirelessFailureCount = 0;
   int? _gallerySinceMs;
   final Set<String> _processedGalleryIds = {};
-  final Set<String> _processedOtgIds = {};
   final Set<String> _processedWirelessIds = {};
   String? _galleryStatus;
   String? _otgStatus;
   String? _uploadStatus;
   String? _wirelessStatus;
-  _WirelessImportMode? _wirelessMode;
   String? _otgSourceName;
   String? _wirelessSourceUrl;
   String? _wirelessImageUrl;
@@ -161,22 +224,75 @@ class _UploadPageState extends State<UploadPage> {
   String? _selectedAlbumId;
   List<AlbumModel> _albums = [];
 
-  bool get _wirelessImporting => _wirelessScanning || _autoImporting;
+  bool get _wirelessImporting =>
+      _wirelessScanning ||
+      _autoImporting ||
+      _ftpStarting ||
+      _ftpReceiver != null;
 
-  String? get _wirelessCameraId {
-    final ptp = _ptpIpCamera;
-    if (ptp != null) return 'PTP/IP ${ptp.host}:${ptp.port}';
-    final canon = _canonCcapiCamera;
-    if (canon != null) return canon.sourceUrl;
-    final upnp = _upnpCameraMedia;
-    if (upnp != null) return upnp.sourceUrl;
-    final source = _wirelessSourceUrl?.trim();
-    return source?.isNotEmpty == true ? source : null;
-  }
+  bool get _usbSessionLocked =>
+      _usbStartRequested || _otgStarting || _otgImporting || _otgBusy;
+
+  bool _isUsbReleaseError(String? code) => const {
+    'PTP_CLOSE_FAILED',
+    'PTP_CLOSE_TIMEOUT',
+    'PTP_CLOSE_PENDING',
+  }.contains(code);
 
   void _safeSetState(VoidCallback update) {
     if (!mounted || _disposed) return;
     setState(update);
+    _refreshSessionStatus();
+  }
+
+  void _refreshSessionStatus() {
+    if (_disposed) return;
+    String label = 'No camera connected';
+    String message = 'Connect your camera to receive new photos.';
+    bool connecting = false;
+    switch (_sessionKind) {
+      case 'usb':
+        label = _otgSourceName ?? 'Camera cable';
+        message =
+            '${UsbCameraUploadModeSelector.labelFor(_usbSessionUploadMode)}. '
+            '${_otgStatus ?? 'Waiting for the camera.'}';
+        connecting = _otgStarting || _usbStartRequested;
+        break;
+      case 'ftp':
+        label = _ftpReceiver?.authenticatedClientCount == 0
+            ? 'Wi-Fi receiver ready'
+            : 'Camera FTP';
+        message = _wirelessStatus ?? 'Start a wireless camera session.';
+        connecting = _ftpStarting;
+        break;
+      case 'wireless':
+        label = 'Camera Wi-Fi';
+        message = _wirelessStatus ?? 'Waiting for the camera.';
+        connecting = _wirelessScanning;
+        break;
+      case 'gallery':
+        label = 'Phone gallery';
+        message = _galleryStatus ?? 'Waiting for a photo.';
+        break;
+    }
+    _sessionStatus.value = CameraTransferSessionStatus(
+      connectionLabel: label,
+      message: message,
+      isActive: _liveConnectionActive,
+      isConnecting: connecting,
+    );
+  }
+
+  void _beginReceivingSession(EventSummary event, String kind) {
+    _sessionKind = kind;
+    _sessionStartedAt = DateTime.now();
+    _receivingEventId = event.id;
+  }
+
+  Future<void> _stopReceivingSession() async {
+    if (_liveCamera != null || _usbStartRequested) await _stopOtgAutoImport();
+    if (_wirelessImporting) await _stopWirelessImport();
+    if (_galleryImporting) _stopGalleryAutoImport();
   }
 
   bool _wirelessActive(int generation) =>
@@ -185,8 +301,72 @@ class _UploadPageState extends State<UploadPage> {
   bool _otgActive(int generation) =>
       mounted && !_disposed && generation == _otgGeneration;
 
+  bool _usbStartActive(int generation, _UsbCaptureTarget target) =>
+      _otgActive(generation) &&
+      _usbStartRequested &&
+      _liveCameraEventId == target.event.id &&
+      ActiveEventStorage.activeEvent.value?.id == target.event.id;
+
   bool _galleryActive(int generation) =>
       mounted && !_disposed && generation == _galleryGeneration;
+
+  @override
+  void initState() {
+    super.initState();
+    _usbUploadMode = UsbCameraUploadModeStorage.read();
+    WidgetsBinding.instance.addObserver(this);
+    ActiveEventStorage.activeEvent.addListener(_handleLiveEventChange);
+  }
+
+  void _handleLiveEventChange() {
+    if (_receivingEventId != null &&
+        ActiveEventStorage.activeEvent.value?.id != _receivingEventId &&
+        (_wirelessImporting || _galleryImporting)) {
+      unawaited(_stopReceivingSession());
+    }
+    if (_liveCameraEventId != null &&
+        ActiveEventStorage.activeEvent.value?.id != _liveCameraEventId) {
+      unawaited(
+        _stopOtgAutoImport().then((_) {
+          if (_usbReleaseIssue != null) return;
+          _safeSetState(
+            () => _otgStatus =
+                'Event changed. Start live shooting again for the selected event.',
+          );
+        }),
+      );
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Permission sheets can make the app inactive; only a real background
+    // transition ends foreground-only USB shooting.
+    if (state == AppLifecycleState.paused && _wirelessImporting) {
+      unawaited(
+        _stopWirelessImport().then((_) {
+          _safeSetState(
+            () => _wirelessStatus =
+                'Receiving paused in the background. Open AirPix and start again; '
+                'the camera can retry pending FTP photos.',
+          );
+        }),
+      );
+    }
+    if (state == AppLifecycleState.paused &&
+        (_liveCamera != null || _usbStartRequested)) {
+      unawaited(
+        _stopOtgAutoImport().then((_) {
+          if (_usbReleaseIssue != null) return;
+          _safeSetState(
+            () => _otgStatus =
+                'Live shooting paused while the app was in the background. '
+                'Keep AirPix open and start again before taking photos.',
+          );
+        }),
+      );
+    }
+  }
 
   @override
   void dispose() {
@@ -196,10 +376,31 @@ class _UploadPageState extends State<UploadPage> {
     _galleryGeneration += 1;
     _wirelessTimer?.cancel();
     _galleryTimer?.cancel();
-    _otgTimer?.cancel();
     _wirelessTimer = null;
     _galleryTimer = null;
-    _otgTimer = null;
+    WidgetsBinding.instance.removeObserver(this);
+    ActiveEventStorage.activeEvent.removeListener(_handleLiveEventChange);
+    final liveCamera = _liveCamera;
+    _liveCamera = null;
+    if (liveCamera != null) {
+      unawaited(
+        liveCamera.stop(notify: false).catchError((Object error) {
+          debugPrint('USB session cleanup: $error');
+        }),
+      );
+    }
+    final ftp = _ftpReceiver;
+    _ftpReceiver = null;
+    if (ftp != null) unawaited(ftp.stop());
+    final awakeOwner = _wirelessAwakeOwner;
+    _wirelessAwakeOwner = null;
+    if (awakeOwner != null) {
+      unawaited(TransferScreenAwake.setEnabled(awakeOwner, false));
+    }
+    _sessionStatus.dispose();
+    final canonCamera = _canonCcapiCamera;
+    _canonCcapiCamera = null;
+    if (canonCamera != null) unawaited(canonCamera.close());
     _cameraDio.close(force: true);
     final ptpCamera = _ptpIpCamera;
     _ptpIpCamera = null;
@@ -250,6 +451,12 @@ class _UploadPageState extends State<UploadPage> {
 
   Future<void> _pickOtgFiles() async {
     if (_usbPickInProgress) return; // Ignore double taps.
+    if (_otgImporting || _otgStarting || _usbStartRequested) {
+      AppToast.error(
+        'Stop live shooting before manually selecting camera photos.',
+      );
+      return;
+    }
     _usbPickInProgress = true;
     try {
       final read = await _withCameraProgress(
@@ -276,6 +483,13 @@ class _UploadPageState extends State<UploadPage> {
         );
       }
     } finally {
+      if (Platform.isIOS) {
+        try {
+          await OtgFilePicker.releaseCameraImportSession();
+        } catch (error) {
+          debugPrint('Camera import session cleanup: $error');
+        }
+      }
       _usbPickInProgress = false;
     }
   }
@@ -293,10 +507,17 @@ class _UploadPageState extends State<UploadPage> {
       if (diagnostic.status == 'catalog-loading') {
         return const _CameraCatalogLoading();
       }
+      // This follows an explicit manual scan. Android closes that scan's MTP
+      // session before returning; passive diagnostics must not reopen it just
+      // to rediscover that the completed scan returned no photos.
+      final completedEmptyScan =
+          diagnostic.status == 'ready' ||
+          (diagnostic.status == 'camera-detected' &&
+              diagnostic.cameras.isNotEmpty);
       return _NoCameraPhotos(
         UsbCameraGuidance.forStatus(
-          diagnostic.status == 'ready' ? 'empty-media' : diagnostic.status,
-          message: diagnostic.message,
+          completedEmptyScan ? 'empty-media' : diagnostic.status,
+          message: completedEmptyScan ? null : diagnostic.message,
         ),
       );
     } on PlatformException catch (error) {
@@ -383,7 +604,7 @@ class _UploadPageState extends State<UploadPage> {
   Future<void> _diagnoseUsbCamera() async {
     try {
       final diagnostic = await _withCameraProgress(
-        'Checking USB camera and reading its photo catalog...',
+        'Checking for a connected USB camera…',
         OtgFilePicker.cameraConnectionDiagnostics(),
       );
       if (!mounted || diagnostic == null) return;
@@ -429,22 +650,43 @@ class _UploadPageState extends State<UploadPage> {
               _usbDiagnosticStep(
                 '3. Camera session',
                 diagnostic.cameras.any((camera) => camera.sessionOpen)
-                    ? 'Open'
+                    ? 'Existing session is open'
+                    : diagnostic.discoveryOnly
+                    ? 'Not opened by this check'
                     : 'Not open',
               ),
               _usbDiagnosticStep(
                 '4. Camera photos',
-                diagnostic.totalImages > 0
-                    ? '${diagnostic.totalImages} available for import'
+                diagnostic.discoveryOnly
+                    ? 'Not read by this check'
+                    : diagnostic.totalImages > 0
+                    ? '${diagnostic.totalImages} currently listed'
+                    : diagnostic.status == 'live-ready'
+                    ? 'Waiting for new photos'
                     : diagnostic.status == 'catalog-loading'
                     ? 'Catalog still loading'
                     : 'No compatible photos listed',
+              ),
+              _usbDiagnosticStep(
+                '5. Physical shutter',
+                diagnostic.cameras.any(
+                      (camera) => camera.physicalShutter == 'supported',
+                    )
+                    ? 'Shooting while connected is advertised; verify with a test shot'
+                    : 'Not confirmed. File import does not prove live shooting support',
               ),
               if (diagnostic.connectionNote.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(
                   diagnostic.connectionNote,
                   style: const TextStyle(fontSize: 12),
+                ),
+              ],
+              if (Platform.isIOS) ...[
+                const SizedBox(height: 8),
+                Text('Photo access: ${diagnostic.contentsAuthorization}'),
+                Text(
+                  'Camera control access: ${diagnostic.controlAuthorization}',
                 ),
               ],
               if (diagnostic.usbDevices.isNotEmpty) ...[
@@ -512,9 +754,17 @@ class _UploadPageState extends State<UploadPage> {
                   'USB session: ${camera.sessionOpen ? "Open" : "Not open"}',
                 ),
                 Text(
-                  'Photo index: ${camera.catalogReady ? "Ready" : "${camera.catalogProgress}% loaded"}',
+                  'Photo index: ${!camera.sessionOpen
+                      ? "Not read by this check"
+                      : camera.catalogReady
+                      ? "Ready"
+                      : "${camera.catalogProgress}% loaded"}',
                 ),
-                Text('Supported images found: ${camera.imageCount}'),
+                if (camera.sessionOpen)
+                  Text('Supported images listed: ${camera.imageCount}'),
+                Text(
+                  'Live session: ${camera.liveSessionActive ? "Active" : "Stopped"}',
+                ),
                 if (camera.transportType.isNotEmpty)
                   Text('Transport: ${camera.transportType}'),
                 if (Platform.isIOS)
@@ -531,7 +781,7 @@ class _UploadPageState extends State<UploadPage> {
               ],
               if (diagnostic.cameras.isEmpty) ...[
                 const Text(
-                  'Check that the camera uses a USB data cable and PTP / Photo Transfer mode. An OTG adapter alone does not prove the camera is accessible.',
+                  'Use a USB data cable and the camera model’s supported tethered-shooting mode for Live shooting. PTP / Photo Transfer may be limited to importing stored photos on some cameras.',
                 ),
               ],
               const SizedBox(height: 8),
@@ -583,6 +833,54 @@ class _UploadPageState extends State<UploadPage> {
           ),
         ),
         Expanded(child: Text(details, style: const TextStyle(fontSize: 12))),
+      ],
+    ),
+  );
+
+  Future<void> _showLiveCameraSetup() => showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Camera screen black or shutter locked?'),
+      scrollable: true,
+      content: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'A USB file-transfer connection can put a camera into playback '
+            'or transfer-only mode. Reading the card does not mean the camera '
+            'can keep taking photos.',
+          ),
+          SizedBox(height: 14),
+          Text('1. Stop the live session and disconnect the USB cable.'),
+          SizedBox(height: 8),
+          Text(
+            '2. Check your camera manual for shooting while connected. '
+            'The option may be called PC Remote, Remote Shooting or USB '
+            'Tether Shooting. Do not choose Mass Storage, Card Reader or '
+            'USB Streaming for this photo workflow.',
+          ),
+          SizedBox(height: 8),
+          Text(
+            '3. Reconnect, start Live shooting, wait for the photo index to '
+            'finish, then press the shutter on the camera. Keep this app '
+            'open. A successful new shot will appear in the transfer list.',
+          ),
+          SizedBox(height: 14),
+          Text(
+            'AirPix sets up supported Canon EOS, Nikon and Sony shooting '
+            'connections automatically. On Sony, choose Camera priority and '
+            'PC + Camera for still-image storage. If the shutter stays locked, use Test '
+            'wired camera connection and copy the report with your exact '
+            'camera model, phone model and selected USB mode.',
+          ),
+        ],
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Got it'),
+        ),
       ],
     ),
   );
@@ -893,28 +1191,6 @@ class _UploadPageState extends State<UploadPage> {
     required String signature,
   }) {
     return '${event.id}|wireless|$imageUrl|$signature';
-  }
-
-  Future<void> _queueBytesOnly({
-    required EventSummary event,
-    required Uint8List bytes,
-    required String filename,
-    required String source,
-    String? cameraId,
-    String? fingerprint,
-    String? lastError,
-  }) async {
-    await UploadQueueService.queueBytesOnly(
-      event: event,
-      bytes: bytes,
-      filename: filename,
-      isEnhanced: _isEnhanced,
-      albumId: _selectedAlbumId,
-      source: source,
-      cameraId: cameraId,
-      fingerprint: fingerprint,
-      lastError: lastError,
-    );
   }
 
   Future<void> _createEventImages(
@@ -1345,10 +1621,8 @@ class _UploadPageState extends State<UploadPage> {
             );
             if (camera == null) return null;
             try {
-              final images = await camera
-                  .recentImages(limit: 50)
-                  .timeout(const Duration(seconds: 6));
-              return _PtpProbe(camera, images);
+              await camera.establishLiveBaseline();
+              return _PtpProbe(camera);
             } catch (_) {
               await camera.close();
               return null;
@@ -1408,7 +1682,9 @@ class _UploadPageState extends State<UploadPage> {
   Future<_CameraProbe?> _discoverWirelessCamera(int generation) async {
     final oldPtpCamera = _ptpIpCamera;
     _ptpIpCamera = null;
+    final oldCanonCamera = _canonCcapiCamera;
     _canonCcapiCamera = null;
+    if (oldCanonCamera != null) unawaited(oldCanonCamera.close());
     _upnpCameraMedia = null;
     if (oldPtpCamera != null) {
       unawaited(oldPtpCamera.close());
@@ -1430,14 +1706,8 @@ class _UploadPageState extends State<UploadPage> {
       return _CameraProbe(
         sourceUrl: source,
         imageUrl: source,
-        signature: ptpProbe.images.isEmpty
-            ? 'ptpip-ready'
-            : ptpProbe.images.first.fingerprint,
+        signature: 'ptpip-ready',
         usesListing: false,
-        initialKeys: {
-          for (final image in ptpProbe.images)
-            '${ptpProbe.camera.host}:${ptpProbe.camera.port}:${image.handle}',
-        },
       );
     }
 
@@ -1462,7 +1732,10 @@ class _UploadPageState extends State<UploadPage> {
       canonOrigins,
       timeout: const Duration(milliseconds: 800),
     );
-    if (!_wirelessActive(generation)) return null;
+    if (!_wirelessActive(generation)) {
+      await canon?.close();
+      return null;
+    }
     if (canon != null) {
       _canonCcapiCamera = canon;
       return _CameraProbe(
@@ -1538,6 +1811,14 @@ class _UploadPageState extends State<UploadPage> {
     EventSummary event,
     _WirelessImportMode mode,
   ) async {
+    if (_wirelessShutdown != null) await _wirelessShutdown;
+    _beginReceivingSession(event, 'wireless');
+    final target = _WirelessCaptureTarget(
+      event: event,
+      mode: mode,
+      isEnhanced: _isEnhanced,
+      albumId: _selectedAlbumId,
+    );
     _wirelessTimer?.cancel();
     final generation = ++_wirelessGeneration;
     _safeSetState(() {
@@ -1545,7 +1826,6 @@ class _UploadPageState extends State<UploadPage> {
       _wirelessBusy = false;
       _autoImporting = false;
       _wirelessSourceUrl = null;
-      _wirelessMode = mode;
       _wirelessImageUrl = null;
       _wirelessUsesListing = false;
       _wirelessStatus = mode == _WirelessImportMode.cameraHotspot
@@ -1578,83 +1858,65 @@ class _UploadPageState extends State<UploadPage> {
       _lastWirelessSignature = probe.signature;
       _autoImporting = true;
       _wirelessStatus = mode == _WirelessImportMode.cameraHotspot
-          ? 'Camera hotspot connected. New photos will save to queue.'
+          ? 'Camera hotspot connected. New photos upload to cloud when internet is available.'
           : 'Camera connected. Waiting for new photos...';
     });
 
+    _wirelessAwakeOwner = 'wireless-$_receiverOwnerId-$generation';
+    await TransferScreenAwake.setEnabled(_wirelessAwakeOwner!, true);
+    if (!_wirelessActive(generation)) return;
     _wirelessTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
       if (!_wirelessActive(generation)) {
         timer.cancel();
         return;
       }
-      unawaited(_pollWirelessCamera(event, generation));
+      unawaited(_pollWirelessCamera(target, generation));
     });
-    unawaited(_showConnectedSessionSheet(event));
+    unawaited(_showTransferSessionPage(event));
   }
 
   Future<void> _saveWirelessBytes({
-    required EventSummary event,
+    required _WirelessCaptureTarget target,
     required int generation,
     required Uint8List bytes,
     required String filename,
     required String imageKey,
     required String signature,
     required String source,
+    required String? cameraId,
   }) async {
-    if (!_wirelessActive(generation)) return;
-    if (_wirelessMode == _WirelessImportMode.cameraHotspot) {
-      await _queueBytesOnly(
-        event: event,
-        bytes: bytes,
-        filename: filename,
-        source: '$source-hotspot',
-        cameraId: _wirelessCameraId,
-        fingerprint: _wirelessFingerprint(
-          event: event,
-          imageUrl: imageKey,
-          signature: signature,
-        ),
-        lastError: 'Waiting for internet connection',
-      );
-      if (mounted) {
-        _safeSetState(
-          () => _wirelessStatus = 'Saved new camera photo. Upload queued.',
-        );
-      }
-      return;
-    }
-
-    final uploaded = await UploadQueueService.importBytesLocalFirst(
-      event: event,
+    // A complete in-flight photo belongs to the event/album captured when the
+    // session started, even when Stop or an event change happens during its read.
+    await UploadQueueService.receiveCameraBytes(
+      event: target.event,
       bytes: bytes,
       filename: filename,
-      isEnhanced: _isEnhanced,
-      albumId: _selectedAlbumId,
-      source: '$source-shared-network',
-      cameraId: _wirelessCameraId,
+      isEnhanced: target.isEnhanced,
+      albumId: target.albumId,
+      source: '$source-${target.mode.name}',
+      cameraId: cameraId,
       fingerprint: _wirelessFingerprint(
-        event: event,
+        event: target.event,
         imageUrl: imageKey,
-        signature: signature,
+        signature: '$signature|${sha256.convert(bytes)}',
       ),
-      tryUploadNow: true,
     );
-    if (mounted) {
-      _safeSetState(() {
-        _wirelessStatus = uploaded
-            ? 'Saved and uploaded new camera photo'
-            : 'Saved new camera photo. Waiting for internet upload.';
-      });
+    if (_wirelessActive(generation)) {
+      _safeSetState(
+        () => _wirelessStatus =
+            'Photo received. Cloud upload starts automatically. Keep shooting.',
+      );
     }
   }
 
-  Future<bool> _pollPtpIpCamera(EventSummary event, int generation) async {
+  Future<bool> _pollPtpIpCamera(
+    _WirelessCaptureTarget target,
+    int generation,
+  ) async {
     if (!_wirelessActive(generation)) return true;
     final camera = _ptpIpCamera;
     if (camera == null) return false;
-    final images = await camera
-        .recentImages(limit: 50)
-        .timeout(const Duration(seconds: 8));
+    final images = await camera.pendingImages();
     if (!_wirelessActive(generation)) return true;
     if (images.isEmpty) {
       _safeSetState(
@@ -1664,45 +1926,35 @@ class _UploadPageState extends State<UploadPage> {
       return true;
     }
 
-    String keyFor(PtpIpImage image) =>
-        '${camera.host}:${camera.port}:${image.handle}';
-    final fresh = images
-        .where((image) => !_processedWirelessIds.contains(keyFor(image)))
-        .toList(growable: false);
-    if (fresh.isEmpty) {
-      _safeSetState(
-        () => _wirelessStatus = 'Camera connected. No new photo yet.',
-      );
-      return true;
-    }
-
-    // recentImages is newest-first. Upload older unseen frames first so bursts
-    // arrive at the backend in shooting order.
-    for (final image in fresh.reversed) {
+    // All new objects remain pending until their local queue copy is saved.
+    for (final image in images) {
       if (!_wirelessActive(generation)) return true;
       _safeSetState(
         () => _wirelessStatus = 'New camera photo found. Importing...',
       );
-      final bytes = await camera
-          .downloadImage(image.handle)
-          .timeout(const Duration(seconds: 60));
-      if (!_wirelessActive(generation)) return true;
+      final bytes = await camera.downloadImage(
+        image.handle,
+        expectedSize: image.size,
+      );
       if (bytes == null || bytes.isEmpty) {
-        throw const SocketException('Camera returned an empty PTP object');
+        // Keep this handle pending without blocking newer frames in the burst.
+        continue;
       }
 
       final imageKey =
           'ptpip://${camera.host}:${camera.port}/${image.handle}/${Uri.encodeComponent(image.name)}';
       await _saveWirelessBytes(
-        event: event,
+        target: target,
         generation: generation,
         bytes: bytes,
         filename: image.name,
         imageKey: imageKey,
         signature: image.fingerprint,
         source: 'wireless-ptpip',
+        cameraId: 'PTP/IP ${camera.host}:${camera.port}',
       );
-      _processedWirelessIds.add(keyFor(image));
+      camera.acknowledgeImages([image.handle]);
+      if (!_wirelessActive(generation)) return true;
       _lastWirelessSignature = image.fingerprint;
       _wirelessImageUrl = imageKey;
     }
@@ -1710,18 +1962,17 @@ class _UploadPageState extends State<UploadPage> {
     return true;
   }
 
-  Future<bool> _pollCanonCcapiCamera(EventSummary event, int generation) async {
+  Future<bool> _pollCanonCcapiCamera(
+    _WirelessCaptureTarget target,
+    int generation,
+  ) async {
     if (!_wirelessActive(generation)) return true;
     final camera = _canonCcapiCamera;
     if (camera == null) return false;
 
-    final contents = await camera.pollAddedContents().timeout(
-      const Duration(seconds: 5),
-    );
+    final contents = await camera.pollAddedContents();
     if (!_wirelessActive(generation)) return true;
-    final fresh = contents
-        .where((content) => !_processedWirelessIds.contains(content.url))
-        .toList(growable: false);
+    final fresh = contents;
     if (fresh.isEmpty) {
       _safeSetState(() {
         _wirelessStatus = 'Canon CCAPI connected. Waiting for new photos...';
@@ -1734,24 +1985,24 @@ class _UploadPageState extends State<UploadPage> {
       _safeSetState(
         () => _wirelessStatus = 'New Canon photo found. Importing...',
       );
-      final bytes = await camera
-          .download(content)
-          .timeout(const Duration(seconds: 60));
-      if (!_wirelessActive(generation)) return true;
+      final bytes = await camera.download(content);
       if (bytes == null || bytes.isEmpty) {
-        throw const SocketException('Canon CCAPI returned an empty image');
+        // The announcement remains pending until a complete file can be read.
+        continue;
       }
 
       await _saveWirelessBytes(
-        event: event,
+        target: target,
         generation: generation,
         bytes: bytes,
         filename: content.name,
         imageKey: content.url,
         signature: content.url,
         source: 'wireless-canon-ccapi',
+        cameraId: camera.sourceUrl,
       );
-      _processedWirelessIds.add(content.url);
+      camera.acknowledgeContents([content.url]);
+      if (!_wirelessActive(generation)) return true;
       _lastWirelessSignature = content.url;
       _wirelessImageUrl = content.url;
     }
@@ -1759,7 +2010,10 @@ class _UploadPageState extends State<UploadPage> {
     return true;
   }
 
-  Future<bool> _pollUpnpCamera(EventSummary event, int generation) async {
+  Future<bool> _pollUpnpCamera(
+    _WirelessCaptureTarget target,
+    int generation,
+  ) async {
     if (!_wirelessActive(generation)) return true;
     final camera = _upnpCameraMedia;
     if (camera == null) return false;
@@ -1793,20 +2047,21 @@ class _UploadPageState extends State<UploadPage> {
       final bytes = await camera
           .download(image)
           .timeout(const Duration(seconds: 60));
-      if (!_wirelessActive(generation)) return true;
       if (bytes == null || bytes.isEmpty) {
         throw const SocketException('UPnP camera returned an empty image');
       }
 
       await _saveWirelessBytes(
-        event: event,
+        target: target,
         generation: generation,
         bytes: bytes,
         filename: image.name,
         imageKey: image.url,
         signature: image.fingerprint,
         source: 'wireless-upnp',
+        cameraId: camera.sourceUrl,
       );
+      if (!_wirelessActive(generation)) return true;
       _processedWirelessIds.add(image.fingerprint);
       _lastWirelessSignature = image.fingerprint;
       _wirelessImageUrl = image.url;
@@ -1815,7 +2070,10 @@ class _UploadPageState extends State<UploadPage> {
     return true;
   }
 
-  Future<void> _pollWirelessCamera(EventSummary event, int generation) async {
+  Future<void> _pollWirelessCamera(
+    _WirelessCaptureTarget target,
+    int generation,
+  ) async {
     if (!_wirelessActive(generation) || _wirelessBusy) return;
 
     final sourceUrl = _wirelessSourceUrl;
@@ -1830,13 +2088,13 @@ class _UploadPageState extends State<UploadPage> {
     });
 
     try {
-      if (await _pollPtpIpCamera(event, generation)) {
+      if (await _pollPtpIpCamera(target, generation)) {
         return;
       }
-      if (await _pollCanonCcapiCamera(event, generation)) {
+      if (await _pollCanonCcapiCamera(target, generation)) {
         return;
       }
-      if (await _pollUpnpCamera(event, generation)) {
+      if (await _pollUpnpCamera(target, generation)) {
         return;
       }
 
@@ -1858,10 +2116,7 @@ class _UploadPageState extends State<UploadPage> {
           return;
         }
 
-        final recentLinks = imageLinks.length <= 500
-            ? imageLinks
-            : imageLinks.sublist(imageLinks.length - 500);
-        final freshLinks = recentLinks
+        final freshLinks = imageLinks
             .where((url) => !_processedWirelessIds.contains(url))
             .toList(growable: false);
         if (freshLinks.isEmpty) {
@@ -1872,21 +2127,22 @@ class _UploadPageState extends State<UploadPage> {
         for (final url in freshLinks) {
           if (!_wirelessActive(generation)) return;
           final bytes = await _downloadImageBytes(url);
-          if (!_wirelessActive(generation)) return;
           if (bytes == null) continue;
           final signature = _signatureForBytes(bytes);
           _safeSetState(
             () => _wirelessStatus = 'New camera image found. Importing...',
           );
           await _saveWirelessBytes(
-            event: event,
+            target: target,
             generation: generation,
             bytes: bytes,
             filename: _filenameFromUrl(url),
             imageKey: url,
             signature: signature,
             source: 'wireless-http',
+            cameraId: sourceUrl,
           );
+          if (!_wirelessActive(generation)) return;
           _processedWirelessIds.add(url);
           _wirelessImageUrl = url;
           _lastWirelessSignature = signature;
@@ -1913,23 +2169,33 @@ class _UploadPageState extends State<UploadPage> {
 
       _safeSetState(() => _wirelessStatus = 'New image found. Importing...');
       await _saveWirelessBytes(
-        event: event,
+        target: target,
         generation: generation,
         bytes: bytes,
         filename: _filenameFromUrl(imageUrl),
         imageKey: imageUrl,
         signature: signature,
         source: 'wireless-http',
+        cameraId: sourceUrl,
       );
       _lastWirelessSignature = signature;
       _wirelessFailureCount = 0;
     } catch (_) {
       if (!_wirelessActive(generation)) return;
+      if (_ptpIpCamera?.isClosed == true ||
+          _canonCcapiCamera?.isClosed == true) {
+        await _stopWirelessImport();
+        _safeSetState(
+          () => _wirelessStatus =
+              'The camera connection ended. Start a new session before shooting again.',
+        );
+        return;
+      }
       _safeSetState(() {
         _wirelessFailureCount += 1;
         _wirelessStatus = _wirelessFailureCount >= 3
             ? 'Wireless import unstable. Keeping session, retrying automatically.'
-            : 'Wireless import failed. Check camera Wi-Fi and internet.';
+            : 'Camera transfer failed. Checking Wi-Fi and retrying...';
       });
     } finally {
       if (_wirelessActive(generation)) {
@@ -2015,6 +2281,7 @@ class _UploadPageState extends State<UploadPage> {
       return;
     }
 
+    _beginReceivingSession(event, 'gallery');
     _galleryTimer?.cancel();
     _processedGalleryIds.clear();
     _safeSetState(() {
@@ -2032,307 +2299,189 @@ class _UploadPageState extends State<UploadPage> {
     });
   }
 
-  Future<void> _pollOtgSource(EventSummary event, int generation) async {
-    if (!_otgActive(generation) || _otgBusy) return;
-
+  Future<void> _changeUsbUploadMode(LiveCameraUploadMode mode) async {
+    if (_usbSessionLocked || _usbModeSaving || mode == _usbUploadMode) return;
+    final previous = _usbUploadMode;
     _safeSetState(() {
-      _otgBusy = true;
-      _otgStatus = 'Checking OTG source...';
+      _usbUploadMode = mode;
+      _usbModeSaving = true;
     });
-
     try {
-      if (_otgNativeCameraMode) {
-        final cameraImages = await OtgFilePicker.connectedCameraImages(
-          limit: 500,
-        );
-        if (!_otgActive(generation)) return;
-        if (cameraImages.isEmpty) {
-          final devices = await OtgFilePicker.connectedCameraDevices();
-          if (!_otgActive(generation)) return;
-          _safeSetState(() {
-            _otgStatus = devices.isEmpty
-                ? 'USB camera disconnected. Check the OTG cable, camera power and USB mode.'
-                : 'Camera found. Waiting for photos from its memory card...';
-          });
-          return;
-        }
-
-        final fresh = cameraImages
-            .where((image) => !_processedOtgIds.contains(image.id))
-            .toList();
-        if (fresh.isEmpty) {
-          if (mounted) {
-            _safeSetState(() {
-              _otgStatus = 'USB camera connected. Waiting for new photos...';
-            });
-          }
-          return;
-        }
-
-        // Native results are newest-first; upload older unseen shots first.
-        for (final image in fresh.reversed) {
-          if (!mounted) return;
-          _safeSetState(() {
-            _otgStatus = 'Importing ${image.name} from connected camera...';
-          });
-          final imported = await OtgFilePicker.importConnectedCameraImages([
-            image.id,
-          ]);
-          if (!_otgActive(generation)) return;
-          if (imported.isEmpty) continue;
-          for (final file in imported) {
-            final uploaded = await UploadQueueService.importFileLocalFirst(
-              event: event,
-              path: file.path,
-              filename: file.name,
-              isEnhanced: _isEnhanced,
-              albumId: _selectedAlbumId,
-              source: 'otg-ptp',
-              cameraId: _otgSourceName,
-              fingerprint: '${event.id}|otg-ptp|${file.id ?? image.id}',
-              tryUploadNow: true,
-            );
-            if (!_otgActive(generation)) return;
-            try {
-              await File(file.path).delete();
-            } catch (_) {}
-            if (!mounted) return;
-            _safeSetState(() {
-              _otgStatus = uploaded
-                  ? 'Uploaded ${file.name} from camera'
-                  : 'Saved ${file.name}. Upload queued.';
-            });
-          }
-          _processedOtgIds.add(image.id);
-        }
-        return;
+      await UsbCameraUploadModeStorage.save(mode);
+    } catch (_) {
+      _safeSetState(() => _usbUploadMode = previous);
+      if (mounted && !_disposed) {
+        AppToast.error('Could not save the photo selection. Please try again.');
       }
+    } finally {
+      _safeSetState(() => _usbModeSaving = false);
+    }
+  }
 
-      final images = await OtgFilePicker.recentSourceImages(
-        excludeIds: _processedOtgIds.toList(),
+  Future<void> _startOtgAutoImport(
+    _UsbCaptureTarget target, {
+    required int generation,
+  }) async {
+    if (_wirelessShutdown != null) await _wirelessShutdown;
+    if (!_usbStartActive(generation, target) || _otgStarting) return;
+    final event = target.event;
+    _beginReceivingSession(event, 'usb');
+    _usbSessionUploadMode = target.uploadMode;
+    _wiredPhotoReceived = false;
+    _safeSetState(() {
+      _otgStarting = true;
+      _otgImporting = true;
+      _otgBusy = true;
+      _otgStatus = 'Connecting for live shooting...';
+    });
+    final capture = LiveCameraCapture(
+      uploadMode: target.uploadMode,
+      onUpdate: (update) {
+        if (!_otgActive(generation)) return;
+        _safeSetState(() {
+          _otgBusy =
+              update.phase == LiveCameraPhase.connecting ||
+              update.phase == LiveCameraPhase.importing;
+          if (_isUsbReleaseError(update.code)) {
+            _usbReleaseIssue = update.message;
+            _otgImporting = false;
+            _otgBusy = false;
+          }
+          if (update.phase == LiveCameraPhase.disconnected ||
+              update.phase == LiveCameraPhase.stopped) {
+            _otgImporting = false;
+            _otgBusy = false;
+            _otgSourceName = null;
+          }
+          _otgStatus = update.message;
+        });
+      },
+    );
+    _liveCamera = capture;
+    try {
+      final session = await capture.start(
+        save: (file, session) async {
+          // Save a separate queue copy before native ACK. Internet delivery
+          // runs independently so burst shooting is not network-bound.
+          await UploadQueueService.receiveCameraFile(
+            event: event,
+            path: file.path,
+            filename: file.name,
+            isEnhanced: target.isEnhanced,
+            albumId: target.albumId,
+            source: 'otg-ptp',
+            cameraId: session.name,
+            fingerprint: '${event.id}|otg-ptp|${session.cameraId}|${file.id}',
+          );
+          if (_otgActive(generation)) {
+            _safeSetState(() => _wiredPhotoReceived = true);
+          }
+          try {
+            await File(file.path).delete();
+          } catch (_) {}
+        },
       );
-      if (!_otgActive(generation)) return;
-
-      if (images.isEmpty) {
-        _safeSetState(() {
-          _otgStatus = _otgSourceName == null
-              ? 'Waiting for OTG source...'
-              : 'Waiting for new images in $_otgSourceName...';
-        });
+      if (!_otgActive(generation)) {
+        await capture.stop(notify: false);
         return;
       }
-
-      for (final image in images.reversed) {
-        if (!_otgActive(generation)) return;
-        if (_processedOtgIds.contains(image.id)) continue;
-
-        _safeSetState(() => _otgStatus = 'Importing ${image.name} from OTG...');
-        final uploaded = await _uploadOrQueueFile(
-          event: event,
-          path: image.path,
-          filename: image.name,
-          source: 'otg',
-          cameraId: _otgSourceName,
-        );
-        _processedOtgIds.add(image.id);
-
-        if (!mounted) return;
-        _safeSetState(() {
-          _otgStatus = uploaded
-              ? 'Uploaded ${image.name} from OTG'
-              : 'Saved ${image.name} from OTG. Upload queued.';
-        });
-      }
+      _safeSetState(() {
+        _usbReleaseIssue = null;
+        _otgSourceName = session.name;
+        _otgBusy = false;
+      });
+      unawaited(_showTransferSessionPage(event));
     } on MissingPluginException {
       if (_otgActive(generation)) {
-        _safeSetState(
-          () => _otgStatus =
-              'Install a new app build to enable USB camera access.',
-        );
+        _safeSetState(() {
+          _otgImporting = false;
+          _otgBusy = false;
+          _otgStatus =
+              'Install a new native app build to use live USB shooting. '
+              'Hot reload cannot add this feature.';
+        });
+        AppToast.error('Install the new app build for live USB shooting.');
       }
     } on PlatformException catch (error) {
-      if (_otgActive(generation)) {
-        final advice = UsbCameraGuidance.forStatus(
-          error.code,
-          message: error.message,
-        );
-        _safeSetState(
-          () => _otgStatus = '${advice.title}. ${advice.nextSteps}',
-        );
+      if (!_otgActive(generation) ||
+          error.code == 'LIVE_CAMERA_CANCELLED' ||
+          error.code == 'CAMERA_SESSION_CANCELLED') {
+        return;
       }
+      final advice = UsbCameraGuidance.forStatus(
+        error.code,
+        message: error.message,
+      );
+      _safeSetState(() {
+        _otgImporting = false;
+        _otgBusy = false;
+        _otgStatus = '${advice.details} ${advice.nextSteps}';
+        if (_isUsbReleaseError(error.code)) _usbReleaseIssue = _otgStatus;
+      });
+      AppToast.error(advice.title);
     } catch (error) {
       if (_otgActive(generation)) {
         _safeSetState(() {
-          _otgStatus =
-              'OTG auto-upload failed: $error. Reconnect the camera and retry.';
+          _otgImporting = false;
+          _otgBusy = false;
+          _otgStatus = 'Live camera connection failed: $error';
         });
       }
     } finally {
       if (_otgActive(generation)) {
-        _safeSetState(() => _otgBusy = false);
+        _safeSetState(() => _otgStarting = false);
       }
     }
   }
 
-  Future<void> _startOtgAutoImport(EventSummary event) async {
+  Future<void> _stopOtgAutoImport() => _usbShutdown ??= _finishOtgAutoImport()
+      .whenComplete(() => _usbShutdown = null);
+
+  Future<void> _finishOtgAutoImport() async {
     final generation = ++_otgGeneration;
-    try {
-      List<ConnectedCameraDevice> devices = const [];
-      List<ConnectedCameraImage> connected = const [];
-      try {
-        devices = await OtgFilePicker.connectedCameraDevices();
-        if (devices.isNotEmpty) {
-          try {
-            connected = await OtgFilePicker.connectedCameraImages(limit: 500);
-          } on PlatformException catch (error) {
-            // A slow camera catalog is not a disconnected camera.
-            // Continue in direct mode and detect the next shots when ready.
-            if (_cameraDeniedCodes.contains(error.code) ||
-                error.code == 'CAMERA_SESSION_FAILED' ||
-                error.code == 'USB_CAMERA_SESSION_FAILED') {
-              rethrow;
-            }
-            debugPrint('Connected camera catalog not ready yet: ${error.code}');
-          }
-          if (!_otgActive(generation)) return;
-          devices = await OtgFilePicker.connectedCameraDevices();
-        }
-        if (!_otgActive(generation)) return;
-      } on PlatformException catch (error) {
-        if (_cameraDeniedCodes.contains(error.code) ||
-            error.code == 'CAMERA_SESSION_FAILED' ||
-            error.code == 'USB_CAMERA_SESSION_FAILED') {
-          rethrow;
-        }
-        debugPrint('Camera detection failed: ${error.code}');
-      } on MissingPluginException {
-        devices = const [];
-        connected = const [];
-      }
-
-      final directDevices = devices
-          .where((device) => device.directSupported)
-          .toList(growable: false);
-      if (directDevices.isNotEmpty) {
-        _otgTimer?.cancel();
-        _processedOtgIds
-          ..clear()
-          ..addAll(connected.map((image) => image.id));
-        final cameraLabel = directDevices.length == 1
-            ? directDevices.first.name
-            : '${directDevices.length} USB/PTP cameras';
-        _safeSetState(() {
-          _otgNativeCameraMode = true;
-          _otgImporting = true;
-          _otgSourceName = cameraLabel;
-          _otgStatus = connected.isEmpty
-              ? '$cameraLabel connected. Waiting for first photo...'
-              : '$cameraLabel connected. Existing photos skipped; new photos will auto-upload.';
-        });
-        _otgTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-          if (!_otgActive(generation)) {
-            timer.cancel();
-            return;
-          }
-          unawaited(_pollOtgSource(event, generation));
-        });
-        unawaited(_showConnectedSessionSheet(event));
-        return;
-      }
-
-      if (!mounted || !_otgActive(generation)) return;
-      final allowExternalFolder = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('No direct USB camera found'),
-          content: const Text(
-            'A camera was not detected over USB/PTP. You can watch a folder '
-            'on an attached SD card or USB drive instead. In Files, choose '
-            'the external drive under Locations, not On My iPhone.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Choose external folder'),
-            ),
-          ],
-        ),
-      );
-      if (!_otgActive(generation)) return;
-      if (allowExternalFolder != true) {
-        _safeSetState(() {
-          _otgStatus =
-              'No USB/PTP camera detected. Check connection and retry.';
-        });
-        return;
-      }
-
-      final source = await OtgFilePicker.pickSource();
-      if (!_otgActive(generation)) return;
-      if (source == null) {
-        _safeSetState(() => _otgStatus = 'OTG source selection cancelled');
-        return;
-      }
-
-      _otgTimer?.cancel();
-      _processedOtgIds.clear();
-      _safeSetState(() {
-        _otgNativeCameraMode = false;
-        _otgImporting = true;
-        _otgSourceName = source.name;
-        _otgStatus =
-            'OTG source ${source.name} connected. Waiting for images...';
-      });
-
-      _otgTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
-        if (!_otgActive(generation)) {
-          timer.cancel();
-          return;
-        }
-        unawaited(_pollOtgSource(event, generation));
-      });
-      unawaited(_showConnectedSessionSheet(event));
-      await _pollOtgSource(event, generation);
-    } on MissingPluginException {
-      _safeSetState(
-        () => _otgStatus = 'Restart app once to enable OTG auto-upload',
-      );
-      AppToast.error('Restart app once to enable OTG auto-upload');
-    } on PlatformException catch (error) {
-      final message = error.message?.trim();
-      final readable = switch (error.code) {
-        'NO_FOLDER_PICKER' =>
-          'No direct USB camera detected. This phone cannot watch an OTG folder automatically; connect the camera in PTP/MTP mode, or use USB / OTG camera above to select photos manually.',
-        'NO_OTG_SOURCE' =>
-          'No OTG source found. Connect camera/storage in file transfer mode',
-        _ =>
-          message?.isNotEmpty == true
-              ? message!
-              : 'Failed to open source folder picker',
-      };
-      _safeSetState(() => _otgStatus = readable);
-      AppToast.error(readable);
-    } catch (_) {
-      _safeSetState(() => _otgStatus = 'Failed to start OTG auto-upload');
-      AppToast.error('Failed to start OTG auto-upload');
-    }
-  }
-
-  void _stopOtgAutoImport() {
-    _otgGeneration += 1;
-    _otgTimer?.cancel();
-    _otgTimer = null;
+    final capture = _liveCamera;
+    final hadActiveCapture = capture?.isActive == true;
+    _liveCamera = null;
+    _liveCameraEventId = null;
     _safeSetState(() {
+      _usbStartRequested = false;
       _otgImporting = false;
-      _otgBusy = false;
-      _otgNativeCameraMode = false;
-      _otgSourceName = null;
-      _otgStatus = 'OTG auto-upload stopped';
+      _otgBusy = true;
+      _otgStarting = true;
+      _otgStatus = 'Closing live camera connection...';
     });
+    String? releaseIssue;
+    var releaseConfirmed = false;
+    try {
+      await capture?.stop(notify: false);
+      releaseConfirmed = hadActiveCapture;
+    } catch (error) {
+      debugPrint('USB session close: $error');
+      final advice = UsbCameraGuidance.forStatus(
+        'PTP_CLOSE_FAILED',
+        message: error is PlatformException ? error.message : null,
+      );
+      releaseIssue = '${advice.details} ${advice.nextSteps}';
+    } finally {
+      if (_otgActive(generation)) {
+        _safeSetState(() {
+          if (releaseIssue != null) {
+            _usbReleaseIssue = releaseIssue;
+          } else if (releaseConfirmed) {
+            _usbReleaseIssue = null;
+          }
+          _otgBusy = false;
+          _otgStarting = false;
+          _otgSourceName = null;
+          _otgStatus =
+              _usbReleaseIssue ??
+              'Live shooting stopped. Received photos continue uploading to cloud.';
+        });
+        if (releaseIssue != null) {
+          AppToast.error('Disconnect USB to release the camera.');
+        }
+      }
+    }
   }
 
   void _stopGalleryAutoImport() {
@@ -2380,65 +2529,117 @@ class _UploadPageState extends State<UploadPage> {
     });
   }
 
-  void _stopWirelessImport() {
+  Future<void> _stopWirelessImport() => _wirelessShutdown ??=
+      _finishWirelessImport().whenComplete(() => _wirelessShutdown = null);
+
+  Future<void> _finishWirelessImport() async {
     _wirelessGeneration += 1;
+    final ftp = _ftpReceiver;
+    final awakeOwner = _wirelessAwakeOwner;
+    _ftpReceiver = null;
+    _ftpConnection = null;
+    _ftpStarting = false;
+    _wirelessAwakeOwner = null;
     _wirelessTimer?.cancel();
     _wirelessTimer = null;
     final ptpCamera = _ptpIpCamera;
     _ptpIpCamera = null;
+    final canonCamera = _canonCcapiCamera;
     _canonCcapiCamera = null;
     _upnpCameraMedia = null;
     _processedWirelessIds.clear();
-    if (ptpCamera != null) {
-      unawaited(ptpCamera.close());
-    }
     _safeSetState(() {
       _autoImporting = false;
       _wirelessScanning = false;
       _wirelessBusy = false;
       _wirelessFailureCount = 0;
-      _wirelessMode = null;
       _wirelessSourceUrl = null;
       _wirelessImageUrl = null;
       _wirelessUsesListing = false;
       _lastWirelessSignature = null;
-      _wirelessStatus = 'Wireless camera disconnected';
+      _wirelessStatus =
+          'Receiving stopped. Received photos continue uploading to cloud.';
     });
+    try {
+      if (ftp != null) await ftp.stop();
+      if (ptpCamera != null) await ptpCamera.close();
+      if (canonCamera != null) await canonCamera.close();
+    } finally {
+      if (awakeOwner != null) {
+        await TransferScreenAwake.setEnabled(awakeOwner, false);
+      }
+    }
   }
 
   Future<void> _togglePhoneAutoUpload(EventSummary event) async {
+    if (_usbStartRequested) return;
+    if (_wirelessShutdown != null) await _wirelessShutdown;
+    if (!mounted || _disposed || _usbStartRequested) return;
     if (_galleryImporting) {
       _stopGalleryAutoImport();
       return;
     }
-    if (_otgImporting) _stopOtgAutoImport();
-    if (_wirelessImporting) _stopWirelessImport();
+    if (_liveCamera != null) await _stopOtgAutoImport();
+    if (_wirelessImporting) await _stopWirelessImport();
     await _startGalleryAutoImport(event);
   }
 
   Future<void> _toggleOtgAutoUpload(EventSummary event) async {
     if (_otgImporting) {
-      _stopOtgAutoImport();
+      await _stopOtgAutoImport();
       return;
     }
-    if (_galleryImporting) _stopGalleryAutoImport();
-    if (_wirelessImporting) _stopWirelessImport();
-    await _startOtgAutoImport(event);
+    if (!mounted ||
+        _disposed ||
+        _otgStarting ||
+        _usbStartRequested ||
+        _usbModeSaving ||
+        _usbPickInProgress ||
+        ActiveEventStorage.activeEvent.value?.id != event.id) {
+      return;
+    }
+    // Reserve this exact event and generation before closing another receiver.
+    // A pause, event change or stop invalidates it while that await is pending.
+    final generation = ++_otgGeneration;
+    final target = _UsbCaptureTarget(
+      event: event,
+      uploadMode: _usbUploadMode,
+      isEnhanced: _isEnhanced,
+      albumId: _selectedAlbumId,
+    );
+    _safeSetState(() {
+      _liveCameraEventId = target.event.id;
+      _usbStartRequested = true;
+    });
+    try {
+      if (_galleryImporting) _stopGalleryAutoImport();
+      if (_wirelessImporting) await _stopWirelessImport();
+      if (!_usbStartActive(generation, target)) return;
+      await _startOtgAutoImport(target, generation: generation);
+    } finally {
+      if (_otgActive(generation)) {
+        _safeSetState(() {
+          _usbStartRequested = false;
+          if (!_otgImporting && !_otgStarting) _liveCameraEventId = null;
+        });
+      }
+    }
   }
 
   Future<void> _toggleWirelessAutoUpload(EventSummary event) async {
+    if (_usbStartRequested) return;
     if (_wirelessImporting) {
-      _stopWirelessImport();
+      await _stopWirelessImport();
       return;
     }
     if (_galleryImporting) _stopGalleryAutoImport();
-    if (_otgImporting) _stopOtgAutoImport();
+    if (_liveCamera != null) await _stopOtgAutoImport();
     await _handleWirelessAction(event);
   }
 
   Future<void> _handleWirelessAction(EventSummary? event) async {
     if (_wirelessImporting) {
-      _stopWirelessImport();
+      await _stopWirelessImport();
       return;
     }
 
@@ -2455,8 +2656,16 @@ class _UploadPageState extends State<UploadPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
+                leading: const Icon(Icons.add_a_photo_outlined),
+                title: const Text('Live shooting with camera FTP'),
+                subtitle: const Text(
+                  'For cameras with FTP automatic transfer. Each new photo uploads to your event automatically while you keep shooting.',
+                ),
+                onTap: () => Navigator.of(context).pop(_WirelessImportMode.ftp),
+              ),
+              ListTile(
                 leading: const Icon(Icons.router_outlined),
-                title: const Text('Same Wi-Fi network'),
+                title: const Text('Find an existing camera Wi-Fi feed'),
                 subtitle: const Text(
                   'Use when phone + camera are on the same router. Uploads can go online immediately.',
                 ),
@@ -2466,9 +2675,9 @@ class _UploadPageState extends State<UploadPage> {
               ),
               ListTile(
                 leading: const Icon(Icons.wifi_tethering_outlined),
-                title: const Text('Camera Wi-Fi / hotspot'),
+                title: const Text('Connect to a camera hotspot feed'),
                 subtitle: const Text(
-                  'Use when the phone connects directly to the camera Wi-Fi. Photos save locally and upload when internet returns.',
+                  'A camera hotspot may have no internet. Photos upload automatically whenever internet access is available.',
                 ),
                 onTap: () => Navigator.of(
                   context,
@@ -2482,7 +2691,292 @@ class _UploadPageState extends State<UploadPage> {
 
     if (!mounted || choice == null) return;
     await Future<void>.delayed(const Duration(milliseconds: 200));
-    await _findAndStartWirelessImport(event, choice);
+    if (choice == _WirelessImportMode.ftp) {
+      await _startFtpCameraSession(event);
+    } else {
+      await _findAndStartWirelessImport(event, choice);
+    }
+  }
+
+  Future<void> _startFtpCameraSession(EventSummary event) async {
+    if (_ftpStarting) return;
+    if (_wirelessShutdown != null) await _wirelessShutdown;
+    _beginReceivingSession(event, 'ftp');
+    final generation = ++_wirelessGeneration;
+    final albumId = _selectedAlbumId;
+    final enhanced = _isEnhanced;
+    _safeSetState(() {
+      _ftpStarting = true;
+      _ftpHasReceived = false;
+      _wirelessStatus = 'Preparing Wi-Fi photo receiver...';
+    });
+    CameraFtpReceiver? receiver;
+    try {
+      final addresses = await CameraFtpReceiver.availableAddresses();
+      if (!_wirelessActive(generation)) return;
+      if (addresses.isEmpty) {
+        throw const SocketException(
+          'Connect this phone and your camera to the same Wi-Fi network, then start again.',
+        );
+      }
+      var address = addresses.first;
+      if (addresses.length > 1) {
+        if (!mounted) return;
+        final selected = await showDialog<InternetAddress>(
+          context: context,
+          builder: (dialogContext) => SimpleDialog(
+            title: const Text('Choose your Wi-Fi address'),
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                child: Text('Use the network shared by your phone and camera.'),
+              ),
+              for (final candidate in addresses)
+                SimpleDialogOption(
+                  onPressed: () => Navigator.pop(dialogContext, candidate),
+                  child: Text(candidate.address),
+                ),
+            ],
+          ),
+        );
+        if (!_wirelessActive(generation)) return;
+        if (selected == null) {
+          _safeSetState(() => _wirelessStatus = 'Wireless setup cancelled.');
+          return;
+        }
+        address = selected;
+      }
+      final profile = await CameraFtpProfileStorage.load();
+      final temporary = await getTemporaryDirectory();
+      if (!_wirelessActive(generation)) return;
+      receiver = CameraFtpReceiver(
+        stagingDirectory: Directory(
+          '${temporary.path}${Platform.pathSeparator}camera_ftp',
+        ),
+        onFile: (file) async {
+          // FTP 226 (accepted) is sent only after this local copy is durable.
+          // The camera can send its next shot without waiting for cloud upload.
+          await UploadQueueService.receiveCameraFile(
+            event: event,
+            path: file.localPath,
+            filename: file.name,
+            isEnhanced: enhanced,
+            albumId: albumId,
+            source: 'wireless-ftp',
+            cameraId: 'Camera FTP',
+            fingerprint: '${event.id}|wireless-ftp|${file.fingerprint}',
+          );
+          if (_wirelessActive(generation)) {
+            _safeSetState(() {
+              _ftpHasReceived = true;
+              _wirelessStatus =
+                  'Photo received. Cloud upload starts automatically. Keep shooting.';
+            });
+          }
+        },
+        onClientAuthenticated: () {
+          if (!_wirelessActive(generation)) return;
+          _safeSetState(
+            () => _wirelessStatus =
+                'Camera connected. Enable automatic FTP transfer and take a photo.',
+          );
+        },
+        onClientDisconnected: () {
+          if (!_wirelessActive(generation)) return;
+          _safeSetState(
+            () => _wirelessStatus =
+                'Receiver ready. The camera can reconnect for its next photo.',
+          );
+        },
+        onError: (error) {
+          if (!_wirelessActive(generation)) return;
+          _safeSetState(
+            () => _wirelessStatus =
+                'Camera transfer interrupted. Waiting for the camera to retry.',
+          );
+        },
+      );
+      _ftpReceiver = receiver;
+      final connection = await receiver.start(
+        address: address,
+        port: CameraFtpProfile.port,
+        username: profile.username,
+        password: profile.password,
+      );
+      if (!_wirelessActive(generation)) {
+        await receiver.stop();
+        return;
+      }
+      _wirelessAwakeOwner = 'wireless-$_receiverOwnerId-$generation';
+      await TransferScreenAwake.setEnabled(_wirelessAwakeOwner!, true);
+      if (!_wirelessActive(generation)) return;
+      _safeSetState(() {
+        _ftpConnection = connection;
+        _ftpStarting = false;
+        _autoImporting = true;
+        _wirelessStatus =
+            'Receiver ready. Add the settings below to your camera FTP profile.';
+      });
+      unawaited(_showTransferSessionPage(event));
+    } catch (error) {
+      await receiver?.stop();
+      if (_wirelessActive(generation)) {
+        _ftpReceiver = null;
+        _ftpConnection = null;
+        _safeSetState(() {
+          _autoImporting = false;
+          _wirelessStatus = error is SocketException
+              ? error.message
+              : 'Could not start the Wi-Fi receiver. Check local network access and try again.';
+        });
+        AppToast.error(_wirelessStatus!);
+      }
+    } finally {
+      if (_wirelessActive(generation)) {
+        _safeSetState(() => _ftpStarting = false);
+      }
+    }
+  }
+
+  Widget _buildSessionConnectionDetails(BuildContext pageContext) {
+    final connection = _ftpConnection;
+    if (_sessionKind == 'ftp' && connection != null) {
+      final settings = <String, String>{
+        'Server / host': connection.host,
+        'Port': '${connection.port}',
+        'Username': connection.username,
+        'Password': connection.password,
+        'Passive mode': 'On',
+        'Encryption': 'None (FTP)',
+        'Folder': '/',
+      };
+      return Card(
+        child: ExpansionTile(
+          key: ValueKey(_ftpHasReceived),
+          initiallyExpanded: !_ftpHasReceived,
+          title: const Text('Camera FTP settings'),
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Connect your camera once',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    '1. Join the same Wi-Fi network on the camera and phone.\n'
+                    '2. Enter these settings in the camera FTP profile.\n'
+                    '3. Turn on automatic transfer after each shot, then take a photo.',
+                  ),
+                  const SizedBox(height: 12),
+                  for (final setting in settings.entries)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: 116,
+                            child: Text(
+                              setting.key,
+                              style: const TextStyle(
+                                color: AppColors.mutedForeground,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: SelectableText(
+                              setting.value,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      await Clipboard.setData(
+                        ClipboardData(
+                          text: settings.entries
+                              .map((entry) => '${entry.key}: ${entry.value}')
+                              .join('\n'),
+                        ),
+                      );
+                      if (pageContext.mounted) {
+                        ScaffoldMessenger.of(pageContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('Camera FTP settings copied'),
+                          ),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.copy_outlined),
+                    label: const Text('Copy settings'),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Use trusted Wi-Fi: this local FTP connection is unencrypted. '
+                    'The camera must support FTP automatic transfer. '
+                    'Your login is saved on this phone; only update the server address if your Wi-Fi address changes. '
+                    'Keep AirPix open while shooting. Cloud uploads wait when internet is unavailable.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.mutedForeground,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_sessionKind == 'usb' && _otgImporting) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'USB uploads: '
+                '${UsbCameraUploadModeSelector.labelFor(_usbSessionUploadMode)}',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _wiredPhotoReceived
+                    ? 'Camera photos are arriving and start uploading automatically.'
+                    : 'Take a photo using the camera shutter once the connection is ready.',
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'If the camera shows a transfer screen or its shutter is locked, '
+                'release this connection and choose the shooting mode supported by your camera model.',
+                style: TextStyle(fontSize: 12),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  await _stopOtgAutoImport();
+                  if (mounted && _usbReleaseIssue == null) {
+                    await _showLiveCameraSetup();
+                  }
+                },
+                icon: const Icon(Icons.usb_off),
+                label: const Text('Camera locked? Release connection'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return const SizedBox.shrink();
   }
 
   Future<void> _submit(EventSummary event) async {
@@ -2623,9 +3117,9 @@ class _UploadPageState extends State<UploadPage> {
             actions: [
               if (activeEvent != null)
                 TextButton.icon(
-                  onPressed: _connectionSheetOpen
+                  onPressed: _connectionPageOpen
                       ? null
-                      : () => _showConnectedSessionSheet(activeEvent),
+                      : () => _showTransferSessionPage(activeEvent),
                   icon: Icon(
                     _liveConnectionActive
                         ? Icons.camera_alt_rounded
@@ -2690,10 +3184,13 @@ class _UploadPageState extends State<UploadPage> {
                   child: DropdownButtonFormField<String?>(
                     initialValue: _selectedAlbumId,
                     isDense: true,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Upload album',
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(
+                      helperText: _otgImporting
+                          ? 'Stop live shooting to change the album.'
+                          : null,
+                      border: const OutlineInputBorder(),
+                      contentPadding: const EdgeInsets.symmetric(
                         horizontal: 12,
                         vertical: 10,
                       ),
@@ -2710,7 +3207,11 @@ class _UploadPageState extends State<UploadPage> {
                         ),
                       ),
                     ],
-                    onChanged: _uploading
+                    onChanged:
+                        _uploading ||
+                            _liveConnectionActive ||
+                            _otgStarting ||
+                            _usbStartRequested
                         ? null
                         : (value) =>
                               _safeSetState(() => _selectedAlbumId = value),
@@ -2723,7 +3224,7 @@ class _UploadPageState extends State<UploadPage> {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.tonalIcon(
-                    onPressed: () => _showConnectedSessionSheet(activeEvent),
+                    onPressed: () => _showTransferSessionPage(activeEvent),
                     icon: const Icon(Icons.camera_alt_outlined),
                     label: const Text('Open live camera session'),
                   ),
@@ -2818,7 +3319,9 @@ class _UploadPageState extends State<UploadPage> {
                         title: 'Connected camera (USB / OTG)',
                         subtitle:
                             'Read directly from a compatible USB/PTP camera. Not iPhone photos.',
-                        onTap: _uploading || _otgBusy ? null : _pickOtgFiles,
+                        onTap: _uploading || _otgBusy || _usbStartRequested
+                            ? null
+                            : _pickOtgFiles,
                       ),
                       _uploadSourceTile(
                         icon: Icons.fact_check_outlined,
@@ -2868,7 +3371,7 @@ class _UploadPageState extends State<UploadPage> {
                             ),
                             SizedBox(height: 4),
                             Text(
-                              'Start one camera connection. Existing camera photos are skipped; every new shot is imported automatically and sent to the backend.',
+                              'Connect the camera, wait for the ready message, then use its shutter. Each new photo starts uploading to your cloud event automatically. Keep AirPix open while shooting.',
                               style: TextStyle(fontSize: 12),
                             ),
                           ],
@@ -2876,23 +3379,44 @@ class _UploadPageState extends State<UploadPage> {
                       ),
                       _autoUploadTile(
                         icon: Icons.usb_outlined,
-                        title: 'Connected camera (USB / OTG)',
+                        title: 'Live shooting (USB / OTG)',
+                        startLabel: 'Start live shooting',
+                        stopLabel: 'Stop live shooting',
                         subtitle:
-                            'Compatible USB/PTP camera or an explicitly selected external folder.',
-                        flowText: 'Camera → app private cache → backend',
+                            'Automatic photo transfer for compatible Canon EOS, Nikon and Sony cameras. Wait for the ready message, then use the camera shutter.',
+                        flowText:
+                            _usbUploadMode == LiveCameraUploadMode.newShotsOnly
+                            ? 'Camera shutter → automatic cloud upload'
+                            : 'Existing photos + camera shutter → automatic cloud upload',
+                        configuration: UsbCameraUploadModeSelector(
+                          value: _usbUploadMode,
+                          sessionLocked: _usbSessionLocked,
+                          isSaving: _usbModeSaving,
+                          onChanged: (mode) =>
+                              unawaited(_changeUsbUploadMode(mode)),
+                        ),
                         active: _otgImporting,
-                        busy: _otgBusy,
+                        busy: _otgBusy || _usbStartRequested,
                         status: _otgStatus,
-                        onPressed: activeEvent == null || _uploading
+                        onPressed:
+                            activeEvent == null || _uploading || _usbModeSaving
                             ? null
                             : () => _toggleOtgAutoUpload(activeEvent),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: TextButton.icon(
+                          onPressed: _showLiveCameraSetup,
+                          icon: const Icon(Icons.help_outline, size: 18),
+                          label: const Text('Camera screen black?'),
+                        ),
                       ),
                       _uploadSourceTile(
                         icon: Icons.fact_check_outlined,
                         title: 'Test wired camera connection',
                         subtitle:
-                            'Check USB/PTP detection before starting auto-upload.',
-                        onTap: _otgBusy || _uploading
+                            'Check the camera session and whether physical-shutter shooting is advertised.',
+                        onTap: _otgBusy || _uploading || _usbStartRequested
                             ? null
                             : _diagnoseUsbCamera,
                       ),
@@ -2900,13 +3424,15 @@ class _UploadPageState extends State<UploadPage> {
                         icon: Icons.wifi_tethering,
                         title: 'Wireless camera',
                         subtitle:
-                            'Camera Wi-Fi / PTP-IP / supported network camera protocol.',
-                        flowText:
-                            'Camera → app → backend (or queue if offline)',
+                            'Automatic FTP transfer while you shoot, or an existing camera Wi-Fi feed. Availability depends on the camera.',
+                        flowText: 'Camera shutter → automatic cloud upload',
                         active: _wirelessImporting,
                         busy: _wirelessBusy || _wirelessScanning,
                         status: _wirelessStatus,
-                        onPressed: activeEvent == null || _uploading
+                        onPressed:
+                            activeEvent == null ||
+                                _uploading ||
+                                _usbStartRequested
                             ? null
                             : () => _toggleWirelessAutoUpload(activeEvent),
                         secondaryAction: _wirelessImporting
@@ -2936,7 +3462,10 @@ class _UploadPageState extends State<UploadPage> {
                             active: _galleryImporting,
                             busy: _galleryBusy,
                             status: _galleryStatus,
-                            onPressed: activeEvent == null || _uploading
+                            onPressed:
+                                activeEvent == null ||
+                                    _uploading ||
+                                    _usbStartRequested
                                 ? null
                                 : () => _togglePhoneAutoUpload(activeEvent),
                           ),
@@ -3148,25 +3677,7 @@ class _UploadPageState extends State<UploadPage> {
     }
 
     try {
-      await DioHelper.patch(
-        '/gallery-access/settings',
-        data: {
-          'eventId': event.id,
-          'faceSearchEnabled': true,
-          'faceConsentRequired': true,
-        },
-      );
-      final response = await DioHelper.get(
-        '/gallery-access/info',
-        queryParameters: {'eventId': event.id},
-      );
-      final raw = response.data;
-      final info = raw is Map
-          ? Map<String, dynamic>.from(raw)
-          : <String, dynamic>{};
-      if (info['faceSearchEnabled'] != true) {
-        throw StateError('Face delivery was not enabled');
-      }
+      await ensureGuestFaceDeliveryEnabled(event.id);
       return true;
     } on DioException catch (error) {
       final responseData = error.response?.data;
@@ -3182,29 +3693,26 @@ class _UploadPageState extends State<UploadPage> {
   }
 
   Future<void> _showGuestQr(EventSummary event) async {
-    final rootNavigator = Navigator.of(context, rootNavigator: true);
-    unawaited(
-      showDialog<void>(
+    if (!mounted || _disposed || _guestQrPreparing) return;
+    _guestQrPreparing = true;
+    try {
+      final ready = await runGuestQrPreparation(
         context: context,
-        useRootNavigator: true,
-        barrierDismissible: false,
-        builder: (_) => const AlertDialog(
-          content: Row(
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(width: 18),
-              Expanded(child: Text('Preparing guest QR...')),
-            ],
-          ),
-        ),
-      ),
-    );
+        prepare: () => _prepareGuestFaceDelivery(event),
+      );
+      if (ready && mounted && !_disposed) {
+        await _showPreparedGuestQr(event);
+      }
+    } catch (_) {
+      if (mounted && !_disposed) {
+        AppToast.error('Could not open the guest QR. Please try again.');
+      }
+    } finally {
+      _guestQrPreparing = false;
+    }
+  }
 
-    final ready = await _prepareGuestFaceDelivery(event);
-    if (!mounted) return;
-    rootNavigator.pop();
-    if (!ready) return;
-
+  Future<void> _showPreparedGuestQr(EventSummary event) async {
     final payload = GuestQrPayload.encode(event.id);
     await showDialog<void>(
       context: context,
@@ -3256,464 +3764,40 @@ class _UploadPageState extends State<UploadPage> {
     );
   }
 
-  Future<void> _showConnectedSessionSheet(EventSummary event) async {
-    if (!mounted || _connectionSheetOpen) return;
-    _connectionSheetOpen = true;
+  Future<void> _showTransferSessionPage(EventSummary event) async {
+    if (!mounted || _connectionPageOpen) return;
+    _connectionPageOpen = true;
+    _refreshSessionStatus();
     try {
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        backgroundColor: AppColors.card,
-        builder: (sheetContext) => SizedBox(
-          height: MediaQuery.sizeOf(sheetContext).height * 0.94,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
-                child: Row(
-                  children: [
-                    const AppIconTile(
-                      icon: Icons.camera_alt_outlined,
-                      size: 42,
-                      iconSize: 21,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Live Camera Session',
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.foreground,
-                              letterSpacing: -0.2,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            event.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.mutedForeground,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(sheetContext),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => CameraTransferPage(
+            eventId: event.id,
+            eventTitle: event.title,
+            session: _sessionStatus,
+            startedAt: _receivingEventId == event.id ? _sessionStartedAt : null,
+            onStop: _stopReceivingSession,
+            onShareGuestQr: () => _showGuestQr(event),
+            onViewHistory: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => TransferListPage(
+                  eventId: event.id,
+                  eventTitle: event.title,
+                  filter: TransferListFilter.all,
                 ),
               ),
-              const Divider(height: 1),
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: FilledButton.icon(
-                    onPressed: () => _showGuestQr(event),
-                    icon: const Icon(Icons.qr_code_2),
-                    label: const Text('Share guest QR'),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                  child: _liveTransferPanel(event),
-                ),
-              ),
-            ],
+            ),
+            connectionDetailsBuilder: _buildSessionConnectionDetails,
           ),
         ),
       );
     } finally {
-      _connectionSheetOpen = false;
+      _connectionPageOpen = false;
     }
-  }
-
-  String get _liveConnectionText {
-    if (_otgImporting) {
-      final name = _otgSourceName?.trim();
-      return name?.isNotEmpty == true ? 'OTG - $name' : 'OTG connected';
-    }
-    if (_wirelessImporting) {
-      return _wirelessMode == _WirelessImportMode.cameraHotspot
-          ? 'Camera hotspot live'
-          : 'Wireless camera live';
-    }
-    if (_galleryImporting) return 'Phone gallery live';
-    return 'Ready for camera';
   }
 
   bool get _liveConnectionActive =>
       _otgImporting || _wirelessImporting || _galleryImporting;
-
-  IconData get _liveConnectionIcon {
-    if (_otgImporting) return Icons.usb;
-    if (_wirelessImporting) return Icons.wifi;
-    if (_galleryImporting) return Icons.photo_library_outlined;
-    return Icons.camera_alt_outlined;
-  }
-
-  Widget _liveTransferPanel(EventSummary event) {
-    return ValueListenableBuilder<List<TransferLedgerItem>>(
-      valueListenable: TransferLedgerStorage.items,
-      builder: (context, allItems, _) {
-        final eventItems = allItems
-            .where((item) => item.eventId == event.id)
-            .toList(growable: false);
-        final recentItems = eventItems.take(3).toList(growable: false);
-        final matchingAlbums = _selectedAlbumId == null
-            ? <AlbumModel>[]
-            : _albums.where((album) => album.id == _selectedAlbumId).toList();
-        final selectedAlbum = matchingAlbums.isEmpty
-            ? null
-            : matchingAlbums.first;
-        final listHeight = (recentItems.length * 78.0).clamp(90.0, 250.0);
-
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(15, 14, 15, 15),
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const AppIconTile(
-                    icon: Icons.photo_library_outlined,
-                    size: 42,
-                    iconSize: 21,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          event.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.foreground,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          selectedAlbum?.title ?? 'All categories',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.mutedForeground,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    color: AppColors.mutedForeground,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  AppPill(
-                    icon: Icons.photo_library_outlined,
-                    label: '${eventItems.length} photos',
-                  ),
-                  const Spacer(),
-                  AppPill(
-                    icon: _liveConnectionIcon,
-                    label: _liveConnectionText,
-                    color: _liveConnectionActive
-                        ? AppColors.primary
-                        : AppColors.mutedForeground,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => context.router.push(
-                        TransferListRoute(
-                          eventId: event.id,
-                          eventTitle: event.title,
-                          filter: TransferListFilter.all,
-                        ),
-                      ),
-                      child: Text('All ${eventItems.length}'),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => context.router.push(
-                        TransferListRoute(
-                          eventId: event.id,
-                          eventTitle: event.title,
-                          filter: TransferListFilter.uploaded,
-                        ),
-                      ),
-                      child: Text(
-                        'Uploaded ${eventItems.where((item) => item.isUploaded).length}',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => context.router.push(
-                        TransferListRoute(
-                          eventId: event.id,
-                          eventTitle: event.title,
-                          filter: TransferListFilter.notUploaded,
-                        ),
-                      ),
-                      child: Text(
-                        'Pending ${eventItems.where((item) => !item.isUploaded).length}',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (recentItems.isNotEmpty) ...[
-                Text(
-                  'Recent transfers',
-                  style: Theme.of(context).textTheme.labelMedium,
-                ),
-                const SizedBox(height: 6),
-              ],
-              if (recentItems.isEmpty)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 22),
-                  alignment: Alignment.center,
-                  child: Text(
-                    eventItems.isEmpty
-                        ? 'New camera photos will appear here in real time.'
-                        : 'No photos in this filter.',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                )
-              else
-                SizedBox(
-                  height: listHeight.toDouble(),
-                  child: ListView.separated(
-                    itemCount: recentItems.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) => KeyedSubtree(
-                      key: ValueKey(recentItems[index].id),
-                      child: _transferRow(recentItems[index]),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _transferRow(TransferLedgerItem item) {
-    return SizedBox(
-      height: 77,
-      child: Row(
-        children: [
-          _transferThumbnail(item),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.filename,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  [
-                    _transferStatusLabel(item.status),
-                    if (item.cameraId?.isNotEmpty == true) item.cameraId!,
-                    item.source,
-                    _transferCategoryLabel(item),
-                    _formatTransferTime(item.updatedAt),
-                    if (item.status == TransferLedgerStatus.uploading &&
-                        item.bytesPerSecond > 0)
-                      _formatTransferRate(item.bytesPerSecond),
-                  ].join('  -  '),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                if (item.error != null && item.error!.isNotEmpty)
-                  Text(
-                    item.error!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          _transferStatusWidget(item),
-        ],
-      ),
-    );
-  }
-
-  Widget _transferThumbnail(TransferLedgerItem item) {
-    Widget fallback() => Container(
-      height: 58,
-      width: 58,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: const Icon(Icons.image_outlined),
-    );
-
-    final lower = item.filename.toLowerCase();
-    final previewable = const [
-      '.jpg',
-      '.jpeg',
-      '.png',
-      '.webp',
-    ].any(lower.endsWith);
-    if (previewable && item.localPath != null) {
-      final file = File(item.localPath!);
-      if (file.existsSync()) {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Image.file(
-            file,
-            height: 58,
-            width: 58,
-            fit: BoxFit.cover,
-            cacheHeight: 180,
-            errorBuilder: (_, _, _) => fallback(),
-          ),
-        );
-      }
-    }
-    if (previewable && item.imageUrl?.isNotEmpty == true) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Image.network(
-          item.imageUrl!,
-          height: 58,
-          width: 58,
-          fit: BoxFit.cover,
-          cacheHeight: 180,
-          errorBuilder: (_, _, _) => fallback(),
-        ),
-      );
-    }
-    return fallback();
-  }
-
-  Widget _transferStatusWidget(TransferLedgerItem item) {
-    if (item.status == TransferLedgerStatus.delivered ||
-        item.status == TransferLedgerStatus.published) {
-      return Icon(
-        Icons.check_circle,
-        color: Theme.of(context).colorScheme.primary,
-      );
-    }
-    if (item.status == TransferLedgerStatus.failed) {
-      return IconButton(
-        tooltip: 'Retry now',
-        onPressed: () => UploadQueueService.retryNow(item.id),
-        icon: Icon(Icons.refresh, color: Theme.of(context).colorScheme.error),
-      );
-    }
-    final value =
-        item.status == TransferLedgerStatus.uploading && item.progress > 0
-        ? item.progress / 100
-        : null;
-    return SizedBox(
-      height: 27,
-      width: 27,
-      child: CircularProgressIndicator(value: value, strokeWidth: 2.6),
-    );
-  }
-
-  String _transferCategoryLabel(TransferLedgerItem item) {
-    final albumId = item.albumId;
-    if (albumId == null || albumId.isEmpty) return 'All categories';
-    for (final album in _albums) {
-      if (album.id == albumId) return album.title;
-    }
-    return 'Assigned category';
-  }
-
-  String _formatTransferTime(int milliseconds) {
-    final time = DateTime.fromMillisecondsSinceEpoch(milliseconds);
-    final hour = time.hour.toString().padLeft(2, '0');
-    final minute = time.minute.toString().padLeft(2, '0');
-    final second = time.second.toString().padLeft(2, '0');
-    return '$hour:$minute:$second';
-  }
-
-  String _formatTransferRate(double bytesPerSecond) {
-    if (bytesPerSecond <= 0) return '';
-    if (bytesPerSecond >= 1024 * 1024) {
-      return '${(bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)} MB/s';
-    }
-    if (bytesPerSecond >= 1024) {
-      return '${(bytesPerSecond / 1024).toStringAsFixed(0)} KB/s';
-    }
-    return '${bytesPerSecond.toStringAsFixed(0)} B/s';
-  }
-
-  String _transferStatusLabel(TransferLedgerStatus status) {
-    switch (status) {
-      case TransferLedgerStatus.detected:
-        return 'Detected';
-      case TransferLedgerStatus.stored:
-        return 'Stored';
-      case TransferLedgerStatus.queued:
-        return 'Queued';
-      case TransferLedgerStatus.uploading:
-        return 'Uploading';
-      case TransferLedgerStatus.processing:
-        return 'Processing';
-      case TransferLedgerStatus.published:
-        return 'Published';
-      case TransferLedgerStatus.delivered:
-        return 'Uploaded';
-      case TransferLedgerStatus.failed:
-        return 'Failed';
-    }
-  }
 
   Widget _uploadSourceTile({
     required IconData icon,
@@ -3777,13 +3861,16 @@ class _UploadPageState extends State<UploadPage> {
     required bool busy,
     required String? status,
     required VoidCallback? onPressed,
+    Widget? configuration,
     VoidCallback? secondaryAction,
+    String startLabel = 'Start auto-upload',
+    String stopLabel = 'Stop auto-upload',
   }) {
     final actionText = active
-        ? 'Stop auto-upload'
+        ? stopLabel
         : busy
         ? 'Connecting…'
-        : 'Start auto-upload';
+        : startLabel;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -3820,6 +3907,10 @@ class _UploadPageState extends State<UploadPage> {
               ),
             ],
           ),
+          if (configuration != null) ...[
+            const SizedBox(height: 12),
+            configuration,
+          ],
           if (status != null && status.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(

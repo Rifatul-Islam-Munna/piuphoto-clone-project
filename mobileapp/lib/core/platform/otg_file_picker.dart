@@ -127,10 +127,17 @@ class OtgFilePicker {
     if (result == null) {
       throw PlatformException(
         code: 'NO_CAMERA_STATUS',
-        message: 'Native wired USB camera diagnostics are unavailable in this app build.',
+        message:
+            'Native wired USB camera diagnostics are unavailable in this app build.',
       );
     }
     return UsbCameraDiagnostics.fromMap(result);
+  }
+
+  /// iOS releases a manual browsing session after selection/import/cancel, so
+  /// simply opening the picker does not leave the camera in transfer mode.
+  static Future<void> releaseCameraImportSession() async {
+    await _channel.invokeMethod<void>('releaseCameraImportSession');
   }
 
   /// Android only. The user explicitly selected this USB accessory after

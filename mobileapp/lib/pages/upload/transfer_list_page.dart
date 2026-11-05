@@ -215,5 +215,6 @@ class TransferListPage extends StatelessWidget {
     TransferLedgerStatus.published => 'Published',
     TransferLedgerStatus.delivered => 'Uploaded',
     TransferLedgerStatus.failed => 'Failed',
+    TransferLedgerStatus.cancelled => 'Cancelled',
   };
 }

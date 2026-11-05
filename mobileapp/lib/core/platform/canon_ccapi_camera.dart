@@ -22,6 +22,13 @@ class CanonCcapiCamera {
   final Uri origin;
   final String version;
   final Dio _dio;
+  final CancelToken _cancelToken = CancelToken();
+  final Map<String, CanonCcapiContent> _pending = {};
+  final Set<String> _acknowledged = {};
+  Future<List<CanonCcapiContent>>? _pollInFlight;
+  bool _closed = false;
+
+  bool get isClosed => _closed;
 
   String get sourceUrl => origin.toString();
 
@@ -84,7 +91,10 @@ class CanonCcapiCamera {
           dio: dio,
         );
         try {
-          final response = await dio.getUri(camera._eventUri);
+          final response = await dio.getUri(
+            camera._eventUri,
+            cancelToken: camera._cancelToken,
+          );
           if (response.statusCode == null ||
               response.statusCode! < 200 ||
               response.statusCode! >= 300) {
@@ -99,49 +109,100 @@ class CanonCcapiCamera {
             }
           }
           if (data is Map || data is List) {
+            // This discovery request consumes the camera event queue too.
+            // Keep any shot it announced for the first live poll.
+            camera._rememberContents(data);
             return camera;
           }
         } catch (_) {}
       }
+      dio.close(force: true);
     }
     return null;
   }
 
-  Future<List<CanonCcapiContent>> pollAddedContents() async {
-    final response = await _dio.getUri(_eventUri);
-    if (response.statusCode == null ||
-        response.statusCode! < 200 ||
-        response.statusCode! >= 300) {
-      return const [];
+  /// Added-content events are destructive reads on the camera. Retain them
+  /// until the caller confirms that the photo was saved to its local queue.
+  Future<List<CanonCcapiContent>> pollAddedContents() {
+    if (_closed) {
+      return Future.error(StateError('The camera connection is closed'));
     }
+    final existing = _pollInFlight;
+    if (existing != null) return existing;
+    late final Future<List<CanonCcapiContent>> operation;
+    operation = _poll().whenComplete(() {
+      if (identical(_pollInFlight, operation)) _pollInFlight = null;
+    });
+    _pollInFlight = operation;
+    return operation;
+  }
 
-    dynamic data = response.data;
-    if (data is String) {
-      try {
-        data = jsonDecode(data);
-      } catch (_) {
-        return const [];
+  Future<List<CanonCcapiContent>> _poll() async {
+    try {
+      final response = await _dio.getUri(_eventUri, cancelToken: _cancelToken);
+      if (_closed) throw StateError('The camera connection is closed');
+      if (response.statusCode == null ||
+          response.statusCode! < 200 ||
+          response.statusCode! >= 300) {
+        throw StateError('Camera event polling is temporarily unavailable');
       }
+      dynamic data = response.data;
+      if (data is String) data = jsonDecode(data);
+      if (data is! Map && data is! List) {
+        throw const FormatException('Invalid camera event response');
+      }
+      _rememberContents(data);
+    } catch (_) {
+      if (_closed || _pending.isEmpty) rethrow;
+      // Already-received announcements remain actionable during a transient
+      // polling failure. A failed download is also left pending for retry.
     }
+    return List<CanonCcapiContent>.unmodifiable(_pending.values);
+  }
 
+  void _rememberContents(dynamic data) {
     final candidates = <String>[];
     _collectAddedContent(data, candidates, insideAddedContents: false);
-    if (candidates.isEmpty) return const [];
-
-    final contents = <CanonCcapiContent>[];
-    final seen = <String>{};
     for (final raw in candidates) {
-      final uri = Uri.tryParse(raw);
-      final resolved = uri != null && uri.hasScheme ? uri : origin.resolve(raw);
+      final Uri resolved;
+      try {
+        final uri = Uri.tryParse(raw);
+        resolved = uri != null && uri.hasScheme ? uri : origin.resolve(raw);
+      } on FormatException {
+        continue;
+      }
+      // Credentials belong to this camera. Never follow an event URL to a
+      // different server (or forward its Authorization header there).
+      if (resolved.scheme != origin.scheme ||
+          resolved.host.toLowerCase() != origin.host.toLowerCase() ||
+          resolved.port != origin.port ||
+          resolved.userInfo.isNotEmpty) {
+        continue;
+      }
       if (!_looksLikeCameraImage(resolved.path)) continue;
       final url = resolved.toString();
-      if (!seen.add(url)) continue;
+      if (_acknowledged.contains(url) || _pending.containsKey(url)) continue;
       final name = resolved.pathSegments.isEmpty
           ? 'canon-${DateTime.now().millisecondsSinceEpoch}.jpg'
           : resolved.pathSegments.last;
-      contents.add(CanonCcapiContent(url: url, name: name));
+      _pending[url] = CanonCcapiContent(url: url, name: name);
     }
-    return contents;
+  }
+
+  void acknowledgeContents(Iterable<String> urls) {
+    for (final url in urls) {
+      if (_pending.remove(url) != null) _acknowledged.add(url);
+    }
+  }
+
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    _cancelToken.cancel('Camera receiving stopped');
+    _dio.close(force: true);
+    try {
+      await _pollInFlight;
+    } catch (_) {}
   }
 
   Future<CanonCcapiContent?> pollAddedContent() async {
@@ -150,14 +211,23 @@ class CanonCcapiCamera {
   }
 
   Future<Uint8List?> download(CanonCcapiContent content) async {
+    if (_closed) throw StateError('The camera connection is closed');
     final uri = Uri.tryParse(content.url);
-    if (uri == null) return null;
+    if (uri == null ||
+        uri.scheme != origin.scheme ||
+        uri.host.toLowerCase() != origin.host.toLowerCase() ||
+        uri.port != origin.port ||
+        uri.userInfo.isNotEmpty) {
+      return null;
+    }
     final response = await _dio.get<List<int>>(
       uri.toString(),
       options: Options(
         responseType: ResponseType.bytes,
         receiveTimeout: const Duration(seconds: 60),
+        followRedirects: false,
       ),
+      cancelToken: _cancelToken,
     );
     if (response.statusCode == null ||
         response.statusCode! < 200 ||
@@ -165,6 +235,16 @@ class CanonCcapiCamera {
       return null;
     }
     final bytes = response.data ?? const <int>[];
+    final expectedLength = int.tryParse(
+      response.headers.value('content-length') ?? '',
+    );
+    final encoding = response.headers.value('content-encoding');
+    if (expectedLength != null &&
+        expectedLength >= 0 &&
+        (encoding == null || encoding == 'identity') &&
+        bytes.length != expectedLength) {
+      return null;
+    }
     return bytes.isEmpty ? null : Uint8List.fromList(bytes);
   }
 

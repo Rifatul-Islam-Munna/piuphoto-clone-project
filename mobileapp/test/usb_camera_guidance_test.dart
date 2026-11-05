@@ -13,12 +13,86 @@ void main() {
     expect(android.nextSteps, contains('Allow'));
   });
 
+  test('camera discovery is separate from an active live session', () {
+    final detected = UsbCameraGuidance.forStatus('camera-detected');
+    final live = UsbCameraGuidance.forStatus('live-ready');
+    expect(detected.title, 'Wired camera detected');
+    expect(detected.details, contains('has not opened'));
+    expect(detected.nextSteps, contains('Start Live shooting'));
+    expect(live.title, contains('session is active'));
+    expect(live.nextSteps, contains('test photo'));
+    expect(live.nextSteps, contains('camera shutter'));
+  });
+
+  test('unsupported existing-photo scope preserves the shooting workflow', () {
+    final guidance = UsbCameraGuidance.forStatus(
+      'TETHER_EXISTING_PHOTOS_UNAVAILABLE',
+    );
+    expect(guidance.title, contains('New shots only'));
+    expect(guidance.details, contains('without opening file-import mode'));
+    expect(guidance.nextSteps, contains('stop Live shooting'));
+    expect(guidance.nextSteps, contains('manual upload'));
+  });
+
+  test('undecided iOS authorization offers retry without claiming denial', () {
+    for (final status in [
+      'authorization-pending',
+      'CAMERA_AUTHORIZATION_PENDING',
+    ]) {
+      final guidance = UsbCameraGuidance.forStatus(status);
+      expect(guidance.settingsRequired, isFalse);
+      expect(guidance.details, contains('has not yet granted or denied'));
+      expect(guidance.nextSteps, contains('retry'));
+    }
+  });
+
+  test('iOS restrictions are not presented as an app permission toggle', () {
+    for (final status in [
+      'permission-restricted',
+      'CAMERA_ACCESS_RESTRICTED',
+    ]) {
+      final guidance = UsbCameraGuidance.forStatus(status);
+      expect(guidance.settingsRequired, isFalse);
+      expect(guidance.title, contains('restricted'));
+      expect(guidance.nextSteps, contains('device-management'));
+    }
+  });
+
+  test('an unavailable authorization state does not claim user denial', () {
+    for (final status in [
+      'authorization-unavailable',
+      'CAMERA_AUTHORIZATION_UNAVAILABLE',
+    ]) {
+      final guidance = UsbCameraGuidance.forStatus(status);
+      expect(guidance.settingsRequired, isFalse);
+      expect(guidance.title, contains('could not be checked'));
+      expect(guidance.nextSteps, contains('support report'));
+    }
+  });
+
   test('no camera never claims the cable is definitely disconnected', () {
     final result = UsbCameraGuidance.forStatus('no-camera');
     expect(result.title, contains('No compatible USB camera'));
     expect(result.details, contains('does not prove'));
     expect(result.nextSteps, contains('PTP'));
   });
+
+  test(
+    'unconfirmed camera release requires unplugging without claiming success',
+    () {
+      for (final code in [
+        'PTP_CLOSE_FAILED',
+        'PTP_CLOSE_TIMEOUT',
+        'PTP_CLOSE_PENDING',
+      ]) {
+        final guidance = UsbCameraGuidance.forStatus(code);
+        expect(guidance.title, 'Disconnect USB to release the camera');
+        expect(guidance.details, contains('has not confirmed'));
+        expect(guidance.nextSteps, contains('Unplug the USB cable'));
+        expect(guidance.nextSteps, contains('continue uploading'));
+      }
+    },
+  );
 
   test('separates the camera session from the file catalog', () {
     final session = UsbCameraGuidance.forStatus('session-failed');

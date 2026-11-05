@@ -1,5 +1,7 @@
 # AirPix: USB / OTG camera engineering audit (November 2026)
 
+> This audit describes the stored-photo import implementation. The live physical-shutter workflow, session/event changes and model-specific limitations are documented in [Live USB camera shooting](LIVE_USB_CAMERA_SHOOTING.md). Follow that guide for shooting while connected.
+
 ## Scope
 
 This report covers **only physically connected camera-to-phone transfer through a USB data cable and compatible phone adapter**. The working wireless camera mode must not be modified.

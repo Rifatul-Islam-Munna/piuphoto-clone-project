@@ -56,6 +56,10 @@ class UsbCameraDeviceDiagnostic {
     this.usbVendorId = 0,
     this.usbProductId = 0,
     this.wiredConfirmed = false,
+    this.physicalShutter = 'unknown',
+    this.liveSessionActive = false,
+    this.supportsCapture = false,
+    this.capabilities = const [],
   });
 
   final String name;
@@ -68,6 +72,10 @@ class UsbCameraDeviceDiagnostic {
   final int usbVendorId;
   final int usbProductId;
   final bool wiredConfirmed;
+  final String physicalShutter;
+  final bool liveSessionActive;
+  final bool supportsCapture;
+  final List<String> capabilities;
 
   factory UsbCameraDeviceDiagnostic.fromMap(Map<dynamic, dynamic> data) =>
       UsbCameraDeviceDiagnostic(
@@ -81,6 +89,14 @@ class UsbCameraDeviceDiagnostic {
         usbVendorId: (data['usbVendorId'] as num?)?.toInt() ?? 0,
         usbProductId: (data['usbProductId'] as num?)?.toInt() ?? 0,
         wiredConfirmed: data['wiredConfirmed'] == true,
+        physicalShutter: data['physicalShutter'] == 'supported'
+            ? 'supported'
+            : 'unknown',
+        liveSessionActive: data['liveSessionActive'] == true,
+        supportsCapture: data['supportsCapture'] == true,
+        capabilities: (data['capabilities'] as List<dynamic>? ?? [])
+            .map((value) => value.toString())
+            .toList(growable: false),
       );
 }
 
@@ -94,6 +110,9 @@ class UsbCameraDiagnostics {
     this.usbHostSupported,
     this.usbDevices = const [],
     this.connectionNote = '',
+    this.discoveryOnly = false,
+    this.contentsAuthorization = 'unknown',
+    this.controlAuthorization = 'unknown',
   });
 
   final String status;
@@ -107,7 +126,23 @@ class UsbCameraDiagnostics {
   final List<UsbAttachedDeviceDiagnostic> usbDevices;
   final String connectionNote;
 
-  bool get canImport => status == 'ready' && totalImages > 0;
+  /// True when this report contains discovery information only. Diagnostics
+  /// never open a camera session; an existing owner may expose a catalog snapshot.
+  final bool discoveryOnly;
+  final String contentsAuthorization;
+  final String controlAuthorization;
+
+  /// Readable stored photos do not imply that the camera can keep shooting.
+  /// Manual import must also remain unavailable while live capture owns it.
+  bool get canImport =>
+      !discoveryOnly &&
+      status == 'ready' &&
+      totalImages > 0 &&
+      !cameras.any((camera) => camera.liveSessionActive) &&
+      cameras.any(
+        (camera) =>
+            camera.sessionOpen && camera.catalogReady && camera.imageCount > 0,
+      );
 
   factory UsbCameraDiagnostics.fromMap(Map<dynamic, dynamic> data) =>
       UsbCameraDiagnostics(
@@ -127,6 +162,11 @@ class UsbCameraDiagnostics {
             .map(UsbAttachedDeviceDiagnostic.fromMap)
             .toList(growable: false),
         connectionNote: data['connectionNote']?.toString() ?? '',
+        discoveryOnly: data['discoveryOnly'] == true,
+        contentsAuthorization:
+            data['contentsAuthorization']?.toString() ?? 'unknown',
+        controlAuthorization:
+            data['controlAuthorization']?.toString() ?? 'unknown',
       );
 
   String toSupportReport() {
@@ -134,7 +174,14 @@ class UsbCameraDiagnostics {
       ..writeln('AirPix wired camera diagnostics')
       ..writeln('Status: $status')
       ..writeln('Message: $message')
-      ..writeln('Image count: $totalImages')
+      ..writeln('Discovery only: $discoveryOnly')
+      ..writeln('Contents authorization: $contentsAuthorization')
+      ..writeln('Control authorization: $controlAuthorization')
+      ..writeln(
+        discoveryOnly
+            ? 'Image count: Not inspected (discovery only)'
+            : 'Image count: $totalImages',
+      )
       ..writeln('Can enumerate all USB accessories: $usbEnumerationAvailable')
       ..writeln(
         'USB host supported: ${usbHostSupported ?? "Unavailable on iOS"}',
@@ -153,19 +200,36 @@ class UsbCameraDiagnostics {
         ..writeln('Possible camera: ${device.cameraCandidate}');
     }
     for (final camera in cameras) {
+      final catalogInspected = !discoveryOnly && camera.sessionOpen;
       buffer
         ..writeln('Camera: ${camera.name}')
         ..writeln('USB session open: ${camera.sessionOpen}')
-        ..writeln('Catalog ready: ${camera.catalogReady}')
-        ..writeln('Catalog progress: ${camera.catalogProgress}%')
-        ..writeln('Readable images: ${camera.imageCount}')
+        ..writeln(
+          catalogInspected
+              ? 'Catalog ready: ${camera.catalogReady}'
+              : 'Catalog ready: Not inspected',
+        )
+        ..writeln(
+          catalogInspected
+              ? 'Catalog progress: ${camera.catalogProgress}%'
+              : 'Catalog progress: Not inspected',
+        )
+        ..writeln(
+          catalogInspected
+              ? 'Readable images: ${camera.imageCount}'
+              : 'Readable images: Not inspected',
+        )
         ..writeln(
           'Session error: ${camera.sessionError.isEmpty ? "None" : camera.sessionError}',
         )
         ..writeln('Camera transport: ${camera.transportType}')
         ..writeln('Confirmed wired USB camera: ${camera.wiredConfirmed}')
         ..writeln('Camera USB VID: ${camera.usbVendorId}')
-        ..writeln('Camera USB PID: ${camera.usbProductId}');
+        ..writeln('Camera USB PID: ${camera.usbProductId}')
+        ..writeln('Physical shutter while connected: ${camera.physicalShutter}')
+        ..writeln('Live session active: ${camera.liveSessionActive}')
+        ..writeln('App-triggered capture advertised: ${camera.supportsCapture}')
+        ..writeln('Capabilities: ${camera.capabilities.join(", ")}');
     }
     return buffer.toString();
   }

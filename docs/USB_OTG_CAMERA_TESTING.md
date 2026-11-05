@@ -1,5 +1,7 @@
 # AirPix wired USB / OTG camera validation
 
+> This guide covers manual import of photos already on the camera. For taking new photos on the physical camera and uploading them automatically while USB stays connected, see [Live USB camera shooting](LIVE_USB_CAMERA_SHOOTING.md). File-transfer mode alone does not establish live-shooting support.
+
 ## Separate photo sources (do not conflate them)
 
 - **Connected camera (USB / OTG)**: reads directly from a compatible USB PTP/MTP camera over native iOS ImageCaptureCore or Android USB Host/MTP. It does not read photos from the phone's built-in camera or gallery.

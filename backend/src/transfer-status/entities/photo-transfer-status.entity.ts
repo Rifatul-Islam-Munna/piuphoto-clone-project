@@ -10,6 +10,7 @@ export enum PhotoTransferState {
   PUBLISHED = 'published',
   DELIVERED = 'delivered',
   FAILED = 'failed',
+  CANCELLED = 'cancelled',
 }
 
 export type PhotoTransferStatusDocument = HydratedDocument<PhotoTransferStatus>;
