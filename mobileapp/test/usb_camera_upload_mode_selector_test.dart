@@ -26,7 +26,7 @@ void main() {
       expect(find.text('New shots only'), findsOneWidget);
       expect(find.text('Existing photos + new shots'), findsOneWidget);
       expect(
-        find.text('Upload only photos taken after the camera is ready.'),
+        find.text('Default — upload photos taken after the session is ready.'),
         findsOneWidget,
       );
 
@@ -54,7 +54,7 @@ void main() {
     );
 
     expect(
-      find.text('Stop live shooting to change which photos upload.'),
+      find.text('Stop the current USB session to change this setting.'),
       findsOneWidget,
     );
     expect(

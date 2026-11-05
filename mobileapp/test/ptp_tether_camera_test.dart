@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobileapp/core/platform/live_camera_types.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/platform/ptp_tether_camera.dart';
+import 'package:mobileapp/core/platform/ptp_tether_codec.dart';
 import 'package:mobileapp/core/platform/ptp_tether_link.dart';
 
 void main() {
@@ -804,7 +805,6 @@ void main() {
     );
 
     for (final (vendor, brand, mode) in [
-      (0x04cb, 'Fujifilm', 'USB TETHER SHOOTING AUTO'),
       (0x04da, 'Panasonic / LUMIX', 'PC(Tether)'),
       (0x33a2, 'OM SYSTEM / Olympus', 'PC-control tether adapter'),
       (0x25fb, 'Pentax / Ricoh', 'PTP/MTP'),
@@ -843,27 +843,75 @@ void main() {
       );
     }
 
-    for (final mode in LiveCameraUploadMode.values) {
-      test(
-        'native shutter support cannot bypass Fuji buffer handling in ${mode.name}',
-        () async {
-          final link = _CameraLink(_Brand.unknown)
-            ..vendorIdOverride = 0x04cb
-            ..physicalShutter = 'supported'
-            ..model = 'X-T5';
-          final camera = _transport(link, uploadMode: mode);
-          addTearDown(link.dispose);
-          await expectLater(
-            camera.start('fuji-native'),
-            _error('TETHER_CAMERA_UNSUPPORTED'),
-          );
-          expect(link.calls.map((call) => call.opcode), [0x1001]);
-          expect(link.downloads, isEmpty);
-          expect(link.closed, contains('fuji-native'));
-          _expectNoCaptureOrLock(link);
-        },
-      );
-    }
+    test(
+      'Fujifilm USB tether mode receives a physical-shutter object event',
+      () async {
+        final link = _CameraLink(_Brand.fuji);
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('fuji');
+          await link.dispose();
+        });
+        final session = await camera.start('fuji');
+        expect(session.name, contains('X-T5'));
+        expect(session.baselineCount, 0);
+        expect(
+          link.calls.map((call) => call.opcode),
+          containsAll([0x1001, 0x1015]),
+        );
+        expect(link.calls.any((call) => call.opcode == 0x1004), isFalse);
+
+        link.objects[77] = const _Photo('FUJI0001.JPG', 12);
+        link.eventsController.add({
+          'sessionId': 'fuji',
+          'type': 'ptpEvent',
+          'data': _usbEvent(0xc004, 77),
+        });
+        await Future<void>.delayed(Duration.zero);
+        final shot = (await camera.pending('fuji')).single;
+        expect(shot.name, 'FUJI0001.JPG');
+        await camera.download('fuji', shot.id);
+        expect(link.downloads.single.handle, 77);
+        expect(link.downloads.single.partialOpcode, isNull);
+        await camera.acknowledge('fuji', [shot.id]);
+        expect(await camera.pending('fuji'), isEmpty);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Fujifilm refuses non-tether USB mode without guessed writes',
+      () async {
+        final link = _CameraLink(_Brand.fuji)..fujiUsbMode = 6;
+        final camera = _transport(link);
+        addTearDown(link.dispose);
+        await expectLater(
+          camera.start('fuji-raw'),
+          _error('TETHER_CAMERA_SETTING_REQUIRED'),
+        );
+        expect(link.calls.map((call) => call.opcode), [0x1001, 0x1015]);
+        expect(link.downloads, isEmpty);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Fujifilm combined old-plus-new scope fails before receiving',
+      () async {
+        final link = _CameraLink(_Brand.fuji);
+        final camera = _transport(
+          link,
+          uploadMode: LiveCameraUploadMode.existingAndNew,
+        );
+        addTearDown(link.dispose);
+        await expectLater(
+          camera.start('fuji-all'),
+          _error('TETHER_EXISTING_PHOTOS_UNAVAILABLE'),
+        );
+        expect(link.calls.map((call) => call.opcode), [0x1001]);
+        expect(link.downloads, isEmpty);
+      },
+    );
 
     test(
       'non-Fuji native shutter support retains the standard card adapter',
@@ -1492,7 +1540,7 @@ void _expectNoCaptureOrLock(_CameraLink link) {
   );
 }
 
-enum _Brand { canon, nikon, sony, unknown }
+enum _Brand { canon, nikon, sony, fuji, unknown }
 
 class _Photo {
   const _Photo(
@@ -1538,6 +1586,7 @@ class _CameraLink implements PtpTetherLink {
         _Brand.canon => 'Canon EOS R8',
         _Brand.nikon => 'Nikon Z6',
         _Brand.sony => 'ILCE-7M4',
+        _Brand.fuji => 'FUJIFILM X-T5',
         _Brand.unknown => 'Unprofiled Camera',
       };
 
@@ -1570,6 +1619,7 @@ class _CameraLink implements PtpTetherLink {
   int sonyPriority = 0;
   int sonyDestination = 17;
   int? sonyMemoryOverride;
+  int fujiUsbMode = 5;
   List<int> sonyDestinationChoices = [1, 16, 17];
   bool acceptPropertyWrites = true;
   Completer<void>? openGate;
@@ -1585,6 +1635,7 @@ class _CameraLink implements PtpTetherLink {
     if (brand == _Brand.canon) ...{0x9110, 0x9114, 0x9115, 0x9116, 0x9117},
     if (brand == _Brand.nikon) ...{0x90c2, 0x90c7, 0x941c},
     if (brand == _Brand.sony) ...{0x9201, 0x9202, 0x9205, 0x9209},
+    if (brand == _Brand.fuji) 0x1015,
   }.difference(unavailableOperations);
 
   void addCard(int handle, _Photo photo, {int storage = 1}) {
@@ -1612,6 +1663,7 @@ class _CameraLink implements PtpTetherLink {
             _Brand.canon => 0x04a9,
             _Brand.nikon => 0x04b0,
             _Brand.sony => 0x054c,
+            _Brand.fuji => 0x04cb,
             _Brand.unknown => 0,
           }),
       physicalShutter: physicalShutter,
@@ -1729,6 +1781,10 @@ class _CameraLink implements PtpTetherLink {
           ..._sonyProperty(0xd222, 4, sonyDestination, sonyDestinationChoices),
           ..._sonyProperty(0xd215, 4, memory, null, writable: false),
         ]);
+      case 0x1015:
+        expect(brand, _Brand.fuji);
+        expect(params, [PtpTetherPropertyCode.fujiUsbMode]);
+        return _ok(_u16(fujiUsbMode));
       case 0x9205:
         if (params.single == 0xd222) {
           final value = ByteData.sublistView(
@@ -1793,20 +1849,22 @@ class _CameraLink implements PtpTetherLink {
       _Brand.canon => 11,
       _Brand.nikon => 10,
       _Brand.sony => 17,
+      _Brand.fuji => 14,
       _Brand.unknown => 0,
     }),
     ..._u16(100),
     0,
     ..._u16(0),
     ..._array16(operations.toList()),
-    ..._array16([0x4002]),
-    ..._array16([]),
+    ..._array16([if (brand == _Brand.fuji) 0xc004 else 0x4002]),
+    ..._array16([if (brand == _Brand.fuji) PtpTetherPropertyCode.fujiUsbMode]),
     ..._array16([0x3801]),
     ..._array16([0x3801]),
     ..._string(switch (brand) {
       _Brand.canon => 'Canon',
       _Brand.nikon => 'Nikon',
       _Brand.sony => 'Sony',
+      _Brand.fuji => 'FUJIFILM',
       _Brand.unknown => 'Unprofiled',
     }),
     ..._string(model),
@@ -1814,6 +1872,14 @@ class _CameraLink implements PtpTetherLink {
     ..._string('TEST-001'),
   ];
 }
+
+Uint8List _usbEvent(int code, int parameter) => Uint8List.fromList([
+  ..._u32(16),
+  ..._u16(4),
+  ..._u16(code),
+  ..._u32(0),
+  ..._u32(parameter),
+]);
 
 List<int> _u16(int value) => [value & 255, (value >> 8) & 255];
 List<int> _u32(int value) => [

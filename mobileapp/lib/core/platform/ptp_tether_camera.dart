@@ -8,7 +8,7 @@ import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/platform/ptp_tether_codec.dart';
 import 'package:mobileapp/core/platform/ptp_tether_link.dart';
 
-enum _TetherFamily { canonEos, nikon, sony, standard }
+enum _TetherFamily { canonEos, nikon, sony, fuji, standard }
 
 class PtpTetherCommandException extends PlatformException {
   PtpTetherCommandException(this.opcode, this.responseCode)
@@ -82,6 +82,7 @@ class _TetherRun {
   final Map<int, int> canonProperties = {};
   final Map<int, List<int>> canonChoices = {};
   Map<int, PtpProperty> sonyProperties = {};
+  int? fujiUsbMode;
   int sonyProtocol = 0;
   int sonySequence = 0;
   int baselineCount = 0;
@@ -296,6 +297,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         _TetherFamily.canonEos => 'Canon EOS',
         _TetherFamily.nikon => 'Nikon',
         _TetherFamily.sony => 'Sony',
+        _TetherFamily.fuji => 'Fujifilm',
         _TetherFamily.standard => 'USB camera',
       };
       return LiveCameraSession(
@@ -337,15 +339,14 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     final name = '${run.info!.manufacturer} ${run.info!.model}'.toLowerCase();
     final vendor = run.connection!.vendorId;
     final extension = run.info!.vendorExtensionId;
-    // Fuji needs full-object reads and an ordered volatile-buffer lifecycle.
-    // A native physical-shutter capability does not establish those transfer
-    // semantics, so it cannot authorize the generic card-file adapter below.
-    // See libgphoto2 issue 653 and library.c's partial-object guard.
-    run.fullObjectOnly =
+    final isFuji =
         vendor == 0x04cb ||
         extension == 14 ||
         name.contains('fujifilm') ||
         name.contains('fuji');
+    // Fuji tether objects are read as complete objects. Do not use the generic
+    // partial-object path for this vendor.
+    run.fullObjectOnly = isFuji;
     if (vendor == 0x04a9 || extension == 11 || name.contains('canon')) {
       run.family = _TetherFamily.canonEos;
       await _prepareCanon(run);
@@ -369,6 +370,9 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         );
       }
       await _prepareSony(run);
+    } else if (isFuji) {
+      run.family = _TetherFamily.fuji;
+      await _prepareFuji(run);
     } else if (!run.fullObjectOnly &&
         run.connection!.physicalShutter == 'supported') {
       run.family = _TetherFamily.standard;
@@ -379,7 +383,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       );
     }
     _checkActive(run);
-    if (run.family != _TetherFamily.sony) {
+    if (run.family != _TetherFamily.sony && run.family != _TetherFamily.fuji) {
       _requireOperations(run, [0x1004, 0x1007, 0x1008, 0x1009]);
       final handles = await _cardHandles(run);
       run.baselineHandles.addAll(handles);
@@ -394,6 +398,53 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     }
   }
 
+  Future<void> _prepareFuji(_TetherRun run) async {
+    if (uploadMode == LiveCameraUploadMode.existingAndNew) {
+      throw PlatformException(
+        code: 'TETHER_EXISTING_PHOTOS_UNAVAILABLE',
+        message:
+            'Fujifilm USB Tether mode receives new shots. Select New shots only '
+            'for live shooting, or stop receiving and use a separate card import '
+            'for older photos.',
+      );
+    }
+    _requireOperations(run, [0x1015, 0x1008, 0x1009]);
+    if (!run.info!.properties.contains(PtpTetherPropertyCode.fujiUsbMode)) {
+      throw PlatformException(
+        code: 'TETHER_MODE_UNSUPPORTED',
+        message:
+            'This Fujifilm connection does not expose its USB tether-mode '
+            'property. Select USB TETHER SHOOTING AUTO/FIXED and reconnect.',
+      );
+    }
+    final mode = await _command(
+      run,
+      PtpTetherOperation.getPropertyValue,
+      params: [PtpTetherPropertyCode.fujiUsbMode],
+    );
+    final value = PtpTetherCodec.decodeValue(4, mode.data);
+    if (value is! int || value != 5) {
+      throw PlatformException(
+        code: 'TETHER_CAMERA_SETTING_REQUIRED',
+        message:
+            'Set the Fujifilm camera USB mode to USB TETHER SHOOTING AUTO/FIXED '
+            'before starting AirPix. Card Reader, RAW conversion and Webcam '
+            'modes are not live-shooting modes.',
+      );
+    }
+    run.fujiUsbMode = value;
+    final events = run.info!.events;
+    if (!events.contains(0xc004) && !events.contains(0x4002)) {
+      throw PlatformException(
+        code: 'TETHER_MODE_UNSUPPORTED',
+        message:
+            'This Fujifilm body did not advertise a new-photo event in its '
+            'current USB tether mode. AirPix will not claim live shooting.',
+      );
+    }
+    run.baselineCount = 0;
+  }
+
   String _unsupportedCameraGuidance(
     _TetherRun run,
     String name,
@@ -403,10 +454,9 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     final model = run.info!.model.trim();
     final identity = model.isEmpty ? 'Connected camera' : model;
     if (run.fullObjectOnly) {
-      return 'Fujifilm camera detected: $identity. This connection needs a '
-          'Fujifilm tether adapter that this build does not yet provide. '
-          'USB TETHER SHOOTING AUTO is the camera shooting mode; USB CARD '
-          'READER is for existing files. Use camera FTP if your model supports it.';
+      return 'Fujifilm camera detected: $identity. Select USB TETHER SHOOTING '
+          'AUTO/FIXED for new-shot transfer. USB CARD READER is for existing '
+          'files; unsupported Fuji modes are rejected instead of locking the body.';
     }
     if (vendor == 0x04da ||
         extension == 28 ||
@@ -928,12 +978,16 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         await _pollNikon(run);
       case _TetherFamily.sony:
         await _refreshSony(run);
+      case _TetherFamily.fuji:
+        break;
       case _TetherFamily.standard:
         break;
     }
     if (run.family != _TetherFamily.sony) {
       final lastScan = run.lastCardScan;
-      if (lastScan == null || _now().difference(lastScan) >= cardScanInterval) {
+      if (run.family != _TetherFamily.fuji &&
+          (lastScan == null ||
+              _now().difference(lastScan) >= cardScanInterval)) {
         final handles = await _cardHandles(run);
         // A previous InvalidObjectHandle can refer to a removed or temporary
         // card entry. Retire that hint only when a subsequent complete scan
@@ -968,16 +1022,18 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         }
         await _tryDiscoverCardPhoto(run, handle);
       }
-      final livePending = run.pending.values
-          .where((photo) => !photo.existing)
-          .length;
-      final existingPending = run.pending.length - livePending;
-      if (livePending == 0 ||
-          (existingPending == 0 && livePending == liveBefore)) {
-        // Fresh shots win this check. A previously pending shot may be waiting
-        // for its own retry; once the old batch drains, let the backlog progress
-        // as well so that one failed live download cannot starve the card.
-        await _discoverExistingBatch(run);
+      if (run.family != _TetherFamily.fuji) {
+        final livePending = run.pending.values
+            .where((photo) => !photo.existing)
+            .length;
+        final existingPending = run.pending.length - livePending;
+        if (livePending == 0 ||
+            (existingPending == 0 && livePending == liveBefore)) {
+          // Fresh shots win this check. A previously pending shot may be waiting
+          // for its own retry; once the old batch drains, let the backlog progress
+          // as well so that one failed live download cannot starve the card.
+          await _discoverExistingBatch(run);
+        }
       }
     }
     if (run.pending.length > before) {

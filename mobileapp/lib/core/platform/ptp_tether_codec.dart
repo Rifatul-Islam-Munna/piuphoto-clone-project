@@ -44,6 +44,7 @@ abstract final class PtpTetherOperation {
 
 abstract final class PtpTetherPropertyCode {
   static const canonCaptureDestination = 0xd11c;
+  static const fujiUsbMode = 0xd16e;
   static const sonyObjectInMemory = 0xd215;
   static const sonyStillImageStoreDestination = 0xd222;
   static const sonyPriorityMode = 0xd25a;
@@ -594,7 +595,7 @@ abstract final class PtpTetherCodec {
 
   static PtpTetherEvent _standardEvent(int code, List<int> params) {
     final kind = switch (code) {
-      0x4002 || 0xc201 => PtpTetherEventKind.objectAdded,
+      0x4002 || 0xc004 || 0xc201 => PtpTetherEventKind.objectAdded,
       0xc101 => PtpTetherEventKind.objectTransfer,
       0x4003 || 0xc202 => PtpTetherEventKind.objectRemoved,
       0x4006 || 0xc203 => PtpTetherEventKind.propertyChanged,

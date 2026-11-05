@@ -28,15 +28,13 @@ class UsbCameraUploadModeSelector extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'USB photo selection',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
+        Text('Transfer mode', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 8),
         _UploadModeOption(
           key: const ValueKey('usb-upload-new-shots-only'),
           title: labelFor(LiveCameraUploadMode.newShotsOnly),
-          description: 'Upload only photos taken after the camera is ready.',
+          description:
+              'Default — upload photos taken after the session is ready.',
           selected: value == LiveCameraUploadMode.newShotsOnly,
           onPressed: enabled
               ? () => onChanged(LiveCameraUploadMode.newShotsOnly)
@@ -47,7 +45,7 @@ class UsbCameraUploadModeSelector extends StatelessWidget {
           key: const ValueKey('usb-upload-existing-and-new'),
           title: labelFor(LiveCameraUploadMode.existingAndNew),
           description:
-              'Upload photos already on the camera and keep uploading each new shot.',
+              'Also import supported photos already on the camera, then keep receiving new shots.',
           selected: value == LiveCameraUploadMode.existingAndNew,
           onPressed: enabled
               ? () => onChanged(LiveCameraUploadMode.existingAndNew)
@@ -58,9 +56,8 @@ class UsbCameraUploadModeSelector extends StatelessWidget {
           isSaving
               ? 'Saving photo selection…'
               : sessionLocked
-              ? 'Stop live shooting to change which photos upload.'
-              : 'Both options upload to your cloud event automatically. '
-                    'Existing photos require card access while shooting.',
+              ? 'Stop the current USB session to change this setting.'
+              : 'This setting is saved for your next USB session. Upload to the cloud remains automatic.',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),

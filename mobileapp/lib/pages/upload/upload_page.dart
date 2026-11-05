@@ -139,8 +139,6 @@ class _UsbCaptureTarget {
   final String? albumId;
 }
 
-enum _UploadMode { quick, auto }
-
 @RoutePage()
 class UploadPage extends StatefulWidget {
   const UploadPage({super.key});
@@ -151,7 +149,6 @@ class UploadPage extends StatefulWidget {
 
 class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   final _picker = ImagePicker();
-  _UploadMode _uploadMode = _UploadMode.quick;
   final Dio _cameraDio = Dio();
   final List<_SelectedUploadFile> _selectedFiles = [];
   Timer? _wirelessTimer;
@@ -604,190 +601,188 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   Future<void> _diagnoseUsbCamera() async {
     try {
       final diagnostic = await _withCameraProgress(
-        'Checking for a connected USB camera…',
+        'Checking USB camera…',
         OtgFilePicker.cameraConnectionDiagnostics(),
       );
       if (!mounted || diagnostic == null) return;
       final guidance = UsbCameraGuidance.forStatus(diagnostic.status);
+      final cameraFound = diagnostic.cameras.isNotEmpty;
+      final cableFound = diagnostic.usbEnumerationAvailable
+          ? diagnostic.usbHostSupported != false &&
+                diagnostic.usbDevices.isNotEmpty
+          : cameraFound;
+      final shutterSupported = diagnostic.cameras.any(
+        (camera) => camera.physicalShutter == 'supported',
+      );
+      final sessionReady =
+          diagnostic.status == 'live-ready' ||
+          diagnostic.cameras.any((camera) => camera.liveSessionActive);
 
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('USB camera connection'),
+          title: const Row(
+            children: [
+              Icon(Icons.usb_rounded),
+              SizedBox(width: 10),
+              Expanded(child: Text('USB camera check')),
+            ],
+          ),
           scrollable: true,
           content: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                guidance.title,
-                style: const TextStyle(fontWeight: FontWeight.w700),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: sessionReady
+                      ? Theme.of(context).colorScheme.primaryContainer
+                      : AppColors.muted,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      guidance.title,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      diagnostic.message,
+                      style: const TextStyle(fontSize: 12, height: 1.35),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 6),
-              Text(diagnostic.message),
+              const SizedBox(height: 14),
+              _usbCheckRow(
+                icon: Icons.cable_rounded,
+                label: 'Cable / adapter',
+                value: cableFound ? 'Detected' : 'Not detected',
+                ok: cableFound,
+              ),
+              _usbCheckRow(
+                icon: Icons.photo_camera_outlined,
+                label: 'Camera',
+                value: cameraFound
+                    ? diagnostic.cameras.first.name
+                    : 'No compatible camera found',
+                ok: cameraFound,
+              ),
+              _usbCheckRow(
+                icon: Icons.camera_alt_outlined,
+                label: 'Physical shutter',
+                value: shutterSupported
+                    ? 'Supported by this connection'
+                    : 'Not confirmed yet',
+                ok: shutterSupported,
+              ),
+              _usbCheckRow(
+                icon: Icons.cloud_upload_outlined,
+                label: 'Live transfer',
+                value: sessionReady
+                    ? 'Ready for new photos'
+                    : 'Start a USB session after fixing the item above',
+                ok: sessionReady,
+              ),
               const SizedBox(height: 12),
-              const Text(
-                'Connection checklist',
-                style: TextStyle(fontWeight: FontWeight.w700),
+              Text(
+                'Next step',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
               ),
-              const SizedBox(height: 6),
-              _usbDiagnosticStep(
-                '1. USB accessory',
-                diagnostic.usbEnumerationAvailable
-                    ? (diagnostic.usbHostSupported == false
-                          ? 'USB host / OTG not supported by this phone'
-                          : diagnostic.usbDevices.isEmpty
-                          ? 'No attached USB peripheral enumerated'
-                          : '${diagnostic.usbDevices.length} USB device(s) detected')
-                    : 'iOS cannot inspect the adapter separately',
+              const SizedBox(height: 4),
+              Text(
+                guidance.nextSteps,
+                style: const TextStyle(fontSize: 12, height: 1.4),
               ),
-              _usbDiagnosticStep(
-                '2. Camera discovered',
-                diagnostic.cameras.isEmpty
-                    ? 'No compatible wired camera found'
-                    : '${diagnostic.cameras.length} camera(s) found',
-              ),
-              _usbDiagnosticStep(
-                '3. Camera session',
-                diagnostic.cameras.any((camera) => camera.sessionOpen)
-                    ? 'Existing session is open'
-                    : diagnostic.discoveryOnly
-                    ? 'Not opened by this check'
-                    : 'Not open',
-              ),
-              _usbDiagnosticStep(
-                '4. Camera photos',
-                diagnostic.discoveryOnly
-                    ? 'Not read by this check'
-                    : diagnostic.totalImages > 0
-                    ? '${diagnostic.totalImages} currently listed'
-                    : diagnostic.status == 'live-ready'
-                    ? 'Waiting for new photos'
-                    : diagnostic.status == 'catalog-loading'
-                    ? 'Catalog still loading'
-                    : 'No compatible photos listed',
-              ),
-              _usbDiagnosticStep(
-                '5. Physical shutter',
-                diagnostic.cameras.any(
-                      (camera) => camera.physicalShutter == 'supported',
-                    )
-                    ? 'Shooting while connected is advertised; verify with a test shot'
-                    : 'Not confirmed. File import does not prove live shooting support',
-              ),
-              if (diagnostic.connectionNote.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  diagnostic.connectionNote,
-                  style: const TextStyle(fontSize: 12),
+              const SizedBox(height: 10),
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(bottom: 8),
+                title: const Text(
+                  'Technical details',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
                 ),
-              ],
-              if (Platform.isIOS) ...[
-                const SizedBox(height: 8),
-                Text('Photo access: ${diagnostic.contentsAuthorization}'),
-                Text(
-                  'Camera control access: ${diagnostic.controlAuthorization}',
+                subtitle: const Text(
+                  'Only needed for troubleshooting or support',
+                  style: TextStyle(fontSize: 11),
                 ),
-              ],
-              if (diagnostic.usbDevices.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Attached USB devices',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                for (final device in diagnostic.usbDevices) ...[
-                  const SizedBox(height: 7),
-                  Text(
-                    device.name,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  Text(
-                    '${device.category} · ${device.usbIdentifier}',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  Text(
-                    device.cameraCandidate
-                        ? (device.hasPermission
-                              ? 'Possible camera; USB permission granted'
-                              : 'Possible camera; USB permission needed')
-                        : 'Not identified as a PTP camera',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  if (Platform.isAndroid &&
-                      !device.cameraCandidate &&
-                      device.category.startsWith('Other USB'))
+                children: [
+                  if (diagnostic.connectionNote.isNotEmpty)
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        icon: const Icon(Icons.usb_outlined),
-                        label: const Text('Try as PTP camera'),
-                        onPressed: () async {
-                          try {
-                            await OtgFilePicker.useUsbDeviceAsCamera(device.id);
-                            if (dialogContext.mounted) {
-                              Navigator.pop(dialogContext);
-                            }
-                            if (mounted) unawaited(_pickOtgFiles());
-                          } on PlatformException catch (error) {
-                            AppToast.error(
-                              UsbCameraGuidance.forStatus(
-                                error.code,
-                                message: error.message,
-                              ).details,
-                            );
-                          }
-                        },
+                      child: Text(
+                        diagnostic.connectionNote,
+                        style: const TextStyle(fontSize: 11),
                       ),
                     ),
+                  if (Platform.isIOS) ...[
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Photo access: ${diagnostic.contentsAuthorization}',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Camera control: ${diagnostic.controlAuthorization}',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ),
+                  ],
+                  for (final camera in diagnostic.cameras) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '${camera.name} · ${camera.transportType.isEmpty ? "camera transport" : camera.transportType}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Session ${camera.sessionOpen ? "open" : "closed"} · '
+                        'Live ${camera.liveSessionActive ? "active" : "stopped"} · '
+                        '${camera.imageCount} images listed',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ),
+                    if (camera.sessionError.isNotEmpty)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          camera.sessionError,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                      ),
+                  ],
+                  if (diagnostic.usbDevices.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    for (final device in diagnostic.usbDevices)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '${device.name} · ${device.usbIdentifier}',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      ),
+                  ],
                 ],
-              ],
-              const SizedBox(height: 12),
-              Text('What to do: ${guidance.nextSteps}'),
-              const SizedBox(height: 10),
-              for (final camera in diagnostic.cameras) ...[
-                const Divider(),
-                Text(
-                  camera.name,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                Text(
-                  'USB session: ${camera.sessionOpen ? "Open" : "Not open"}',
-                ),
-                Text(
-                  'Photo index: ${!camera.sessionOpen
-                      ? "Not read by this check"
-                      : camera.catalogReady
-                      ? "Ready"
-                      : "${camera.catalogProgress}% loaded"}',
-                ),
-                if (camera.sessionOpen)
-                  Text('Supported images listed: ${camera.imageCount}'),
-                Text(
-                  'Live session: ${camera.liveSessionActive ? "Active" : "Stopped"}',
-                ),
-                if (camera.transportType.isNotEmpty)
-                  Text('Transport: ${camera.transportType}'),
-                if (Platform.isIOS)
-                  Text(
-                    camera.wiredConfirmed
-                        ? 'Wired USB transport identified'
-                        : 'USB transport not independently confirmed',
-                  ),
-                if (camera.sessionError.isNotEmpty)
-                  Text(
-                    'Session error: ${camera.sessionError}',
-                    style: const TextStyle(color: Colors.redAccent),
-                  ),
-              ],
-              if (diagnostic.cameras.isEmpty) ...[
-                const Text(
-                  'Use a USB data cable and the camera model’s supported tethered-shooting mode for Live shooting. PTP / Photo Transfer may be limited to importing stored photos on some cameras.',
-                ),
-              ],
-              const SizedBox(height: 8),
-              const Text(
-                'Phone gallery photos are not counted. This only checks the wired camera.',
-                style: TextStyle(fontSize: 12),
               ),
             ],
           ),
@@ -797,89 +792,114 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 await Clipboard.setData(
                   ClipboardData(text: diagnostic.toSupportReport()),
                 );
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-                AppToast.success('Camera diagnostics copied');
+                AppToast.success('USB report copied');
               },
-              icon: const Icon(Icons.copy_outlined),
+              icon: const Icon(Icons.copy_outlined, size: 18),
               label: const Text('Copy report'),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Done'),
+              child: const Text('Close'),
             ),
           ],
         ),
       );
     } on MissingPluginException {
-      AppToast.error('USB diagnostics require a freshly rebuilt app.');
+      AppToast.error('USB camera check needs a freshly rebuilt app.');
     } on PlatformException catch (error) {
-      AppToast.error(error.message ?? 'Unable to check USB camera connection.');
+      AppToast.error(error.message ?? 'Could not check the USB camera.');
     } catch (error) {
       debugPrint('USB diagnostic failed: $error');
-      AppToast.error('Could not check USB camera connection.');
+      AppToast.error('Could not check the USB camera.');
     }
   }
 
-  Widget _usbDiagnosticStep(String title, String details) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 3),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 155,
-          child: Text(
-            title,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+  Widget _usbCheckRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    required bool ok,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            ok ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+            size: 18,
+            color: ok ? colorScheme.primary : AppColors.mutedForeground,
           ),
-        ),
-        Expanded(child: Text(details, style: const TextStyle(fontSize: 12))),
-      ],
-    ),
-  );
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.mutedForeground,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _showLiveCameraSetup() => showDialog<void>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: const Text('Camera screen black or shutter locked?'),
+      title: const Text('Keep the camera ready to shoot'),
       scrollable: true,
       content: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            'A USB file-transfer connection can put a camera into playback '
-            'or transfer-only mode. Reading the card does not mean the camera '
-            'can keep taking photos.',
+            'AirPix live USB uses the camera shooting/tether connection, not a normal card-reader workflow.',
+            style: TextStyle(fontWeight: FontWeight.w700),
           ),
-          SizedBox(height: 14),
-          Text('1. Stop the live session and disconnect the USB cable.'),
-          SizedBox(height: 8),
+          SizedBox(height: 12),
+          Text('1. On the camera, choose its shooting USB mode.'),
+          SizedBox(height: 5),
           Text(
-            '2. Check your camera manual for shooting while connected. '
-            'The option may be called PC Remote, Remote Shooting or USB '
-            'Tether Shooting. Do not choose Mass Storage, Card Reader or '
-            'USB Streaming for this photo workflow.',
+            'Look for PC Remote, Remote Shooting or USB Tether Shooting. Avoid Mass Storage, Card Reader and USB Streaming.',
+            style: TextStyle(fontSize: 12),
           ),
-          SizedBox(height: 8),
+          SizedBox(height: 10),
+          Text('2. Connect the data cable, then tap Connect & start.'),
+          SizedBox(height: 10),
           Text(
-            '3. Reconnect, start Live shooting, wait for the photo index to '
-            'finish, then press the shutter on the camera. Keep this app '
-            'open. A successful new shot will appear in the transfer list.',
+            '3. Wait for Ready, then keep using the camera shutter normally.',
           ),
-          SizedBox(height: 14),
+          SizedBox(height: 5),
           Text(
-            'AirPix sets up supported Canon EOS, Nikon and Sony shooting '
-            'connections automatically. On Sony, choose Camera priority and '
-            'PC + Camera for still-image storage. If the shutter stays locked, use Test '
-            'wired camera connection and copy the report with your exact '
-            'camera model, phone model and selected USB mode.',
+            'Each received new photo is added to the AirPix transfer queue and starts uploading automatically.',
+            style: TextStyle(fontSize: 12),
+          ),
+          SizedBox(height: 12),
+          Text(
+            'AirPix has dedicated live-shooting handling for supported Canon EOS, Nikon, Sony and Fujifilm connections. Exact camera behavior still depends on the model and firmware.',
+            style: TextStyle(fontSize: 12),
           ),
         ],
       ),
       actions: [
         FilledButton(
           onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Got it'),
+          child: const Text('Done'),
         ),
       ],
     ),
@@ -3233,250 +3253,140 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
               ],
 
               AppSectionTitle(
-                title: 'Choose upload method',
-                actionLabel: _uploadMode == _UploadMode.quick
-                    ? 'Manual'
-                    : 'Automatic',
+                title: 'Camera upload',
+                actionLabel: _liveConnectionActive ? 'Live' : 'Ready',
               ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: SegmentedButton<_UploadMode>(
-                  segments: const [
-                    ButtonSegment(
-                      value: _UploadMode.quick,
-                      icon: Icon(Icons.add_photo_alternate_outlined, size: 18),
-                      label: Text('Add photos'),
-                    ),
-                    ButtonSegment(
-                      value: _UploadMode.auto,
-                      icon: Icon(Icons.sync_rounded, size: 18),
-                      label: Text('Auto sync'),
-                    ),
-                  ],
-                  selected: {_uploadMode},
-                  showSelectedIcon: false,
-                  style: ButtonStyle(
-                    minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
-                    shape: WidgetStatePropertyAll(
-                      RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                    ),
-                    side: const WidgetStatePropertyAll(
-                      BorderSide(color: AppColors.border),
-                    ),
-                    textStyle: const WidgetStatePropertyAll(
-                      TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  onSelectionChanged: _uploading
-                      ? null
-                      : (selection) =>
-                            _safeSetState(() => _uploadMode = selection.first),
+              const SizedBox(height: 4),
+              const Text(
+                'Connect your camera, start the session once, then keep shooting. New photos upload automatically.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.mutedForeground,
                 ),
               ),
               const SizedBox(height: 12),
-
-              // ── Add photos once ──
-              if (_uploadMode == _UploadMode.quick)
-                Card(
-                  margin: EdgeInsets.zero,
-                  child: Column(
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final usbCard = _cameraConnectionCard(
+                    icon: Icons.usb_rounded,
+                    title: 'USB / OTG',
+                    badge: 'Recommended',
+                    subtitle:
+                        'Connect by cable. Press the camera shutter and each new photo uploads automatically.',
+                    detail: _usbUploadMode == LiveCameraUploadMode.newShotsOnly
+                        ? 'New shots upload automatically'
+                        : 'Existing + new photos upload',
+                    active: _otgImporting,
+                    busy: _otgBusy || _otgStarting || _usbStartRequested,
+                    status: _otgStatus,
+                    startLabel: 'Connect & start',
+                    stopLabel: 'Stop session',
+                    onPressed:
+                        activeEvent == null || _uploading || _usbModeSaving
+                        ? null
+                        : () => _toggleOtgAutoUpload(activeEvent),
+                    onMenu: _showUsbCameraOptions,
+                  );
+                  final wirelessCard = _cameraConnectionCard(
+                    icon: Icons.wifi_tethering_rounded,
+                    title: 'Wireless',
+                    subtitle:
+                        'Use camera Wi-Fi or FTP. Start once and keep shooting while AirPix receives photos.',
+                    detail: 'New shots upload automatically',
+                    active: _wirelessImporting,
+                    busy: _wirelessBusy || _wirelessScanning,
+                    status: _wirelessStatus,
+                    startLabel: 'Start wireless',
+                    stopLabel: 'Stop session',
+                    onPressed:
+                        activeEvent == null || _uploading || _usbStartRequested
+                        ? null
+                        : () => _toggleWirelessAutoUpload(activeEvent),
+                    onMenu: _showWirelessCameraOptions,
+                  );
+                  if (constraints.maxWidth < 460) {
+                    return Column(
+                      children: [
+                        usbCard,
+                        const SizedBox(height: 10),
+                        wirelessCard,
+                      ],
+                    );
+                  }
+                  return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 14, 16, 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Add photos once',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                            SizedBox(height: 3),
-                            Text(
-                              'Choose existing photos now, then tap Upload to active event.',
-                              style: TextStyle(fontSize: 12),
-                            ),
-                          ],
-                        ),
-                      ),
-                      _uploadSourceTile(
-                        icon: Icons.photo_library_outlined,
-                        title: 'Phone photos',
-                        subtitle: 'Pick existing photos from this phone.',
-                        onTap: _uploading ? null : _pickPhoneImages,
-                      ),
-                      _uploadSourceTile(
-                        icon: Icons.camera_alt_outlined,
-                        title: 'Take a phone photo',
-                        subtitle: 'Open the phone camera and take one photo.',
-                        onTap: _uploading ? null : _pickCameraImage,
-                      ),
-                      _uploadSourceTile(
-                        icon: Icons.usb_outlined,
-                        title: 'Connected camera (USB / OTG)',
-                        subtitle:
-                            'Read directly from a compatible USB/PTP camera. Not iPhone photos.',
-                        onTap: _uploading || _otgBusy || _usbStartRequested
-                            ? null
-                            : _pickOtgFiles,
-                      ),
-                      _uploadSourceTile(
-                        icon: Icons.fact_check_outlined,
-                        title: 'Test USB camera connection',
-                        subtitle:
-                            'Check camera name, cable connection, photo index and file count.',
-                        onTap: _uploading ? null : _diagnoseUsbCamera,
-                      ),
-                      _uploadSourceTile(
-                        icon: Icons.sd_storage_outlined,
-                        title: 'SD card / USB storage (Files)',
-                        subtitle:
-                            'Choose photos from a connected drive under Locations in Files.',
-                        onTap: _uploading ? null : _pickOtgFilesFromFiles,
-                      ),
-                      if (activeEvent != null)
-                        _uploadSourceTile(
-                          icon: Icons.image_outlined,
-                          title: 'Uploaded photos',
-                          subtitle:
-                              'View photos already uploaded to this event.',
-                          onTap: () => context.router.root.push(
-                            const EventImagesRoute(),
-                          ),
-                        ),
+                      Expanded(child: usbCard),
+                      const SizedBox(width: 10),
+                      Expanded(child: wirelessCard),
                     ],
-                  ),
-                ),
-
+                  );
+                },
+              ),
               const SizedBox(height: 10),
-
-              // ── Automatic external-camera upload ──
-              if (_uploadMode == _UploadMode.auto)
-                Card(
-                  margin: EdgeInsets.zero,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 14, 16, 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Camera auto-upload',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'Connect the camera, wait for the ready message, then use its shutter. Each new photo starts uploading to your cloud event automatically. Keep AirPix open while shooting.',
-                              style: TextStyle(fontSize: 12),
-                            ),
-                          ],
-                        ),
-                      ),
-                      _autoUploadTile(
-                        icon: Icons.usb_outlined,
-                        title: 'Live shooting (USB / OTG)',
-                        startLabel: 'Start live shooting',
-                        stopLabel: 'Stop live shooting',
-                        subtitle:
-                            'Automatic photo transfer for compatible Canon EOS, Nikon and Sony cameras. Wait for the ready message, then use the camera shutter.',
-                        flowText:
-                            _usbUploadMode == LiveCameraUploadMode.newShotsOnly
-                            ? 'Camera shutter → automatic cloud upload'
-                            : 'Existing photos + camera shutter → automatic cloud upload',
-                        configuration: UsbCameraUploadModeSelector(
-                          value: _usbUploadMode,
-                          sessionLocked: _usbSessionLocked,
-                          isSaving: _usbModeSaving,
-                          onChanged: (mode) =>
-                              unawaited(_changeUsbUploadMode(mode)),
-                        ),
-                        active: _otgImporting,
-                        busy: _otgBusy || _usbStartRequested,
-                        status: _otgStatus,
-                        onPressed:
-                            activeEvent == null || _uploading || _usbModeSaving
-                            ? null
-                            : () => _toggleOtgAutoUpload(activeEvent),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: TextButton.icon(
-                          onPressed: _showLiveCameraSetup,
-                          icon: const Icon(Icons.help_outline, size: 18),
-                          label: const Text('Camera screen black?'),
-                        ),
-                      ),
+              Card(
+                margin: EdgeInsets.zero,
+                clipBehavior: Clip.antiAlias,
+                child: ExpansionTile(
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+                  childrenPadding: const EdgeInsets.only(bottom: 6),
+                  leading: const Icon(Icons.add_photo_alternate_outlined),
+                  title: const Text(
+                    'Other ways to add photos',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                  subtitle: const Text(
+                    'Phone photos, phone camera, files and gallery watching',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                  children: [
+                    _uploadSourceTile(
+                      icon: Icons.photo_library_outlined,
+                      title: 'Phone photos',
+                      subtitle: 'Choose existing photos from this phone.',
+                      onTap: _uploading ? null : _pickPhoneImages,
+                    ),
+                    _uploadSourceTile(
+                      icon: Icons.camera_alt_outlined,
+                      title: 'Take a phone photo',
+                      subtitle: 'Take one photo with the phone camera.',
+                      onTap: _uploading ? null : _pickCameraImage,
+                    ),
+                    _uploadSourceTile(
+                      icon: Icons.sd_storage_outlined,
+                      title: 'Files / SD card / USB storage',
+                      subtitle: 'Choose stored photos from the Files picker.',
+                      onTap: _uploading ? null : _pickOtgFilesFromFiles,
+                    ),
+                    _uploadSourceTile(
+                      icon: _galleryImporting
+                          ? Icons.stop_circle_outlined
+                          : Icons.phone_android_outlined,
+                      title: _galleryImporting
+                          ? 'Stop watching phone gallery'
+                          : 'Watch phone gallery',
+                      subtitle:
+                          _galleryStatus ??
+                          'Optional: auto-upload new photos saved by this phone.',
+                      onTap:
+                          activeEvent == null ||
+                              _uploading ||
+                              _usbStartRequested
+                          ? null
+                          : () => _togglePhoneAutoUpload(activeEvent),
+                    ),
+                    if (activeEvent != null)
                       _uploadSourceTile(
-                        icon: Icons.fact_check_outlined,
-                        title: 'Test wired camera connection',
-                        subtitle:
-                            'Check the camera session and whether physical-shutter shooting is advertised.',
-                        onTap: _otgBusy || _uploading || _usbStartRequested
-                            ? null
-                            : _diagnoseUsbCamera,
+                        icon: Icons.image_outlined,
+                        title: 'Uploaded photos',
+                        subtitle: 'View photos already uploaded to this event.',
+                        onTap: () =>
+                            context.router.root.push(const EventImagesRoute()),
                       ),
-                      _autoUploadTile(
-                        icon: Icons.wifi_tethering,
-                        title: 'Wireless camera',
-                        subtitle:
-                            'Automatic FTP transfer while you shoot, or an existing camera Wi-Fi feed. Availability depends on the camera.',
-                        flowText: 'Camera shutter → automatic cloud upload',
-                        active: _wirelessImporting,
-                        busy: _wirelessBusy || _wirelessScanning,
-                        status: _wirelessStatus,
-                        onPressed:
-                            activeEvent == null ||
-                                _uploading ||
-                                _usbStartRequested
-                            ? null
-                            : () => _toggleWirelessAutoUpload(activeEvent),
-                        secondaryAction: _wirelessImporting
-                            ? null
-                            : _openWifiSettings,
-                      ),
-                      ExpansionTile(
-                        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-                        title: const Text(
-                          'Phone-only auto-upload',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        subtitle: const Text(
-                          'Only for photos saved by the phone itself. OTG and wireless cameras do not use this.',
-                          style: TextStyle(fontSize: 11),
-                        ),
-                        children: [
-                          _autoUploadTile(
-                            icon: Icons.phone_android_outlined,
-                            title: 'Watch phone gallery',
-                            subtitle:
-                                'Optional: auto-upload new photos that appear in this phone gallery.',
-                            flowText: 'Phone gallery → app → backend',
-                            active: _galleryImporting,
-                            busy: _galleryBusy,
-                            status: _galleryStatus,
-                            onPressed:
-                                activeEvent == null ||
-                                    _uploading ||
-                                    _usbStartRequested
-                                ? null
-                                : () => _togglePhoneAutoUpload(activeEvent),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                  ],
                 ),
-
+              ),
               const SizedBox(height: 10),
-
               // ── Section 3: Upload Queue ──
               ValueListenableBuilder(
                 valueListenable: UploadQueueStorage.items,
@@ -3587,8 +3497,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
 
               const SizedBox(height: 4),
 
-              // ── Enhanced toggle ──
-              if (_uploadMode == _UploadMode.quick)
+              // ── Manual selection controls (only after a secondary method is used) ──
+              if (_selectedFiles.isNotEmpty) ...[
                 SwitchListTile(
                   dense: true,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 4),
@@ -3601,10 +3511,6 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                       ? null
                       : (value) => _safeSetState(() => _isEnhanced = value),
                 ),
-
-              // ── Selected files preview ──
-              if (_uploadMode == _UploadMode.quick &&
-                  _selectedFiles.isNotEmpty) ...[
                 Card(
                   child: ListTile(
                     dense: true,
@@ -3640,16 +3546,15 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 ),
               ],
 
-              if (_uploadMode == _UploadMode.quick &&
-                  _uploadStatus != null) ...[
+              if (_uploadStatus != null && _selectedFiles.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 _statusText(_uploadStatus!),
               ],
 
               const SizedBox(height: 14),
 
-              // ── Upload button ──
-              if (_uploadMode == _UploadMode.quick)
+              // ── Manual upload button appears only after files are selected ──
+              if (_selectedFiles.isNotEmpty)
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -3659,7 +3564,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     icon: const Icon(Icons.cloud_upload_outlined),
                     label: _uploading
                         ? Text('Uploading ${_selectedFiles.length}...')
-                        : const Text('Upload to active event'),
+                        : const Text('Upload selected photos'),
                   ),
                 ),
               const SizedBox(height: 8),
@@ -3799,6 +3704,306 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   bool get _liveConnectionActive =>
       _otgImporting || _wirelessImporting || _galleryImporting;
 
+  Future<void> _showUsbCameraOptions() async {
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'USB / OTG options',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'New shots only is the default. Change this only when you need older camera photos too.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.mutedForeground,
+                ),
+              ),
+              const SizedBox(height: 16),
+              UsbCameraUploadModeSelector(
+                value: _usbUploadMode,
+                sessionLocked: _usbSessionLocked,
+                isSaving: _usbModeSaving,
+                onChanged: (mode) => unawaited(_changeUsbUploadMode(mode)),
+              ),
+              if (_usbSessionLocked) ...[
+                const SizedBox(height: 8),
+                const Text(
+                  'Stop the current USB session before changing the transfer mode.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.mutedForeground,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              const Divider(height: 1),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.fact_check_outlined),
+                title: const Text('Test USB connection'),
+                subtitle: const Text(
+                  'Check whether AirPix can see and communicate with the camera.',
+                ),
+                onTap: _otgBusy || _uploading || _usbStartRequested
+                    ? null
+                    : () {
+                        Navigator.pop(sheetContext);
+                        unawaited(_diagnoseUsbCamera());
+                      },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.help_outline_rounded),
+                title: const Text('Camera setup help'),
+                subtitle: const Text(
+                  'USB tether mode, black-screen and shutter guidance.',
+                ),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_showLiveCameraSetup());
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Import camera photos once'),
+                subtitle: const Text(
+                  'Manually choose stored photos instead of starting a live session.',
+                ),
+                onTap: _uploading || _otgBusy || _usbStartRequested
+                    ? null
+                    : () {
+                        Navigator.pop(sheetContext);
+                        unawaited(_pickOtgFiles());
+                      },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.sd_storage_outlined),
+                title: const Text('Browse Files / SD card'),
+                subtitle: const Text(
+                  'Choose stored photos with the system Files picker.',
+                ),
+                onTap: _uploading
+                    ? null
+                    : () {
+                        Navigator.pop(sheetContext);
+                        unawaited(_pickOtgFilesFromFiles());
+                      },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showWirelessCameraOptions() async {
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Wireless options',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Use your camera Wi-Fi or FTP connection. New received photos upload automatically.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.mutedForeground,
+                ),
+              ),
+              const SizedBox(height: 10),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.wifi_outlined),
+                title: const Text('Open Wi-Fi settings'),
+                subtitle: const Text(
+                  'Connect this phone to the camera network.',
+                ),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_openWifiSettings());
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _cameraConnectionCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required String detail,
+    required bool active,
+    required bool busy,
+    required String? status,
+    required String startLabel,
+    required String stopLabel,
+    required VoidCallback? onPressed,
+    required VoidCallback onMenu,
+    String? badge,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final stateText = active
+        ? 'Connected'
+        : busy
+        ? 'Connecting…'
+        : detail;
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                AppIconTile(
+                  icon: icon,
+                  size: 44,
+                  iconSize: 22,
+                  background: active
+                      ? colorScheme.primaryContainer
+                      : AppColors.cream,
+                  foreground: active
+                      ? colorScheme.onPrimaryContainer
+                      : AppColors.primary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              title,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          if (badge != null) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.cream,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                badge,
+                                style: const TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        stateText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: active
+                              ? colorScheme.primary
+                              : AppColors.mutedForeground,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: '$title options',
+                  onPressed: onMenu,
+                  icon: const Icon(Icons.more_vert_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              subtitle,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: AppColors.mutedForeground,
+              ),
+            ),
+            if (status != null && status.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                status,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: active
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: busy && !active ? null : onPressed,
+                icon: Icon(
+                  active ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                  size: 18,
+                ),
+                label: Text(
+                  active
+                      ? stopLabel
+                      : busy
+                      ? 'Connecting…'
+                      : startLabel,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _uploadSourceTile({
     required IconData icon,
     required String title,
@@ -3849,103 +4054,6 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         ),
       ),
       onTap: onTap,
-    );
-  }
-
-  Widget _autoUploadTile({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required String flowText,
-    required bool active,
-    required bool busy,
-    required String? status,
-    required VoidCallback? onPressed,
-    Widget? configuration,
-    VoidCallback? secondaryAction,
-    String startLabel = 'Start auto-upload',
-    String stopLabel = 'Stop auto-upload',
-  }) {
-    final actionText = active
-        ? stopLabel
-        : busy
-        ? 'Connecting…'
-        : startLabel;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Icon(icon, size: 22),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(subtitle, style: const TextStyle(fontSize: 12)),
-                    const SizedBox(height: 4),
-                    Text(
-                      flowText,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          if (configuration != null) ...[
-            const SizedBox(height: 12),
-            configuration,
-          ],
-          if (status != null && status.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              status,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: active
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: busy && !active ? null : onPressed,
-              icon: Icon(
-                active ? Icons.stop_rounded : Icons.play_arrow_rounded,
-              ),
-              label: Text(actionText),
-            ),
-          ),
-          if (secondaryAction != null) ...[
-            const SizedBox(height: 4),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: secondaryAction,
-                icon: const Icon(Icons.wifi_outlined, size: 16),
-                label: const Text('Open Wi-Fi settings'),
-              ),
-            ),
-          ],
-        ],
-      ),
     );
   }
 
