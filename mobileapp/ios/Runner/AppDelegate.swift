@@ -234,6 +234,9 @@ final class WiredCameraPhotoIndex {
     var startupTimeout: DispatchWorkItem?
     let listenerLease = PtpTetherListenerLease()
     var ptpEventCount = 0
+    var imageCaptureFallbackCount = 0
+    var imageCaptureFallbackProgress: Progress?
+    var imageCaptureFiles: [UInt32: ICCameraFile] = [:]
 
     init(id: String, result: @escaping FlutterResult) {
       self.id = id
@@ -613,6 +616,30 @@ final class WiredCameraPhotoIndex {
     liveEventSink?(payload)
   }
 
+  /// ImageCaptureCore catalogue callbacks are secondary hints only. Dart still
+  /// decides whether a handle is new by running the vendor/raw PTP workflow.
+  private func emitPtpCatalogHint(_ session: PtpTetherSession, file: ICCameraFile) {
+    guard liveEventSessionID == session.id, file.ptpObjectHandle > 0 else { return }
+    session.imageCaptureFiles[file.ptpObjectHandle] = file
+    liveEventSink?([
+      "type": "catalogHint",
+      "sessionId": session.id,
+      "handle": Int64(file.ptpObjectHandle),
+      "name": file.originalFilename ?? file.name ?? "camera-image.jpg",
+      "size": file.fileSize,
+    ] as [String: Any])
+  }
+
+  private func emitPtpCatalogRemoval(_ session: PtpTetherSession, file: ICCameraFile) {
+    guard liveEventSessionID == session.id, file.ptpObjectHandle > 0 else { return }
+    session.imageCaptureFiles[file.ptpObjectHandle] = nil
+    liveEventSink?([
+      "type": "catalogRemoved",
+      "sessionId": session.id,
+      "handle": Int64(file.ptpObjectHandle),
+    ] as [String: Any])
+  }
+
   /// Opens ImageCaptureCore's transport only. The shared camera driver then
   /// identifies supported operations and negotiates its actual tether protocol.
   private func openPtpTetherSession(arguments: [String: Any]?, result: @escaping FlutterResult) {
@@ -847,8 +874,166 @@ final class WiredCameraPhotoIndex {
       // Keep a fully completed in-flight file valid under its original token,
       // even if Stop/disconnect occurred while the final bytes reached disk.
       switch outcome {
-      case .success(let file): result(["path": file.path, "name": file.name, "size": file.size])
-      case .failure(let failure): result(self.ptpFlutterError(failure))
+      case .success(let file):
+        result(["path": file.path, "name": file.name, "size": file.size])
+      case .failure(let failure):
+        guard PtpImageCaptureFallbackPolicy.shouldTry(
+          code: failure.code, handle: handle, expectedSize: Int(size)
+        ), let camera = session.camera,
+           let fallbackFile = self.ptpImageCaptureFallbackFile(
+             session: session,
+             camera: camera,
+             handle: handle,
+             name: name,
+             expectedSize: Int(size)
+           ) else {
+          result(self.ptpFlutterError(failure))
+          return
+        }
+        self.downloadPtpObjectViaImageCapture(
+          session: session,
+          camera: camera,
+          file: fallbackFile,
+          handle: handle,
+          name: name,
+          expectedSize: Int(size),
+          transferID: transferID,
+          originalFailure: failure,
+          result: result
+        )
+      }
+    }
+  }
+
+  private func ptpImageCaptureFallbackFile(
+    session: PtpTetherSession,
+    camera: ICCameraDevice,
+    handle: UInt32,
+    name: String,
+    expectedSize: Int
+  ) -> ICCameraFile? {
+    let safeName = PtpTetherTransport.safeName(name)
+    var candidates: [ICCameraFile] = []
+    if let cached = session.imageCaptureFiles[handle] { candidates.append(cached) }
+    candidates.append(contentsOf: cameraImageFiles(camera).filter { $0.ptpObjectHandle == handle })
+    return candidates.first { file in
+      guard file.ptpObjectHandle == handle else { return false }
+      let fileName = PtpTetherTransport.safeName(
+        file.originalFilename ?? file.name ?? "camera-image.jpg"
+      )
+      guard fileName.caseInsensitiveCompare(safeName) == .orderedSame else { return false }
+      let catalogueSize = Int(file.fileSize)
+      return catalogueSize <= 0 || catalogueSize == expectedSize
+    }
+  }
+
+  private func downloadPtpObjectViaImageCapture(
+    session: PtpTetherSession,
+    camera: ICCameraDevice,
+    file: ICCameraFile,
+    handle: UInt32,
+    name: String,
+    expectedSize: Int,
+    transferID: String,
+    originalFailure: PtpTetherFailure,
+    result: @escaping FlutterResult
+  ) {
+    guard session.imageCaptureFallbackProgress == nil,
+          camera.hasOpenSession,
+          connectedCameras.contains(where: { $0 === camera }),
+          !cameraAccessRestricted.contains(ObjectIdentifier(camera)) else {
+      result(ptpFlutterError(originalFailure))
+      return
+    }
+
+    let filename = PtpTetherTransport.safeName(name)
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("airpix_ptp_fallback", isDirectory: true)
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    do {
+      try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true
+      )
+    } catch {
+      result(ptpFlutterError(originalFailure))
+      return
+    }
+
+    let options: [ICDownloadOption: Any] = [
+      .downloadsDirectoryURL: directory,
+      .saveAsFilename: filename,
+      .overwrite: true,
+      .deleteAfterSuccessfulDownload: false,
+    ]
+    var completed = false
+    let finish: (Any) -> Void = { payload in
+      guard !completed else { return }
+      completed = true
+      session.imageCaptureFallbackProgress = nil
+      result(payload)
+    }
+    let timeout = DispatchWorkItem { [weak self, weak session] in
+      guard let self, let session, !completed else { return }
+      session.imageCaptureFallbackProgress?.cancel()
+      session.imageCaptureFallbackProgress = nil
+      try? FileManager.default.removeItem(at: directory)
+      finish(self.ptpFlutterError(originalFailure))
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 120, execute: timeout)
+
+    session.imageCaptureFallbackProgress = file.requestDownload(options: options) {
+      [weak self, weak session] path, error in
+      DispatchQueue.main.async {
+        guard let self, let session, !completed else { return }
+        timeout.cancel()
+        if error != nil {
+          try? FileManager.default.removeItem(at: directory)
+          finish(self.ptpFlutterError(originalFailure))
+          return
+        }
+
+        let returnedURL = path.flatMap { URL(string: $0) }
+        let resolvedPath: String = returnedURL?.isFileURL == true
+          ? (returnedURL?.path ?? "")
+          : (path?.hasPrefix("/") == true
+              ? path!
+              : directory.appendingPathComponent(path ?? filename).path)
+        let fallbackPath = directory.appendingPathComponent(filename).path
+        let exactPath = [resolvedPath, fallbackPath].first { candidate in
+          guard !candidate.isEmpty,
+                let attributes = try? FileManager.default.attributesOfItem(atPath: candidate),
+                let byteCount = (attributes[.size] as? NSNumber)?.intValue else {
+            return false
+          }
+          return byteCount == expectedSize
+        }
+        guard let exactPath else {
+          try? FileManager.default.removeItem(at: directory)
+          finish(self.ptpFlutterError(originalFailure))
+          return
+        }
+
+        let staged = PtpTetherStagedFile(
+          path: exactPath,
+          name: filename,
+          size: expectedSize
+        )
+        self.ptpTetherStaging.save(
+          staged,
+          sessionID: session.id,
+          transferID: transferID,
+          handle: handle
+        )
+        session.imageCaptureFallbackCount += 1
+        if session.imageCaptureFallbackCount == 1 {
+          self.emitPtpTetherEvent(
+            session,
+            type: "status",
+            message: "AirPix recovered this camera photo through the iOS file-transfer fallback; live PTP tethering remains active."
+          )
+        }
+        finish(["path": staged.path, "name": staged.name, "size": staged.size])
       }
     }
   }
@@ -897,6 +1082,8 @@ final class WiredCameraPhotoIndex {
     session.startupTimeout?.cancel()
     session.startupTimeout = nil
     session.transport?.close()
+    session.imageCaptureFallbackProgress?.cancel()
+    session.imageCaptureFallbackProgress = nil
     setScreenAwake(owner: "ptp:\(session.id)", enabled: false)
     if let camera = session.camera {
       releasePtpCameraSession(camera, sessionID: session.id, completion: releaseCompletion)
@@ -2613,21 +2800,40 @@ final class WiredCameraPhotoIndex {
       if let session = self.liveCameraSession, session.camera === device {
         self.armLiveCameraSessionIfReady(session)
       }
+      if let session = self.ptpTetherSession, session.camera === device {
+        // Cache exact framework objects for download fallback only. This never
+        // establishes the live-shot baseline; raw/vendor PTP still owns that.
+        for file in self.cameraImageFiles(device) where file.ptpObjectHandle > 0 {
+          session.imageCaptureFiles[file.ptpObjectHandle] = file
+        }
+        self.emitPtpTetherEvent(session, type: "catalogReady")
+      }
     }
   }
 
   func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {
     DispatchQueue.main.async {
-      guard let session = self.liveCameraSession, session.camera === camera else { return }
-      self.collectLiveCameraFiles(session, files: self.imageFiles(in: items))
+      let files = self.imageFiles(in: items)
+      if let session = self.ptpTetherSession, session.camera === camera,
+         self.isCameraCatalogReady(camera) {
+        files.forEach { self.emitPtpCatalogHint(session, file: $0) }
+      }
+      if let session = self.liveCameraSession, session.camera === camera {
+        self.collectLiveCameraFiles(session, files: files)
+      }
     }
   }
 
   func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {
     DispatchQueue.main.async {
+      let files = self.imageFiles(in: items)
+      if let session = self.ptpTetherSession, session.camera === camera,
+         self.isCameraCatalogReady(camera) {
+        files.forEach { self.emitPtpCatalogRemoval(session, file: $0) }
+      }
       guard let session = self.liveCameraSession, session.camera === camera,
             let index = session.index else { return }
-      for file in self.imageFiles(in: items) {
+      for file in files {
         for (id, pendingFile) in session.files where pendingFile === file {
           session.removedIDs.insert(id)
         }
@@ -2640,8 +2846,14 @@ final class WiredCameraPhotoIndex {
 
   func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {
     DispatchQueue.main.async {
-      guard let session = self.liveCameraSession, session.camera === camera else { return }
-      self.collectLiveCameraFiles(session, files: self.imageFiles(in: items), preserveIdentity: true)
+      let files = self.imageFiles(in: items)
+      if let session = self.ptpTetherSession, session.camera === camera,
+         self.isCameraCatalogReady(camera) {
+        files.forEach { self.emitPtpCatalogHint(session, file: $0) }
+      }
+      if let session = self.liveCameraSession, session.camera === camera {
+        self.collectLiveCameraFiles(session, files: files, preserveIdentity: true)
+      }
     }
   }
 
@@ -2653,8 +2865,14 @@ final class WiredCameraPhotoIndex {
   ) {
     guard error == nil else { return }
     DispatchQueue.main.async {
-      guard let session = self.liveCameraSession, session.camera === camera else { return }
-      self.collectLiveCameraFiles(session, files: self.imageFiles(in: [item]))
+      let files = self.imageFiles(in: [item])
+      if let session = self.ptpTetherSession, session.camera === camera,
+         self.isCameraCatalogReady(camera) {
+        files.forEach { self.emitPtpCatalogHint(session, file: $0) }
+      }
+      if let session = self.liveCameraSession, session.camera === camera {
+        self.collectLiveCameraFiles(session, files: files)
+      }
     }
   }
 

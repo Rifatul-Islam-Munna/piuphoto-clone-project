@@ -161,6 +161,55 @@ class RunnerTests: XCTestCase {
     return Data(bytes)
   }
 
+
+  func testImageCaptureFallbackOnlyCoversSafeObjectReadFailures() {
+    let eligible = [
+      "PTP_OBJECT_NOT_READY",
+      "PTP_INCOMPLETE_FILE",
+      "PTP_FILE_TOO_LARGE",
+    ]
+    for code in eligible {
+      XCTAssertTrue(
+        PtpImageCaptureFallbackPolicy.shouldTry(
+          code: code,
+          handle: 42,
+          expectedSize: 4096
+        )
+      )
+    }
+
+    for code in [
+      "PTP_TRANSPORT_FAILED",
+      "PTP_TETHER_TIMEOUT",
+      "PTP_STAGING_FAILED",
+      "CAMERA_SESSION_ENDED",
+      "PTP_TETHER_BUSY",
+    ] {
+      XCTAssertFalse(
+        PtpImageCaptureFallbackPolicy.shouldTry(
+          code: code,
+          handle: 42,
+          expectedSize: 4096
+        )
+      )
+    }
+
+    XCTAssertFalse(
+      PtpImageCaptureFallbackPolicy.shouldTry(
+        code: "PTP_INCOMPLETE_FILE",
+        handle: 0,
+        expectedSize: 4096
+      )
+    )
+    XCTAssertFalse(
+      PtpImageCaptureFallbackPolicy.shouldTry(
+        code: "PTP_INCOMPLETE_FILE",
+        handle: 42,
+        expectedSize: 0
+      )
+    )
+  }
+
   func testPtpCommandUsesLittleEndianAndLetsImageCaptureCoreAssignTransaction() throws {
     let packet = try PtpTetherCodec.command(opcode: 0x9107, parameters: [0xFFFFC001, 0x100000, 1024])
     XCTAssertEqual(Array(packet), [

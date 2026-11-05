@@ -903,6 +903,36 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
           ).catchError((Object error) => _reportPollError(run, error)),
         );
       }
+    } else if (type == 'catalogHint' ||
+        type == 'catalogRemoved' ||
+        type == 'catalogReady') {
+      // ImageCaptureCore is an iOS-only backup signal. Raw/vendor PTP remains
+      // authoritative; these hints only wake the same reconciliation logic.
+      if (run.ready) {
+        if (type != 'catalogReady' && run.family != _TetherFamily.sony) {
+          final rawHandle = event['handle'];
+          final handle = rawHandle is num ? rawHandle.toInt() : null;
+          if (handle != null && handle > 0 && handle <= 0xffffffff) {
+            _consumeEvent(
+              run,
+              PtpTetherEvent(
+                code: type == 'catalogRemoved' ? 0x4003 : 0x4002,
+                kind: type == 'catalogRemoved'
+                    ? PtpTetherEventKind.objectRemoved
+                    : PtpTetherEventKind.objectAdded,
+                handle: handle,
+                name: event['name']?.toString(),
+                size: (event['size'] as num?)?.toInt(),
+              ),
+            );
+          }
+        }
+        unawaited(
+          _refresh(
+            run,
+          ).catchError((Object error) => _reportPollError(run, error)),
+        );
+      }
     } else if (type == 'error') {
       _emit(
         run,

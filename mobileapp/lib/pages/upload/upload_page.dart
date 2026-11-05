@@ -436,6 +436,17 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   }
 
   Future<void> _pickCameraImage() async {
+    final camera = await Permission.camera.request();
+    if (!camera.isGranted) {
+      if (camera.isPermanentlyDenied) {
+        AppToast.error('Camera access is disabled. Enable it in app settings.');
+        await openAppSettings();
+      } else {
+        AppToast.error('Camera permission is required to take a phone photo.');
+      }
+      return;
+    }
+
     final image = await _picker.pickImage(
       source: ImageSource.camera,
       imageQuality: 92,
@@ -1162,10 +1173,21 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
 
   Future<bool> _requestGalleryPermission() async {
     final photos = await Permission.photos.request();
-    if (photos.isGranted || photos.isLimited) return true;
+    if (photos.isGranted) return true;
+    if (photos.isLimited) {
+      AppToast.error(
+        'Watch phone gallery needs full photo access so new photos can be detected automatically. Manual photo picking still works with limited access.',
+      );
+      return false;
+    }
 
     final storage = await Permission.storage.request();
-    return storage.isGranted;
+    if (storage.isGranted) return true;
+    if (photos.isPermanentlyDenied || storage.isPermanentlyDenied) {
+      AppToast.error('Photo access is disabled. Enable it in app settings.');
+      await openAppSettings();
+    }
+    return false;
   }
 
   Future<List<String>> _uploadFilesBatch(

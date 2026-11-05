@@ -26,8 +26,6 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSLocationWhenInUseUsageDescription</key>
-   <string>AirPix needs location access to provide location-based features while you are using the app.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>AirPix uses camera access to capture photos and communicate with supported external USB/PTP cameras.</string>
 	<key>NSLocalNetworkUsageDescription</key>

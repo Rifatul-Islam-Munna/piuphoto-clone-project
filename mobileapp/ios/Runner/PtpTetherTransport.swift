@@ -19,6 +19,23 @@ struct PtpTetherStagedFile {
   let size: Int
 }
 
+/// ImageCaptureCore is a safety net, never the primary tether protocol. Only
+/// failures that mean "this exact object could not be read through PTP" may
+/// try the framework's file-download API. Transport/session/storage failures
+/// must keep their original error instead of silently changing ownership.
+enum PtpImageCaptureFallbackPolicy {
+  private static let eligibleCodes: Set<String> = [
+    "PTP_OBJECT_NOT_READY",
+    "PTP_INCOMPLETE_FILE",
+    "PTP_FILE_TOO_LARGE",
+  ]
+
+  static func shouldTry(code: String, handle: UInt32, expectedSize: Int) -> Bool {
+    handle > 0 && expectedSize > 0 && expectedSize <= PtpTetherCodec.fileLimit &&
+      eligibleCodes.contains(code)
+  }
+}
+
 /// Main-queue lease for an EventChannel listener. A lost Flutter receiver must
 /// release its native camera, while a quick reattachment invalidates old timers.
 final class PtpTetherListenerLease {

@@ -880,6 +880,84 @@ void main() {
     );
 
     test(
+      'Fujifilm catalogue hint recovers a missed raw ObjectAdded event',
+      () async {
+        final link = _CameraLink(_Brand.fuji);
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('fuji-catalog');
+          await link.dispose();
+        });
+        await camera.start('fuji-catalog');
+
+        link.objects[91] = const _Photo('FUJI0091.JPG', 16);
+        link.eventsController.add({
+          'sessionId': 'fuji-catalog',
+          'type': 'catalogHint',
+          'handle': 91,
+          'name': 'FUJI0091.JPG',
+          'size': 16,
+        });
+        await Future<void>.delayed(Duration.zero);
+
+        final shot = (await camera.pending('fuji-catalog')).single;
+        expect(shot.name, 'FUJI0091.JPG');
+        await camera.download('fuji-catalog', shot.id);
+        expect(link.downloads.single.handle, 91);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'catalog removal hint preserves old pending photo and generations a reused handle',
+      () async {
+        final link = _CameraLink(_Brand.fuji);
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('fuji-reuse');
+          await link.dispose();
+        });
+        await camera.start('fuji-reuse');
+
+        link.objects[92] = const _Photo('FIRST.JPG', 10);
+        link.eventsController.add({
+          'sessionId': 'fuji-reuse',
+          'type': 'catalogHint',
+          'handle': 92,
+          'name': 'FIRST.JPG',
+          'size': 10,
+        });
+        await Future<void>.delayed(Duration.zero);
+        final first = (await camera.pending('fuji-reuse')).single;
+
+        link.eventsController.add({
+          'sessionId': 'fuji-reuse',
+          'type': 'catalogRemoved',
+          'handle': 92,
+        });
+        link.objects[92] = const _Photo('SECOND.JPG', 11);
+        link.eventsController.add({
+          'sessionId': 'fuji-reuse',
+          'type': 'catalogHint',
+          'handle': 92,
+          'name': 'SECOND.JPG',
+          'size': 11,
+        });
+        await Future<void>.delayed(Duration.zero);
+
+        final pending = await camera.pending('fuji-reuse');
+        expect(pending, hasLength(2));
+        expect(pending.map((item) => item.id).toSet(), hasLength(2));
+        expect(
+          pending.map((item) => item.name),
+          containsAll(['FIRST.JPG', 'SECOND.JPG']),
+        );
+        expect(pending.first.id, first.id);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
       'Fujifilm refuses non-tether USB mode without guessed writes',
       () async {
         final link = _CameraLink(_Brand.fuji)..fujiUsbMode = 6;
