@@ -163,30 +163,91 @@ class _CameraTransferPageState extends State<CameraTransferPage> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _showConnectionDetails() async {
+    final builder = widget.connectionDetailsBuilder;
+    if (builder == null || !mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Connection details',
+                style: Theme.of(
+                  sheetContext,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 12),
+              builder(sheetContext),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 78,
+        toolbarHeight: 64,
         actions: [
-          if (widget.onViewHistory != null)
-            IconButton(
-              onPressed: widget.onViewHistory,
-              tooltip: 'All event transfers',
-              icon: const Icon(Icons.history),
-            ),
-          if (widget.onShareGuestQr != null)
-            IconButton(
-              onPressed: widget.onShareGuestQr,
-              tooltip: 'Share guest QR',
-              icon: const Icon(Icons.qr_code_2),
-            ),
+          PopupMenuButton<String>(
+            tooltip: 'More camera transfer actions',
+            onSelected: (value) {
+              switch (value) {
+                case 'details':
+                  _showConnectionDetails();
+                case 'history':
+                  widget.onViewHistory?.call();
+                case 'qr':
+                  widget.onShareGuestQr?.call();
+              }
+            },
+            itemBuilder: (context) => [
+              if (widget.connectionDetailsBuilder != null)
+                const PopupMenuItem(
+                  value: 'details',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.usb_rounded),
+                    title: Text('Connection details'),
+                  ),
+                ),
+              if (widget.onViewHistory != null)
+                const PopupMenuItem(
+                  value: 'history',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.history),
+                    title: Text('Transfer history'),
+                  ),
+                ),
+              if (widget.onShareGuestQr != null)
+                const PopupMenuItem(
+                  value: 'qr',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.qr_code_2),
+                    title: Text('Share guest QR'),
+                  ),
+                ),
+            ],
+            icon: const Icon(Icons.more_vert_rounded),
+          ),
         ],
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('Camera transfers'),
-            const SizedBox(height: 3),
             Text(
               widget.eventTitle,
               maxLines: 1,
@@ -240,10 +301,10 @@ class _CameraTransferPageState extends State<CameraTransferPage> {
                               key: PageStorageKey(
                                 'camera-transfers-${widget.eventId}-$since',
                               ),
-                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+                              padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
                               itemCount: items.isEmpty ? 2 : items.length + 1,
                               separatorBuilder: (_, _) =>
-                                  const SizedBox(height: 16),
+                                  const SizedBox(height: 8),
                               itemBuilder: (context, index) {
                                 if (index == 0) {
                                   return _SessionHeader(
@@ -253,9 +314,6 @@ class _CameraTransferPageState extends State<CameraTransferPage> {
                                     onStop: widget.onStop == null
                                         ? null
                                         : _stop,
-                                    connectionDetails: widget
-                                        .connectionDetailsBuilder
-                                        ?.call(context),
                                   );
                                 }
                                 if (items.isEmpty) {
@@ -290,14 +348,12 @@ class _SessionHeader extends StatelessWidget {
     required this.items,
     required this.stopping,
     required this.onStop,
-    required this.connectionDetails,
   });
 
   final CameraTransferSessionStatus session;
   final List<TransferLedgerItem> items;
   final bool stopping;
   final VoidCallback? onStop;
-  final Widget? connectionDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -307,97 +363,86 @@ class _SessionHeader extends StatelessWidget {
         .where((item) => item.status == TransferLedgerStatus.cancelled)
         .length;
     final pending = items.length - uploaded - cancelled;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: colors.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: colors.outlineVariant),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  if (session.isConnecting || stopping)
-                    const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
-                    )
-                  else
-                    Icon(
-                      session.isActive
-                          ? Icons.camera_alt_outlined
-                          : Icons.link_off,
-                      color: session.isActive
-                          ? colors.primary
-                          : colors.onSurfaceVariant,
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          if (session.isConnecting || stopping)
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            Icon(
+              session.isActive ? Icons.circle : Icons.circle_outlined,
+              size: 12,
+              color: session.isActive
+                  ? colors.primary
+                  : colors.onSurfaceVariant,
+            ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  stopping
+                      ? 'Stopping…'
+                      : session.isActive
+                      ? 'Receiving photos'
+                      : 'Receiving stopped',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 2,
+                  children: [
+                    Text(
+                      '${items.length} received',
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      stopping
-                          ? 'Stopping connection…'
-                          : session.connectionLabel,
-                      style: Theme.of(context).textTheme.titleSmall,
+                    Text(
+                      '$uploaded uploaded',
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                session.message,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              if (onStop != null &&
-                  (session.isActive || session.isConnecting)) ...[
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    onPressed: stopping ? null : onStop,
-                    icon: const Icon(Icons.stop_circle_outlined, size: 20),
-                    label: const Text('Stop receiving'),
-                  ),
+                    Text(
+                      '$pending pending',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    if (cancelled > 0)
+                      Text(
+                        '$cancelled cancelled',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                  ],
                 ),
               ],
-            ],
+            ),
           ),
-        ),
-        if (connectionDetails != null) ...[
-          const SizedBox(height: 12),
-          connectionDetails!,
+          if (onStop != null && (session.isActive || session.isConnecting))
+            TextButton.icon(
+              onPressed: stopping ? null : onStop,
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              ),
+              icon: const Icon(Icons.stop_circle_outlined, size: 18),
+              label: const Text('Stop receiving'),
+            ),
         ],
-        const SizedBox(height: 18),
-        Text(
-          'This session',
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 12,
-          runSpacing: 6,
-          children: [
-            Text('${items.length} received'),
-            Text('$uploaded uploaded'),
-            Text('$pending pending'),
-            if (cancelled > 0) Text('$cancelled cancelled'),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Received photos start uploading to cloud automatically. Tap × while an upload is cancellable.',
-          style: Theme.of(
-            context,
-          ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -411,25 +456,25 @@ class _EmptyTransfers extends StatelessWidget {
   Widget build(BuildContext context) {
     final waiting = session.isActive;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 44),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: Column(
         children: [
           Icon(
             Icons.add_a_photo_outlined,
-            size: 48,
+            size: 32,
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           Text(
             waiting ? 'Waiting for camera photos' : 'No photos received yet',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.titleMedium,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 5),
           Text(
             waiting
-                ? 'Received photos upload to your cloud event automatically. Their previews, filenames, sizes and progress appear here. You can keep taking photos on your camera.'
-                : 'Photos will appear here when your camera connection is ready.',
+                ? 'Keep shooting. New photos appear here and upload automatically.'
+                : 'Photos will appear here when the camera connection is ready.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium,
           ),
@@ -480,140 +525,137 @@ class _TransferPhotoCard extends StatelessWidget {
         : null;
 
     return Container(
-      clipBehavior: Clip.antiAlias,
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: colors.surface,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colors.outlineVariant),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Stack(
-            children: [
-              AspectRatio(
-                aspectRatio: 4 / 3,
-                child: _PhotoPreview(item: item),
-              ),
-              if (onCancel != null || cancelling)
-                Positioned(
-                  top: 10,
-                  right: 10,
-                  child: Material(
-                    color: colors.surface,
-                    elevation: 2,
-                    shape: const CircleBorder(),
-                    child: cancelling
-                        ? const SizedBox(
-                            width: 48,
-                            height: 48,
-                            child: Padding(
-                              padding: EdgeInsets.all(14),
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : IconButton(
-                            key: ValueKey('cancel-${item.id}'),
-                            tooltip: 'Cancel upload of ${item.filename}',
-                            onPressed: onCancel,
-                            icon: const Icon(Icons.close),
-                          ),
-                  ),
-                ),
-            ],
+          ClipRRect(
+            borderRadius: BorderRadius.circular(9),
+            child: SizedBox(
+              width: 66,
+              height: 66,
+              child: _PhotoPreview(item: item),
+            ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(16),
+          const SizedBox(width: 10),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   item.filename,
-                  maxLines: 2,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(
                     context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w800),
                 ),
-                const SizedBox(height: 5),
-                Text(
-                  fileSize > 0
-                      ? _formatBytes(fileSize.toDouble())
-                      : 'Size unavailable',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 2),
                 Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      cancelled
-                          ? Icons.cancel_outlined
-                          : item.isUploaded
-                          ? Icons.check_circle_outline
-                          : item.waitingForConnection && failed
-                          ? Icons.cloud_off_outlined
-                          : failed
-                          ? Icons.error_outline
-                          : Icons.cloud_upload_outlined,
-                      size: 19,
-                      color: statusColor,
+                    Text(
+                      fileSize > 0
+                          ? _formatBytes(fileSize.toDouble())
+                          : 'Size unavailable',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
                     ),
-                    const SizedBox(width: 7),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         status,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: statusColor,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
-                    if (uploading && progress != null && !cancelling)
-                      Text('${(progress * 100).round()}%'),
+                    if (uploading && progress != null && !cancelling) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        '${(progress * 100).round()}%',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
                 if ((uploading || finishing) && !cancelling) ...[
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 6),
                   LinearProgressIndicator(
                     value: uploading ? progress : null,
-                    minHeight: 5,
+                    minHeight: 3,
                     borderRadius: BorderRadius.circular(3),
                     semanticsLabel: 'Upload progress for ${item.filename}',
                   ),
-                  if (uploading && item.bytesPerSecond > 0) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      '${_formatBytes(item.bytesPerSecond)}/s',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
                 ],
                 if (failed && item.error?.isNotEmpty == true) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                   Text(
                     item.waitingForConnection
-                        ? 'The cloud could not be reached. Keep AirPix open; it will retry automatically.'
+                        ? 'The cloud could not be reached. AirPix will retry automatically.'
                         : item.error!,
-                    maxLines: 3,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: colors.error),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colors.error,
+                      fontSize: 10.5,
+                    ),
                   ),
-                  if (queued?.nextRetryAt != null) ...[
-                    const SizedBox(height: 4),
+                  if (queued?.nextRetryAt != null)
                     Text(
                       onCancel != null
                           ? 'A retry is scheduled. You can still cancel this photo.'
                           : 'Cloud confirmation is pending. AirPix will retry automatically.',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.copyWith(fontSize: 10.5),
                     ),
-                  ],
                 ],
               ],
             ),
+          ),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 38,
+            height: 38,
+            child: cancelling
+                ? const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : onCancel != null
+                ? IconButton(
+                    key: ValueKey('cancel-${item.id}'),
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Cancel upload of ${item.filename}',
+                    onPressed: onCancel,
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                  )
+                : Icon(
+                    cancelled
+                        ? Icons.cancel_outlined
+                        : item.isUploaded
+                        ? Icons.check_circle_rounded
+                        : failed
+                        ? Icons.error_outline_rounded
+                        : Icons.cloud_upload_outlined,
+                    size: 20,
+                    color: statusColor,
+                  ),
           ),
         ],
       ),
@@ -662,28 +704,10 @@ class _PhotoPreview extends StatelessWidget {
     Widget placeholder() => ColoredBox(
       color: colors.surfaceContainerHighest,
       child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.image_outlined,
-                size: 44,
-                color: colors.onSurfaceVariant,
-              ),
-              const SizedBox(height: 10),
-              Text(
-                previewable
-                    ? 'Preview unavailable'
-                    : 'RAW / file preview unavailable',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: colors.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
+        child: Icon(
+          Icons.image_outlined,
+          size: 24,
+          color: colors.onSurfaceVariant,
         ),
       ),
     );
@@ -694,8 +718,8 @@ class _PhotoPreview extends StatelessWidget {
       }
       return Image.network(
         item.imageUrl!,
-        fit: BoxFit.contain,
-        cacheWidth: 1024,
+        fit: BoxFit.cover,
+        cacheWidth: 256,
         errorBuilder: (_, _, _) => placeholder(),
       );
     }
@@ -704,10 +728,8 @@ class _PhotoPreview extends StatelessWidget {
     if (previewable && item.localPath?.isNotEmpty == true) {
       preview = Image.file(
         File(item.localPath!),
-        fit: BoxFit.contain,
-        cacheWidth: 1024,
-        // A completed upload may remove the local queue file. The remote image
-        // is then used without synchronously probing the filesystem on build.
+        fit: BoxFit.cover,
+        cacheWidth: 256,
         errorBuilder: (_, _, _) => networkOrPlaceholder(),
       );
     } else {

@@ -90,7 +90,10 @@ void main() {
 
     expect(find.text('shooting.JPG'), findsOneWidget);
     expect(find.text('Uploading to cloud'), findsOneWidget);
-    await tester.tap(find.byTooltip('Share guest QR'));
+    final menu = tester.widget<PopupMenuButton<String>>(
+      find.byWidgetPredicate((widget) => widget is PopupMenuButton<String>),
+    );
+    menu.onSelected?.call('qr');
     await tester.pump();
     expect(qrRequests, 1);
     expect(stops, 0);
@@ -281,42 +284,53 @@ void main() {
     },
   );
 
-  testWidgets(
-    'FTP setup stays visible before the first photo and status updates',
-    (tester) async {
-      final harness = _Harness([]);
-      var stopCalls = 0;
-      await _show(
-        tester,
-        harness,
-        connectionDetailsBuilder: (_) => const Card(
-          child: Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('FTP server: 192.168.1.10:2121'),
-          ),
+  testWidgets('connection details stay compact behind the top menu', (
+    tester,
+  ) async {
+    final harness = _Harness([]);
+    var stopCalls = 0;
+    await _show(
+      tester,
+      harness,
+      connectionDetailsBuilder: (_) => const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('FTP server: 192.168.1.10:2121'),
         ),
-        onStop: () async {
-          stopCalls++;
-          harness.session.value = const CameraTransferSessionStatus(
-            connectionLabel: 'Camera disconnected',
-            message:
-                'Receiving has stopped. Queued photos will continue uploading.',
-            isActive: false,
-          );
-        },
-      );
+      ),
+      onStop: () async {
+        stopCalls++;
+        harness.session.value = const CameraTransferSessionStatus(
+          connectionLabel: 'Camera disconnected',
+          message:
+              'Receiving has stopped. Queued photos will continue uploading.',
+          isActive: false,
+        );
+      },
+    );
 
-      expect(find.text('FTP server: 192.168.1.10:2121'), findsOneWidget);
-      expect(find.text('Waiting for camera photos'), findsOneWidget);
-      await tester.tap(find.text('Stop receiving'));
-      await tester.pumpAndSettle();
+    expect(find.text('FTP server: 192.168.1.10:2121'), findsNothing);
+    expect(find.text('Waiting for camera photos'), findsOneWidget);
+    expect(find.text('Stop receiving'), findsOneWidget);
 
-      expect(stopCalls, 1);
-      expect(find.text('Camera disconnected'), findsOneWidget);
-      expect(find.text('Stop receiving'), findsNothing);
-      expect(find.text('No photos received yet'), findsOneWidget);
-    },
-  );
+    await tester.tap(find.byTooltip('More camera transfer actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connection details'));
+    await tester.pumpAndSettle();
+    expect(find.text('FTP server: 192.168.1.10:2121'), findsOneWidget);
+
+    Navigator.of(
+      tester.element(find.text('FTP server: 192.168.1.10:2121')),
+    ).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Stop receiving'));
+    await tester.pumpAndSettle();
+
+    expect(stopCalls, 1);
+    expect(find.text('Receiving stopped'), findsOneWidget);
+    expect(find.text('Stop receiving'), findsNothing);
+    expect(find.text('No photos received yet'), findsOneWidget);
+  });
 
   testWidgets('leaving the page keeps the parent camera session running', (
     tester,

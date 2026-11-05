@@ -15,6 +15,7 @@ import 'package:mobileapp/core/guest/guest_face_delivery.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/platform/canon_ccapi_camera.dart';
 import 'package:mobileapp/core/platform/camera_ftp_receiver.dart';
+import 'package:mobileapp/core/platform/debug_pc_camera_transport.dart';
 import 'package:mobileapp/core/platform/transfer_screen_awake.dart';
 import 'package:mobileapp/core/platform/device_settings.dart';
 import 'package:mobileapp/core/platform/gallery_auto_import.dart';
@@ -159,8 +160,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   String? _usbReleaseIssue;
   bool _otgStarting = false;
   bool _usbStartRequested = false;
-  bool _usbModeSaving = false;
   bool _guestQrPreparing = false;
+  Future<void> _usbModeSaveQueue = Future<void>.value();
   LiveCameraUploadMode _usbUploadMode = LiveCameraUploadMode.newShotsOnly;
   LiveCameraUploadMode _usbSessionUploadMode =
       LiveCameraUploadMode.newShotsOnly;
@@ -2319,28 +2320,30 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     });
   }
 
-  Future<void> _changeUsbUploadMode(LiveCameraUploadMode mode) async {
-    if (_usbSessionLocked || _usbModeSaving || mode == _usbUploadMode) return;
-    final previous = _usbUploadMode;
-    _safeSetState(() {
-      _usbUploadMode = mode;
-      _usbModeSaving = true;
-    });
-    try {
-      await UsbCameraUploadModeStorage.save(mode);
-    } catch (_) {
-      _safeSetState(() => _usbUploadMode = previous);
-      if (mounted && !_disposed) {
-        AppToast.error('Could not save the photo selection. Please try again.');
+  void _changeUsbUploadMode(LiveCameraUploadMode mode) {
+    if (_usbSessionLocked || mode == _usbUploadMode) return;
+    // Change the UI immediately. Preference writes are serialized in the
+    // background so rapid taps stay responsive and the last tap wins on disk.
+    _safeSetState(() => _usbUploadMode = mode);
+    _usbModeSaveQueue = _usbModeSaveQueue.then((_) async {
+      try {
+        await UsbCameraUploadModeStorage.save(mode);
+      } catch (error) {
+        debugPrint('USB transfer mode preference save failed: $error');
+        if (mounted && !_disposed && _usbUploadMode == mode) {
+          AppToast.error(
+            'Could not remember this transfer mode. It still applies to the next session in this app run.',
+          );
+        }
       }
-    } finally {
-      _safeSetState(() => _usbModeSaving = false);
-    }
+    });
   }
 
   Future<void> _startOtgAutoImport(
     _UsbCaptureTarget target, {
     required int generation,
+    LiveCameraTransport? transport,
+    String source = 'otg-ptp',
   }) async {
     if (_wirelessShutdown != null) await _wirelessShutdown;
     if (!_usbStartActive(generation, target) || _otgStarting) return;
@@ -2355,6 +2358,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       _otgStatus = 'Connecting for live shooting...';
     });
     final capture = LiveCameraCapture(
+      transport: transport,
       uploadMode: target.uploadMode,
       onUpdate: (update) {
         if (!_otgActive(generation)) return;
@@ -2389,9 +2393,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             filename: file.name,
             isEnhanced: target.isEnhanced,
             albumId: target.albumId,
-            source: 'otg-ptp',
+            source: source,
             cameraId: session.name,
-            fingerprint: '${event.id}|otg-ptp|${session.cameraId}|${file.id}',
+            fingerprint: '${event.id}|$source|${session.cameraId}|${file.id}',
           );
           if (_otgActive(generation)) {
             _safeSetState(() => _wiredPhotoReceived = true);
@@ -2613,7 +2617,6 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         _disposed ||
         _otgStarting ||
         _usbStartRequested ||
-        _usbModeSaving ||
         _usbPickInProgress ||
         ActiveEventStorage.activeEvent.value?.id != event.id) {
       return;
@@ -2636,6 +2639,59 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       if (_wirelessImporting) await _stopWirelessImport();
       if (!_usbStartActive(generation, target)) return;
       await _startOtgAutoImport(target, generation: generation);
+    } finally {
+      if (_otgActive(generation)) {
+        _safeSetState(() {
+          _usbStartRequested = false;
+          if (!_otgImporting && !_otgStarting) _liveCameraEventId = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _startPcUsbTestBridge() async {
+    if (!mounted || _disposed) return;
+    if (!Platform.isAndroid) {
+      AppToast.error('The PC USB test bridge currently uses Android ADB.');
+      return;
+    }
+    final event = ActiveEventStorage.activeEvent.value;
+    if (event == null) {
+      AppToast.error('Select an active event first');
+      return;
+    }
+    if (_otgImporting) {
+      await _stopOtgAutoImport();
+    }
+    if (_otgStarting ||
+        _usbStartRequested ||
+        _usbPickInProgress ||
+        ActiveEventStorage.activeEvent.value?.id != event.id) {
+      return;
+    }
+
+    final generation = ++_otgGeneration;
+    final target = _UsbCaptureTarget(
+      event: event,
+      uploadMode: LiveCameraUploadMode.newShotsOnly,
+      isEnhanced: _isEnhanced,
+      albumId: _selectedAlbumId,
+    );
+    _safeSetState(() {
+      _liveCameraEventId = event.id;
+      _usbStartRequested = true;
+      _otgStatus = 'Connecting to the PC camera simulator...';
+    });
+    try {
+      if (_galleryImporting) _stopGalleryAutoImport();
+      if (_wirelessImporting) await _stopWirelessImport();
+      if (!_usbStartActive(generation, target)) return;
+      await _startOtgAutoImport(
+        target,
+        generation: generation,
+        transport: DebugPcCameraTransport(),
+        source: 'pc-usb-test',
+      );
     } finally {
       if (_otgActive(generation)) {
         _safeSetState(() {
@@ -3281,8 +3337,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     status: _otgStatus,
                     startLabel: 'Connect & start',
                     stopLabel: 'Stop session',
-                    onPressed:
-                        activeEvent == null || _uploading || _usbModeSaving
+                    onPressed: activeEvent == null || _uploading
                         ? null
                         : () => _toggleOtgAutoUpload(activeEvent),
                     onMenu: _showUsbCameraOptions,
@@ -3706,103 +3761,124 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
 
   Future<void> _showUsbCameraOptions() async {
     if (!mounted) return;
+    var selectedMode = _usbUploadMode;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'USB / OTG options',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'New shots only is the default. Change this only when you need older camera photos too.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppColors.mutedForeground,
-                ),
-              ),
-              const SizedBox(height: 16),
-              UsbCameraUploadModeSelector(
-                value: _usbUploadMode,
-                sessionLocked: _usbSessionLocked,
-                isSaving: _usbModeSaving,
-                onChanged: (mode) => unawaited(_changeUsbUploadMode(mode)),
-              ),
-              if (_usbSessionLocked) ...[
-                const SizedBox(height: 8),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
                 const Text(
-                  'Stop the current USB session before changing the transfer mode.',
+                  'USB / OTG options',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'New shots only is the default. Change this only when you need older camera photos too.',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12,
                     color: AppColors.mutedForeground,
                   ),
                 ),
+                const SizedBox(height: 16),
+                UsbCameraUploadModeSelector(
+                  value: selectedMode,
+                  sessionLocked: _usbSessionLocked,
+                  onChanged: (mode) {
+                    if (_usbSessionLocked || mode == selectedMode) return;
+                    setSheetState(() => selectedMode = mode);
+                    _changeUsbUploadMode(mode);
+                  },
+                ),
+                if (_usbSessionLocked) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Stop the current USB session before changing the transfer mode.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.mutedForeground,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                const Divider(height: 1),
+                if (Platform.isAndroid)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.science_outlined),
+                    title: const Text('PC USB test bridge'),
+                    subtitle: const Text(
+                      'Testing tool: send simulated camera shots from this PC over the USB/ADB cable.',
+                    ),
+                    onTap: _otgBusy || _uploading || _usbStartRequested
+                        ? null
+                        : () {
+                            Navigator.pop(sheetContext);
+                            unawaited(_startPcUsbTestBridge());
+                          },
+                  ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.fact_check_outlined),
+                  title: const Text('Test USB connection'),
+                  subtitle: const Text(
+                    'Check whether AirPix can see and communicate with the camera.',
+                  ),
+                  onTap: _otgBusy || _uploading || _usbStartRequested
+                      ? null
+                      : () {
+                          Navigator.pop(sheetContext);
+                          unawaited(_diagnoseUsbCamera());
+                        },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.help_outline_rounded),
+                  title: const Text('Camera setup help'),
+                  subtitle: const Text(
+                    'USB tether mode, black-screen and shutter guidance.',
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    unawaited(_showLiveCameraSetup());
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.photo_library_outlined),
+                  title: const Text('Import camera photos once'),
+                  subtitle: const Text(
+                    'Manually choose stored photos instead of starting a live session.',
+                  ),
+                  onTap: _uploading || _otgBusy || _usbStartRequested
+                      ? null
+                      : () {
+                          Navigator.pop(sheetContext);
+                          unawaited(_pickOtgFiles());
+                        },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.sd_storage_outlined),
+                  title: const Text('Browse Files / SD card'),
+                  subtitle: const Text(
+                    'Choose stored photos with the system Files picker.',
+                  ),
+                  onTap: _uploading
+                      ? null
+                      : () {
+                          Navigator.pop(sheetContext);
+                          unawaited(_pickOtgFilesFromFiles());
+                        },
+                ),
               ],
-              const SizedBox(height: 10),
-              const Divider(height: 1),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.fact_check_outlined),
-                title: const Text('Test USB connection'),
-                subtitle: const Text(
-                  'Check whether AirPix can see and communicate with the camera.',
-                ),
-                onTap: _otgBusy || _uploading || _usbStartRequested
-                    ? null
-                    : () {
-                        Navigator.pop(sheetContext);
-                        unawaited(_diagnoseUsbCamera());
-                      },
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.help_outline_rounded),
-                title: const Text('Camera setup help'),
-                subtitle: const Text(
-                  'USB tether mode, black-screen and shutter guidance.',
-                ),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  unawaited(_showLiveCameraSetup());
-                },
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('Import camera photos once'),
-                subtitle: const Text(
-                  'Manually choose stored photos instead of starting a live session.',
-                ),
-                onTap: _uploading || _otgBusy || _usbStartRequested
-                    ? null
-                    : () {
-                        Navigator.pop(sheetContext);
-                        unawaited(_pickOtgFiles());
-                      },
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.sd_storage_outlined),
-                title: const Text('Browse Files / SD card'),
-                subtitle: const Text(
-                  'Choose stored photos with the system Files picker.',
-                ),
-                onTap: _uploading
-                    ? null
-                    : () {
-                        Navigator.pop(sheetContext);
-                        unawaited(_pickOtgFilesFromFiles());
-                      },
-              ),
-            ],
+            ),
           ),
         ),
       ),

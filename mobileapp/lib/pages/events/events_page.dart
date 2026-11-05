@@ -1096,6 +1096,8 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
   bool _uploadingWatermark = false;
   bool _storeLoading = true;
   bool _storeSaving = false;
+  bool _storeAvailable = true;
+  String? _storeLoadError;
   bool _storeEnabled = false;
   bool _watermarkedPreview = true;
   bool _useCustomStripe = false;
@@ -1170,6 +1172,12 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
   }
 
   Future<void> _loadStore() async {
+    if (mounted) {
+      setState(() {
+        _storeLoading = true;
+        _storeLoadError = null;
+      });
+    }
     try {
       final response = await DioHelper.get(
         '/store/settings',
@@ -1181,6 +1189,8 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
           : <String, dynamic>{};
       if (!mounted) return;
       setState(() {
+        _storeAvailable = true;
+        _storeLoadError = null;
         _storeEnabled = data['enabled'] == true;
         _watermarkedPreview = data['watermarkedPreview'] != false;
         _useCustomStripe = data['useCustomStripe'] == true;
@@ -1204,8 +1214,29 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
         _stripePublishableController.text =
             data['stripePublishableKey']?.toString() ?? '';
       });
-    } catch (_) {
-      AppToast.error('Could not load store settings');
+    } on DioException catch (error) {
+      if (!mounted) return;
+      final status = error.response?.statusCode;
+      setState(() {
+        if (status == 403 || status == 404) {
+          // Store management belongs to the event owner/planner. Photographer
+          // upload access should not produce a global error toast here.
+          _storeAvailable = false;
+          _storeLoadError = null;
+        } else {
+          _storeAvailable = true;
+          _storeLoadError = 'Store settings are temporarily unavailable.';
+        }
+      });
+      debugPrint('Store settings load failed (${status ?? 'network'}): $error');
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _storeAvailable = true;
+          _storeLoadError = 'Store settings are temporarily unavailable.';
+        });
+      }
+      debugPrint('Store settings load failed: $error');
     } finally {
       if (mounted) setState(() => _storeLoading = false);
     }
@@ -1468,191 +1499,208 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
                 title: const Text('WhatsApp delivery'),
               ),
             ],
-            const Divider(height: 28),
-            Text(
-              'Store',
-              style: Theme.of(
-                context,
-              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Sell individual originals or the complete event. Paid downloads use the original full-resolution source, never the watermarked preview.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            if (_storeLoading)
-              const Center(child: CircularProgressIndicator())
-            else ...[
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _storeEnabled,
-                onChanged: _storeSaving
-                    ? null
-                    : (value) => setState(() => _storeEnabled = value),
-                title: const Text('Enable store for this event'),
-                subtitle: const Text(
-                  'Guests can purchase original files from the event store.',
-                ),
+            if (_storeAvailable) ...[
+              const Divider(height: 28),
+              Text(
+                'Store',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _storeCurrencyController,
-                textCapitalization: TextCapitalization.characters,
-                decoration: const InputDecoration(
-                  labelText: 'Currency',
-                  hintText: 'USD',
-                  border: OutlineInputBorder(),
-                ),
+              const SizedBox(height: 6),
+              Text(
+                'Sell individual originals or the complete event. Paid downloads use the original full-resolution source, never the watermarked preview.',
+                style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _singlePriceController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: const InputDecoration(
-                        labelText: 'Price per photo',
-                        border: OutlineInputBorder(),
+              if (_storeLoading)
+                const Center(child: CircularProgressIndicator())
+              else if (_storeLoadError != null)
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _storeLoadError!,
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: _wholeEventPriceController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: const InputDecoration(
-                        labelText: 'Whole event price',
-                        helperText: '0 disables',
-                        border: OutlineInputBorder(),
-                      ),
+                    TextButton(
+                      onPressed: _loadStore,
+                      child: const Text('Retry'),
                     ),
+                  ],
+                )
+              else ...[
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _storeEnabled,
+                  onChanged: _storeSaving
+                      ? null
+                      : (value) => setState(() => _storeEnabled = value),
+                  title: const Text('Enable store for this event'),
+                  subtitle: const Text(
+                    'Guests can purchase original files from the event store.',
                   ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _bundlePriceController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: const InputDecoration(
-                        labelText: 'Bundle price',
-                        helperText: '0 disables',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: _bundleMinController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Bundle starts at',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _watermarkedPreview,
-                onChanged: _storeSaving
-                    ? null
-                    : (value) => setState(() => _watermarkedPreview = value),
-                title: const Text('Watermark store previews'),
-                subtitle: const Text(
-                  'Only previews are watermarked; purchased files stay original.',
                 ),
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _useCustomStripe,
-                onChanged: _storeSaving
-                    ? null
-                    : (value) => setState(() => _useCustomStripe = value),
-                title: const Text('Use my Stripe account'),
-                subtitle: Text(
-                  _customStripeConfigured
-                      ? 'Stripe secret is already saved for this event.'
-                      : 'Otherwise the platform Stripe account is used.',
-                ),
-              ),
-              if (_useCustomStripe) ...[
                 const SizedBox(height: 8),
                 TextField(
-                  controller: _stripeLabelController,
+                  controller: _storeCurrencyController,
+                  textCapitalization: TextCapitalization.characters,
                   decoration: const InputDecoration(
-                    labelText: 'Stripe account label',
+                    labelText: 'Currency',
+                    hintText: 'USD',
                     border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: _stripePublishableController,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                  decoration: const InputDecoration(
-                    labelText: 'Stripe publishable key',
-                    hintText: 'pk_live_... or pk_test_...',
-                    helperText: 'Use the same Stripe mode as the secret key.',
-                    border: OutlineInputBorder(),
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _singlePriceController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Price per photo',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: _wholeEventPriceController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Whole event price',
+                          helperText: '0 disables',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: _stripeSecretController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: 'Stripe secret key',
-                    hintText: _customStripeConfigured
-                        ? 'Saved - leave blank to keep it'
-                        : 'sk_live_... or sk_test_...',
-                    border: const OutlineInputBorder(),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _bundlePriceController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Bundle price',
+                          helperText: '0 disables',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: _bundleMinController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Bundle starts at',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _watermarkedPreview,
+                  onChanged: _storeSaving
+                      ? null
+                      : (value) => setState(() => _watermarkedPreview = value),
+                  title: const Text('Watermark store previews'),
+                  subtitle: const Text(
+                    'Only previews are watermarked; purchased files stay original.',
                   ),
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _stripeWebhookController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: 'Stripe webhook secret',
-                    hintText: _customStripeWebhookConfigured
-                        ? 'Saved - leave blank to keep it'
-                        : 'whsec_...',
-                    border: const OutlineInputBorder(),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _useCustomStripe,
+                  onChanged: _storeSaving
+                      ? null
+                      : (value) => setState(() => _useCustomStripe = value),
+                  title: const Text('Use my Stripe account'),
+                  subtitle: Text(
+                    _customStripeConfigured
+                        ? 'Stripe secret is already saved for this event.'
+                        : 'Otherwise the platform Stripe account is used.',
+                  ),
+                ),
+                if (_useCustomStripe) ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _stripeLabelController,
+                    decoration: const InputDecoration(
+                      labelText: 'Stripe account label',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _stripePublishableController,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    decoration: const InputDecoration(
+                      labelText: 'Stripe publishable key',
+                      hintText: 'pk_live_... or pk_test_...',
+                      helperText: 'Use the same Stripe mode as the secret key.',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _stripeSecretController,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: 'Stripe secret key',
+                      hintText: _customStripeConfigured
+                          ? 'Saved - leave blank to keep it'
+                          : 'sk_live_... or sk_test_...',
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _stripeWebhookController,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: 'Stripe webhook secret',
+                      hintText: _customStripeWebhookConfigured
+                          ? 'Saved - leave blank to keep it'
+                          : 'whsec_...',
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _storeSaving ? null : _saveStore,
+                    icon: _storeSaving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.storefront_outlined),
+                    label: Text(
+                      _storeSaving ? 'Saving store...' : 'Save store settings',
+                    ),
                   ),
                 ),
               ],
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _storeSaving ? null : _saveStore,
-                  icon: _storeSaving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.storefront_outlined),
-                  label: Text(
-                    _storeSaving ? 'Saving store...' : 'Save store settings',
-                  ),
-                ),
-              ),
             ],
             const Divider(height: 28),
             Text(
