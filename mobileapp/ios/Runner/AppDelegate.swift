@@ -695,10 +695,26 @@ final class WiredCameraPhotoIndex {
           ))
           return
         }
-        let transport = (camera.transportType ?? "").lowercased().replacingOccurrences(of: " ", with: "")
-        guard !transport.contains("massstorage"), !transport.contains("exfat") else {
+        // Reject clearly labelled mass storage, card reader and streaming
+        // transports before asking ImageCaptureCore to open a PTP session.
+        // This label is only a hint: "USB" alone cannot prove PTP shooting.
+        let transport = (camera.transportType ?? "").lowercased()
+          .replacingOccurrences(of: " ", with: "")
+          .replacingOccurrences(of: "-", with: "")
+        let massStorage = transport.contains("massstorage") || transport.contains("exfat")
+        // PTP/MTP is a valid camera control transport on some Canon, Nikon
+        // and other bodies. Never reject MTP *solely by its OS label*:
+        // check negotiated camera operations and confirm a test shutter shot.
+        let transferOnly = massStorage || transport.contains("cardreader") ||
+          transport.contains("filetransfer") || transport.contains("usbstreaming")
+        guard !transferOnly else {
+          let isSony = camera.usbVendorID == 0x054c
           self.endPtpTetherSession(session, error: FlutterError(
-            code: "LIVE_CAMERA_TRANSFER_ONLY", message: "This connection exposes storage only. Select the camera's supported shooting/tether mode before reconnecting.", details: nil
+            code: (isSony && massStorage) ? "SONY_MASS_STORAGE_MODE" : "LIVE_CAMERA_TRANSFER_ONLY",
+            message: isSony
+              ? "The Sony camera is in a file-transfer/streaming USB mode, not Remote Shooting. Unplug USB, then select Setup > USB > USB Connection Mode > Remote Shooting and reconnect."
+              : "The camera is exposing USB storage, media transfer or streaming, not a shooting-capable PTP connection. Unplug it and choose the model's tether/remote-shooting USB mode. Ordinary PTP/MTP import does not confirm a usable shutter.",
+            details: ["camera": camera.name ?? "USB camera", "transport": camera.transportType ?? "unknown"]
           ))
           return
         }
@@ -759,8 +775,19 @@ final class WiredCameraPhotoIndex {
           !openingCameraSessions.contains(ObjectIdentifier(camera)),
           !closingCameraSessions.contains(ObjectIdentifier(camera)) else { return }
     guard camera.capabilities.contains(ICDeviceCapability.cameraDeviceCanAcceptPTPCommands.rawValue) else {
+      let isSony = camera.usbVendorID == 0x054c
       endPtpTetherSession(session, error: FlutterError(
-        code: "PTP_PASSTHROUGH_UNAVAILABLE", message: "iOS has not exposed PTP camera control for this connection. Check the camera's supported tether mode.", details: nil
+        code: isSony ? "SONY_PTP_CONTROL_UNAVAILABLE" : "PTP_PASSTHROUGH_UNAVAILABLE",
+        message: isSony
+          ? "iOS detected the Sony camera but has not exposed the PTP commands needed for live shooting. On an Alpha 7 IV, disconnect USB and choose Remote Shooting instead of Mass Storage, MTP or USB Streaming. A compatible camera mode does not guarantee iOS exposes this vendor control interface."
+          : "iOS has not exposed PTP camera control for this connection. Check the camera's supported tether mode.",
+        details: [
+          "camera": camera.name ?? "USB camera",
+          "transport": camera.transportType ?? "unknown",
+          "vendorId": Int(camera.usbVendorID),
+          "productId": Int(camera.usbProductID),
+          "capabilities": camera.capabilities,
+        ]
       ))
       return
     }
@@ -1030,7 +1057,7 @@ final class WiredCameraPhotoIndex {
           self.emitPtpTetherEvent(
             session,
             type: "status",
-            message: "AirPix recovered this camera photo through the iOS file-transfer fallback; live PTP tethering remains active."
+            message: "AirPix recovered this photo through ImageCaptureCore on the same PTP connection. The camera USB mode was not changed."
           )
         }
         finish(["path": staged.path, "name": staged.name, "size": staged.size])
@@ -2700,11 +2727,24 @@ final class WiredCameraPhotoIndex {
         }
         return
       }
-      NSLog("[AirPix USB] Failed to open session for %@: %@", device.name ?? "Camera", String(describing: error))
-      self.cameraSessionErrors[key] = error.localizedDescription
+      let nativeError = error as NSError
+      let cameraName = camera.name ?? "USB camera"
+      let isSony = camera.usbVendorID == 0x054c
+      let reason = "\(cameraName): \(nativeError.localizedDescription) (\(nativeError.domain) \(nativeError.code))."
+      NSLog("[AirPix USB] Failed to open session for %@: %@", cameraName, String(describing: error))
+      self.cameraSessionErrors[key] = reason
       if let session = self.ptpTetherSession, session.camera === camera {
         self.endPtpTetherSession(session, error: FlutterError(
-          code: "CAMERA_SESSION_FAILED", message: error.localizedDescription, details: nil
+          code: isSony ? "SONY_CAMERA_SESSION_FAILED" : "CAMERA_SESSION_FAILED",
+          message: reason,
+          details: [
+            "camera": cameraName,
+            "transport": camera.transportType ?? "unknown",
+            "vendorId": Int(camera.usbVendorID),
+            "productId": Int(camera.usbProductID),
+            "nativeDomain": nativeError.domain,
+            "nativeCode": nativeError.code,
+          ]
         ))
         return
       }

@@ -332,6 +332,43 @@ void main() {
     expect(find.text('No photos received yet'), findsOneWidget);
   });
 
+  testWidgets(
+    'displays failed USB session guidance when no photos were received',
+    (tester) async {
+      final harness = _Harness([]);
+      harness.session.value = const CameraTransferSessionStatus(
+        connectionLabel: 'Sony Alpha 7 IV',
+        message:
+            'USB Mass Storage is for file transfer. Unplug USB, choose Remote '
+            'Shooting and Dest.+Camera, then reconnect for New shots only.',
+        isActive: false,
+      );
+      await _show(tester, harness);
+      expect(find.text('Receiving stopped'), findsOneWidget);
+      expect(find.text('No photos received yet'), findsOneWidget);
+      expect(
+        find.textContaining('USB Mass Storage is for file transfer'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Dest.+Camera'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'all camera brands can open mode guidance from an empty live session',
+    (tester) async {
+      final harness = _Harness([]);
+      var helpRequests = 0;
+      await _show(tester, harness, onCameraSetupHelp: () => helpRequests++);
+      expect(find.text('Ready for a test shot'), findsOneWidget);
+      await tester.tap(find.text('Camera screen black? Stop and fix USB mode'));
+      await tester.pump();
+      expect(helpRequests, 1);
+      expect(harness.session.value.isActive, isTrue);
+      expect(find.text('No photos received yet'), findsNothing);
+    },
+  );
+
   testWidgets('leaving the page keeps the parent camera session running', (
     tester,
   ) async {
@@ -382,6 +419,7 @@ Future<void> _show(
   Future<UploadCancellationResult> Function(String)? cancelUpload,
   Future<void> Function()? onStop,
   VoidCallback? onShareGuestQr,
+  VoidCallback? onCameraSetupHelp,
   WidgetBuilder? connectionDetailsBuilder,
 }) async {
   await tester.binding.setSurfaceSize(const Size(390, 844));
@@ -396,6 +434,7 @@ Future<void> _show(
         cancelUpload: cancelUpload,
         onStop: onStop,
         onShareGuestQr: onShareGuestQr,
+        onCameraSetupHelp: onCameraSetupHelp,
         connectionDetailsBuilder: connectionDetailsBuilder,
       ),
     ),
@@ -421,6 +460,7 @@ class _Harness {
     Future<UploadCancellationResult> Function(String)? cancelUpload,
     Future<void> Function()? onStop,
     VoidCallback? onShareGuestQr,
+    VoidCallback? onCameraSetupHelp,
     WidgetBuilder? connectionDetailsBuilder,
   }) => CameraTransferPage(
     eventId: 'event',
@@ -437,6 +477,7 @@ class _Harness {
         !item.registrationStarted,
     onStop: onStop,
     onShareGuestQr: onShareGuestQr,
+    onCameraSetupHelp: onCameraSetupHelp,
     connectionDetailsBuilder: connectionDetailsBuilder,
   );
 

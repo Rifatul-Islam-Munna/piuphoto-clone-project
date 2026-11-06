@@ -2,6 +2,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobileapp/core/platform/usb_camera_guidance.dart';
 
 void main() {
+  test('passive USB blocks shutter, deletion and UI-lock actions', () {
+    final advice = UsbCameraGuidance.forStatus('PTP_SHOOTING_COMMAND_BLOCKED');
+    expect(advice.title, contains('blocked for safety'));
+    expect(advice.details, contains('delete'));
+    expect(advice.nextSteps, contains('physical shutter'));
+  });
+
   test('USB permission errors identify whether phone settings are needed', () {
     final ios = UsbCameraGuidance.forStatus('CAMERA_ACCESS_DENIED');
     expect(ios.settingsRequired, isTrue);
@@ -91,6 +98,30 @@ void main() {
         expect(guidance.nextSteps, contains('Unplug the USB cable'));
         expect(guidance.nextSteps, contains('continue uploading'));
       }
+    },
+  );
+
+  test('Sony A7 IV Mass Storage error gives the correct camera menu', () {
+    final guidance = UsbCameraGuidance.forStatus('SONY_MASS_STORAGE_MODE');
+    expect(guidance.title, contains('Mass Storage'));
+    expect(guidance.nextSteps, contains('Remote Shooting'));
+    expect(guidance.nextSteps, contains('Dest.+Camera'));
+    expect(guidance.nextSteps, contains('New shots only'));
+  });
+
+  test(
+    'Sony iOS PTP failure keeps the actual reason and does not promise a connection',
+    () {
+      final guidance = UsbCameraGuidance.forStatus(
+        'SONY_CAMERA_SESSION_FAILED',
+        message: 'ILCE-7M4: USB session could not open (ImageCaptureCore -99)',
+      );
+      expect(guidance.title, contains('control is unavailable'));
+      expect(guidance.details, contains('ImageCaptureCore -99'));
+      expect(guidance.nextSteps, contains('iOS'));
+      expect(guidance.nextSteps, contains('Remote Shooting'));
+      expect(guidance.nextSteps, contains('Dest.+Camera'));
+      expect(guidance.nextSteps, contains('wireless/FTP'));
     },
   );
 

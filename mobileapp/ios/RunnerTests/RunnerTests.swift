@@ -6,6 +6,27 @@ import XCTest
 
 class RunnerTests: XCTestCase {
 
+  func testPassivePtpAllowsReadingButBlocksRemoteShutterAndUiLock() {
+    let allowed: [UInt16] = [
+      0x1001, 0x1004, 0x1007, 0x1008, 0x1009, 0x101B,
+      0x9114, 0x9115, 0x9116, 0x90C2, 0x90C7,
+      0x9201, 0x9202, 0x9205, 0x9209
+    ]
+    for opcode in allowed {
+      XCTAssertTrue(PtpShootingSafety.isAllowed(opcode),
+        "Photo receiver must allow read/tether opcode")
+    }
+
+    let blocked: [UInt16] = [
+      0x100B, 0x100E, 0x100F, 0x1010, 0x910F,
+      0x911B, 0x9128, 0x9129, 0x9151, 0x9207
+    ]
+    for opcode in blocked {
+      XCTAssertFalse(PtpShootingSafety.isAllowed(opcode),
+        "Photo receiver must not operate the shutter or camera UI")
+    }
+  }
+
   func testAuthorizedCameraContentsAccessHasNoError() throws {
     guard #available(iOS 14.0, *) else {
       throw XCTSkip("ImageCaptureCore authorization requests require iOS 14 or later.")

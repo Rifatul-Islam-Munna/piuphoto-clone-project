@@ -351,6 +351,28 @@ final class PtpTetherStagingStore {
   }
 }
 
+/// Live USB receives camera photos, it never operates the shutter, deletes
+/// originals, starts video capture, or locks the camera's physical UI.
+/// Defense in depth: the shared Dart driver applies this same restriction.
+enum PtpShootingSafety {
+  static let blocked: Set<UInt16> = [
+    0x100B, // PTP DeleteObject
+    0x100E, // PTP InitiateCapture
+    0x100F, // PTP InitiateOpenCapture
+    0x1010, // PTP TerminateOpenCapture
+    0x910F, // Canon EOS RemoteRelease
+    0x911B, // Canon EOS UILock
+    0x9128, // Canon EOS RemoteReleaseOn
+    0x9129, // Canon EOS RemoteReleaseOff
+    0x9151, // Canon EOS InitiateViewfinder
+    0x9207, // Sony remote shutter / camera buttons
+  ]
+
+  static func isAllowed(_ opcode: UInt16) -> Bool {
+    !blocked.contains(opcode)
+  }
+}
+
 /// All protocol state is confined to the main queue. ImageCaptureCore commands
 /// are asynchronous; disk writes run on a separate serial utility queue.
 final class PtpTetherTransport {
@@ -439,6 +461,13 @@ final class PtpTetherTransport {
   ) {
     guard !closed else { completion(.failure(Self.ended)); return }
     guard download == nil else { completion(.failure(Self.busy)); return }
+    guard PtpShootingSafety.isAllowed(opcode) else {
+      completion(.failure(PtpTetherFailure(
+        code: "PTP_SHOOTING_COMMAND_BLOCKED",
+        message: "AirPix is a passive photo receiver: shutter, screen and camera controls stay with the photographer."
+      )))
+      return
+    }
     if opcode == 0x1009 || opcode == 0x101B || opcode == 0x9107 {
       completion(.failure(PtpTetherFailure(
         code: "PTP_STREAM_REQUIRED", message: "Camera photos must use the native file transfer method."

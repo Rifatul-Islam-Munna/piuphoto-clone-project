@@ -18,6 +18,24 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
+/** Prevents all passive USB camera receivers from deleting, shooting, or UI-locking. */
+internal object PtpShootingSafety {
+    private val blocked = setOf(
+        0x100b, 0x100e, 0x100f, 0x1010,
+        0x910f, 0x911b, 0x9128, 0x9129, 0x9151, 0x9207,
+    )
+
+    fun requirePassive(opcode: Int) {
+        if (opcode in blocked) {
+            throw PtpWireException(
+                "PTP_SHOOTING_COMMAND_BLOCKED",
+                "AirPix only receives photos over PTP; the camera shutter, screen and controls remain with the photographer.",
+                false,
+            )
+        }
+    }
+}
+
 /** Owns permission, raw USB lifetime and native file staging for one Dart session. */
 internal class PtpTetherController(
     private val activity: Activity,
@@ -253,6 +271,7 @@ internal class PtpTetherController(
                         if (opcode !in 1..0xffff || opcode == 0x1002 || opcode == 0x1003) {
                             throw PtpWireException("PTP_INVALID_ARGUMENT", "Open and close are owned by the native USB session.", false)
                         }
+                        PtpShootingSafety.requirePassive(opcode)
                         if (opcode == 0x1009 || opcode == 0x101b || opcode == 0x9107) {
                             throw PtpWireException("PTP_STREAM_REQUIRED", "Camera photos must use the native file transfer method.", false)
                         }

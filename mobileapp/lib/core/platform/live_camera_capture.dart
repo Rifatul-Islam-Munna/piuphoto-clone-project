@@ -124,7 +124,9 @@ class LiveCameraCapture {
     LiveCameraTransport? transport,
     this.uploadMode = LiveCameraUploadMode.newShotsOnly,
     required this.onUpdate,
-    this.pollInterval = const Duration(seconds: 3),
+    // Independent of camera event notifications: pull pending photos once
+    // per second when the camera is available. A running drain is coalesced.
+    this.pollInterval = const Duration(seconds: 1),
     this.retryDelay = const Duration(seconds: 3),
     DateTime Function()? now,
     Future<bool> Function(OtgPickedFile)? isStagedFileUsable,

@@ -45,6 +45,36 @@ class UsbCameraGuidance {
             'a test photo. Import access alone does not confirm that the camera '
             'allows its shutter to work while connected.',
       ),
+      'sony_mass_storage_mode' => const UsbCameraGuidance(
+        title: 'Sony is in USB Mass Storage mode',
+        details:
+            'Mass Storage is for copying existing files; it can blank the '
+            'Sony shooting display and cannot keep the physical shutter live.',
+        nextSteps:
+            'Unplug the USB cable. On Sony Alpha 7 IV choose MENU > Setup > '
+            'USB > USB Connection Mode > Remote Shooting (or Select When '
+            'Connect, then Remote Shooting). Under Network > Cnct./Remote '
+            'Sht. > Remote Shoot Setting, set Still Img. Save Dest. to '
+            'Dest.+Camera. Reconnect with a USB data cable and select '
+            'New shots only in AirPix.',
+      ),
+      'sony_ptp_control_unavailable' ||
+      'sony_camera_session_failed' => const UsbCameraGuidance(
+        title: 'Sony detected, but live USB control is unavailable',
+        details:
+            'The iPhone found the Sony camera but could not open the '
+            'shooting-control session. Detection does not prove the Sony '
+            'vendor PTP interface is available on this iPhone.',
+        nextSteps:
+            'Disconnect USB, then on Sony Alpha 7 IV select Setup > USB > '
+            'USB Connection Mode > Remote Shooting, not Mass Storage/MTP/'
+            'USB Streaming. Set Network > Cnct./Remote Sht. > Remote '
+            'Shoot Setting > Still Img. Save Dest. to Dest.+Camera. '
+            'Keep the iPhone unlocked and grant camera access if prompted. '
+            'Reconnect and try New shots only. If iOS still blocks the '
+            'vendor PTP session, use a supported wireless/FTP workflow; '
+            'the app cannot override iOS USB access.',
+      ),
       'live_camera_transfer_only' ||
       'tether_mode_unsupported' ||
       'ptp_passthrough_unavailable' ||
@@ -80,8 +110,9 @@ class UsbCameraGuidance {
             'shooting and automatic photo transfer.',
         nextSteps:
             'Follow the camera setting shown above, then reconnect and start '
-            'Live shooting. On Sony, use PC Remote over USB, Camera priority '
-            'and a still-image destination of PC + Camera.',
+            'Live shooting. On Sony Alpha 7 IV, use Remote Shooting over '
+            'USB with Still Img. Save Dest. set to Dest.+Camera; older Sony '
+            'bodies may call this PC Remote / PC+Camera.',
       ),
       'tether_previous_photos_pending' => const UsbCameraGuidance(
         title: 'The camera has photos waiting from an earlier connection',
@@ -136,6 +167,16 @@ class UsbCameraGuidance {
         nextSteps:
             'Check free phone storage, recover this photo from the camera '
             'memory card, then restart Live shooting.',
+      ),
+      'ptp_shooting_command_blocked' => const UsbCameraGuidance(
+        title: 'A camera-control command was blocked for safety',
+        details:
+            'AirPix live USB only receives photographs. A request to trigger '
+            'the shutter, delete a camera photo or lock its controls was rejected.',
+        nextSteps:
+            'Keep shooting using the camera\'s physical shutter. If this '
+            'appears unexpectedly, copy the USB support report so the '
+            'camera-protocol adapter can be checked before reconnecting.',
       ),
       'camera_busy' => const UsbCameraGuidance(
         title: 'The camera is busy',
@@ -255,7 +296,7 @@ class UsbCameraGuidance {
         details:
             'The connected accessory does not advertise a supported PTP/MTP camera interface.',
         nextSteps:
-            'Switch the camera from Mass Storage/Charging to PTP / Photo Transfer mode, or choose SD card / USB storage (Files).',
+            'For live shooting, unplug USB and choose the camera\'s dedicated remote-shooting/tether USB mode. PTP/MTP Photo Transfer alone may lock the shutter; use Files only for a separate manual import.',
       ),
       'camera-locked' || 'camera_device_locked' => const UsbCameraGuidance(
         title: 'Connected device is locked',

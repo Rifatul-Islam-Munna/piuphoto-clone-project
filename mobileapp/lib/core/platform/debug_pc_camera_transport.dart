@@ -7,6 +7,53 @@ import 'package:mobileapp/core/platform/live_camera_types.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
+/// Only allow a local PC camera simulator; never send test photos to an
+/// arbitrary internet endpoint entered in the debug connection dialog.
+Uri parseDebugPcSimulatorUrl(String input) {
+  final value = input.trim();
+  if (value.isEmpty) {
+    throw const FormatException('Enter your PC IP address.');
+  }
+  final candidate = value.contains('://') ? value : 'http://$value';
+  final uri = Uri.tryParse(candidate);
+  if (uri == null ||
+      uri.scheme != 'http' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty ||
+      uri.hasQuery ||
+      uri.hasFragment ||
+      (uri.path.isNotEmpty && uri.path != '/')) {
+    throw const FormatException(
+      'Enter a local PC address, e.g. 192.168.0.10:8765.',
+    );
+  }
+  final host = uri.host.toLowerCase();
+  final address = InternetAddress.tryParse(host);
+  var local = host == 'localhost' || host.endsWith('.local');
+  if (address != null) {
+    final bytes = address.rawAddress;
+    if (address.type == InternetAddressType.IPv4) {
+      local =
+          bytes[0] == 10 ||
+          bytes[0] == 127 ||
+          (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+          (bytes[0] == 192 && bytes[1] == 168) ||
+          (bytes[0] == 169 && bytes[1] == 254);
+    } else if (address.type == InternetAddressType.IPv6) {
+      local =
+          address.isLoopback ||
+          (bytes[0] & 0xfe) == 0xfc ||
+          (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80);
+    }
+  }
+  if (!local) {
+    throw const FormatException(
+      'Use a private LAN or USB hotspot IP, not an internet address.',
+    );
+  }
+  return uri.replace(path: '', port: uri.hasPort ? uri.port : 8765);
+}
+
 class DebugPcCameraTransport implements LiveCameraTransport {
   DebugPcCameraTransport({
     Uri? baseUri,
@@ -15,7 +62,8 @@ class DebugPcCameraTransport implements LiveCameraTransport {
 
   final Uri baseUri;
   final Duration eventTimeout;
-  final HttpClient _client = HttpClient();
+  final HttpClient _client = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 5);
   final Map<String, _PcRun> _runs = {};
 
   Uri _uri(String path, [Map<String, String>? query]) =>
@@ -30,12 +78,25 @@ class DebugPcCameraTransport implements LiveCameraTransport {
   @override
   Future<LiveCameraSession> start(String sessionId) async {
     final run = _runs.putIfAbsent(sessionId, () => _PcRun(sessionId));
-    final health = await _getJson(_uri('/health'));
+    Map<String, dynamic> health;
+    try {
+      health = await _getJson(
+        _uri('/health'),
+      ).timeout(const Duration(seconds: 6));
+    } catch (_) {
+      throw PlatformException(
+        code: 'PC_CAMERA_BRIDGE_UNAVAILABLE',
+        message:
+            'Cannot reach $baseUri. Start Docker on your PC and connect '
+            'your phone through Android ADB, the same Wi-Fi, or an iPhone USB '
+            'Personal Hotspot network. This is not a real USB/PTP camera test.',
+      );
+    }
     if (health['ok'] != true) {
       throw PlatformException(
         code: 'PC_CAMERA_BRIDGE_UNAVAILABLE',
         message:
-            'PC camera simulator did not answer. Start the bridge and run adb reverse tcp:8765 tcp:8765.',
+            'The endpoint at $baseUri is not the AirPix PC camera simulator.',
       );
     }
     run.active = true;
@@ -43,10 +104,13 @@ class DebugPcCameraTransport implements LiveCameraTransport {
     return LiveCameraSession(
       id: sessionId,
       cameraId: 'pc-camera-simulator',
-      name: 'PC Camera Simulator',
-      physicalShutter: 'supported',
+      name: 'PC Camera Simulator (test only)',
+      // A software trigger cannot establish physical-shutter compatibility.
+      physicalShutter: 'unknown',
       message:
-          'PC test bridge ready. Open http://localhost:8765 on the PC, choose a JPG, and click Simulate shutter.',
+          'PC simulator connected. On the PC open http://localhost:8765 '
+          'and click Simulate shutter. This tests receiving and cloud uploads, '
+          'not the physical USB/PTP camera connection.',
       baselineCount: 0,
       uploadMode: LiveCameraUploadMode.newShotsOnly,
     );

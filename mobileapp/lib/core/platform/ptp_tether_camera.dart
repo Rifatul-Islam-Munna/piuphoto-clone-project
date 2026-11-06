@@ -7,6 +7,7 @@ import 'package:mobileapp/core/platform/live_camera_types.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/platform/ptp_tether_codec.dart';
 import 'package:mobileapp/core/platform/ptp_tether_link.dart';
+import 'package:mobileapp/core/platform/ptp_shooting_safety.dart';
 
 enum _TetherFamily { canonEos, nikon, sony, fuji, standard }
 
@@ -92,6 +93,9 @@ class _TetherRun {
   bool nikonBodyMode = false;
   bool sonyConnected = false;
   bool fullObjectOnly = false;
+  // Some Fuji tether connections expose card objects as well as host events.
+  // Probe only read-only PTP operations; no mode switch or shutter command.
+  bool fujiCardPolling = false;
   bool ready = false;
   bool stopping = false;
   bool disconnected = false;
@@ -102,6 +106,7 @@ class _TetherRun {
   StreamSubscription<Map<Object?, Object?>>? subscription;
   Timer? timer;
   DateTime? lastCardScan;
+  int consecutiveCameraBusyChecks = 0;
 }
 
 /// Original PTP tether implementation using documented wire formats and the
@@ -112,8 +117,10 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
   PtpTetherCameraTransport({
     PtpTetherLink? link,
     this.uploadMode = LiveCameraUploadMode.newShotsOnly,
-    this.eventPollInterval = const Duration(milliseconds: 700),
-    this.cardScanInterval = const Duration(seconds: 3),
+    // Notifications are optional wake-ups. Polling remains active without
+    // a shutter event; one active PTP transaction at a time protects the body.
+    this.eventPollInterval = const Duration(seconds: 1),
+    this.cardScanInterval = const Duration(seconds: 1),
     this.stopGracePeriod = const Duration(seconds: 3),
     Future<void> Function(Duration)? delay,
     DateTime Function()? now,
@@ -221,6 +228,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     bool duringClose = false,
     int busyRetries = 3,
   }) async {
+    PtpShootingSafety.requirePassive(opcode);
     for (var attempt = 0; ; attempt++) {
       if (!duringClose) _checkActive(run);
       final response = await _link.command(
@@ -300,18 +308,30 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         _TetherFamily.fuji => 'Fujifilm',
         _TetherFamily.standard => 'USB camera',
       };
+      final monitoring =
+          run.family == _TetherFamily.fuji && !run.fujiCardPolling
+          ? 'This model requires a camera new-photo notification; its '
+                'card list is not exposed in tether mode.'
+          : run.family == _TetherFamily.sony
+          ? 'AirPix checks the Sony shooting-mode queue every second without '
+                'requiring a shutter event.'
+          : 'AirPix monitors camera events and checks for new card photos '
+                'every ${_effectiveCardScanInterval(run).inSeconds} second(s) '
+                'even if the camera sends no shutter event.';
       return LiveCameraSession(
         id: run.id,
         cameraId: connection.cameraId,
         name: run.info!.model.isEmpty ? connection.name : run.info!.model,
         physicalShutter: connection.physicalShutter,
         message: uploadMode == LiveCameraUploadMode.existingAndNew
-            ? '$family connected for shooting. Existing photos and each new '
-                  'shot upload automatically while AirPix stays open. New '
-                  'shots receive priority as existing photos are checked.'
-            : '$family connected for shooting. Take one photo with the camera '
-                  'shutter and check its preview. Only new photos upload '
-                  'automatically while AirPix stays open.',
+            ? '$family shooting-mode PTP session prepared. $monitoring '
+                  'Existing photos and each new shot enter the local upload '
+                  'queue; new shots have priority. Confirm the camera screen '
+                  'and physical shutter still work.'
+            : '$family shooting-mode PTP session prepared. $monitoring '
+                  'Press the camera’s physical shutter once and verify the '
+                  'screen stays usable and a new photo arrives. Only newly '
+                  'received photos enter the cloud upload queue.',
         baselineCount: run.baselineCount,
         uploadMode: uploadMode,
       );
@@ -434,15 +454,39 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     }
     run.fujiUsbMode = value;
     final events = run.info!.events;
-    if (!events.contains(0xc004) && !events.contains(0x4002)) {
+    final hasPhotoEvents = events.contains(0xc004) || events.contains(0x4002);
+    // Prefer read-only card polling when this tether mode actually exposes
+    // standard storage/handle commands. It works even if event notifications
+    // are missing. Never turn on card-reader mode to obtain those commands.
+    if (run.operations.containsAll([0x1004, 0x1007, 0x1008, 0x1009])) {
+      try {
+        final handles = await _cardHandles(run, requireStorage: false);
+        if (run.storageIds.isNotEmpty) {
+          run.fujiCardPolling = true;
+          run.baselineHandles.addAll(handles);
+          run.observedHandles.addAll(handles);
+          run.baselineCount = handles.length;
+          run.lastCardScan = _now();
+        }
+      } on PtpTetherCommandException catch (error) {
+        // Some Fuji tether protocols expose host notifications but reject
+        // card listing. Only a documented unsupported/busy PTP response
+        // permits the existing event-based receiver to continue.
+        if (!hasPhotoEvents ||
+            !const {0x2005, 0x2009, 0x2019}.contains(error.responseCode)) {
+          rethrow;
+        }
+      }
+    }
+    if (!hasPhotoEvents && !run.fujiCardPolling) {
       throw PlatformException(
         code: 'TETHER_MODE_UNSUPPORTED',
         message:
-            'This Fujifilm body did not advertise a new-photo event in its '
-            'current USB tether mode. AirPix will not claim live shooting.',
+            'This Fujifilm tether connection exposes neither a readable '
+            'card photo list nor new-photo notifications. Select a supported '
+            'USB TETHER SHOOTING mode; AirPix cannot safely monitor this mode.',
       );
     }
-    run.baselineCount = 0;
   }
 
   String _unsupportedCameraGuidance(
@@ -614,7 +658,11 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       run,
       0xd222,
       17,
-      help: 'Set PC Remote Save Dest. to PC + Camera on the Sony camera.',
+      help:
+          'On Sony Alpha 7 IV: Network > Cnct./Remote Sht. > Remote Shoot '
+          'Setting > Still Img. Save Dest. > Dest.+Camera. On older Sony '
+          'models, select PC Remote > PC+Camera. Use Remote Shooting over '
+          'USB, not Mass Storage.',
     );
     await _setSonyProperty(
       run,
@@ -725,7 +773,10 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     throw PlatformException(code: 'TETHER_MODE_NOT_CONFIRMED', message: help);
   }
 
-  Future<Set<int>> _cardHandles(_TetherRun run) async {
+  Future<Set<int>> _cardHandles(
+    _TetherRun run, {
+    bool requireStorage = true,
+  }) async {
     final response = await _command(run, 0x1004);
     final storages = PtpTetherCodec.decodeUint32Array(
       response.data,
@@ -749,7 +800,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       final objects = await _command(run, 0x1007, params: [storage, 0, 0]);
       result.addAll(PtpTetherCodec.decodeUint32Array(objects.data));
     }
-    if (storages.isEmpty && !run.ready) {
+    if (storages.isEmpty && !run.ready && requireStorage) {
       throw PlatformException(
         code: 'TETHER_CARD_RECORDING_REQUIRED',
         message:
@@ -982,9 +1033,44 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
   Future<void> _refresh(_TetherRun run) {
     final current = run.refresh;
     if (current != null) return current;
-    final future = _serial(run, () => _refreshInside(run));
+    // An ordinary PTP DeviceBusy response is expected while the physical
+    // shutter is exposing/writing a photo. Do not claim a broken connection
+    // or repeat a red failure on each 1-second poll: retry next tick.
+    final future = _serial(run, () async {
+      try {
+        await _refreshInside(run);
+        run.consecutiveCameraBusyChecks = 0;
+      } on PtpTetherCommandException catch (error) {
+        if (error.responseCode != 0x2019) rethrow;
+        run.consecutiveCameraBusyChecks++;
+        if (run.consecutiveCameraBusyChecks == 1 ||
+            run.consecutiveCameraBusyChecks % 15 == 0) {
+          _emit(
+            run,
+            'status',
+            run.consecutiveCameraBusyChecks < 15
+                ? 'Camera is saving a shot; AirPix will check again without '
+                      'interrupting the physical shutter.'
+                : 'Camera has stayed busy; keep it awake and close other '
+                      'apps using its USB connection.',
+          );
+        }
+      }
+    });
     run.refresh = future;
     return future.whenComplete(() => run.refresh = null);
+  }
+
+  /// Full card-handle enumeration can block a camera busy saving a physical
+  /// shutter shot. Small cards retain the 1-second fallback; large cards
+  /// use a bounded slower scan. PTP events still wake photo handling early,
+  /// without relying on them for correctness.
+  Duration _effectiveCardScanInterval(_TetherRun run) {
+    if (cardScanInterval <= Duration.zero) return cardScanInterval;
+    final extra = (run.observedHandles.length ~/ 500).clamp(0, 4);
+    return Duration(
+      milliseconds: cardScanInterval.inMilliseconds * (1 + extra),
+    );
   }
 
   Future<void> _refreshInside(_TetherRun run) async {
@@ -1015,9 +1101,9 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     }
     if (run.family != _TetherFamily.sony) {
       final lastScan = run.lastCardScan;
-      if (run.family != _TetherFamily.fuji &&
+      if ((run.family != _TetherFamily.fuji || run.fujiCardPolling) &&
           (lastScan == null ||
-              _now().difference(lastScan) >= cardScanInterval)) {
+              _now().difference(lastScan) >= _effectiveCardScanInterval(run))) {
         final handles = await _cardHandles(run);
         // A previous InvalidObjectHandle can refer to a removed or temporary
         // card entry. Retire that hint only when a subsequent complete scan

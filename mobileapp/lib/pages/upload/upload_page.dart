@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:auto_route/auto_route.dart';
 import 'package:dio/dio.dart';
 import 'package:crypto/crypto.dart' show sha256;
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -23,6 +24,7 @@ import 'package:mobileapp/core/platform/live_camera_capture.dart';
 import 'package:mobileapp/core/platform/network_camera_discovery.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/platform/usb_camera_guidance.dart';
+import 'package:mobileapp/core/platform/usb_camera_mode_advisor.dart';
 import 'package:mobileapp/core/platform/ptp_ip_camera.dart';
 import 'package:mobileapp/core/platform/upnp_camera_media.dart';
 import 'package:mobileapp/core/router/app_router.dart';
@@ -39,6 +41,7 @@ import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/pages/upload/camera_transfer_page.dart';
 import 'package:mobileapp/pages/upload/transfer_list_page.dart';
 import 'package:mobileapp/pages/upload/usb_camera_upload_mode_selector.dart';
+import 'package:mobileapp/pages/upload/usb_camera_setup_help.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 import 'package:mobileapp/widgets/app_ui.dart';
 import 'package:mobileapp/widgets/intrinsic_qr_image.dart';
@@ -46,6 +49,10 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+
+// Keep simulator UI out of production unless an explicit test build enables it.
+const bool _pcSimulatorEnabled =
+    kDebugMode || bool.fromEnvironment('AIRPIX_ENABLE_PC_CAMERA_SIMULATOR');
 
 class _CameraProbe {
   const _CameraProbe({
@@ -618,6 +625,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       );
       if (!mounted || diagnostic == null) return;
       final guidance = UsbCameraGuidance.forStatus(diagnostic.status);
+      final modeAdvice = UsbShootingModeAdvice.fromDiagnostics(diagnostic);
       final cameraFound = diagnostic.cameras.isNotEmpty;
       final cableFound = diagnostic.usbEnumerationAvailable
           ? diagnostic.usbHostSupported != false &&
@@ -658,7 +666,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      guidance.title,
+                      modeAdvice.wrongMode ? modeAdvice.title : guidance.title,
                       style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 4),
@@ -685,6 +693,12 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 ok: cameraFound,
               ),
               _usbCheckRow(
+                icon: Icons.settings_input_component_outlined,
+                label: 'USB shooting mode',
+                value: modeAdvice.status,
+                ok: sessionReady && !modeAdvice.wrongMode,
+              ),
+              _usbCheckRow(
                 icon: Icons.camera_alt_outlined,
                 label: 'Physical shutter',
                 value: shutterSupported
@@ -709,7 +723,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 4),
               Text(
-                guidance.nextSteps,
+                cameraFound || diagnostic.usbDevices.isNotEmpty
+                    ? modeAdvice.nextSteps
+                    : guidance.nextSteps,
                 style: const TextStyle(fontSize: 12, height: 1.4),
               ),
               const SizedBox(height: 10),
@@ -802,7 +818,13 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             TextButton.icon(
               onPressed: () async {
                 await Clipboard.setData(
-                  ClipboardData(text: diagnostic.toSupportReport()),
+                  ClipboardData(
+                    text: [
+                      diagnostic.toSupportReport(),
+                      'USB mode advice: ${modeAdvice.status}',
+                      'Next steps: ${modeAdvice.nextSteps}',
+                    ].join(String.fromCharCode(10)),
+                  ),
                 );
                 AppToast.success('USB report copied');
               },
@@ -870,51 +892,66 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _showLiveCameraSetup() => showDialog<void>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text('Keep the camera ready to shoot'),
-      scrollable: true,
-      content: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'AirPix live USB uses the camera shooting/tether connection, not a normal card-reader workflow.',
-            style: TextStyle(fontWeight: FontWeight.w700),
+  Future<void> _showUsbLiveFailure(
+    UsbCameraGuidance advice,
+    String code, {
+    UsbShootingModeAdvice? modeAdvice,
+  }) async {
+    if (!mounted) return;
+    final showSetup = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(advice.title),
+        scrollable: true,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(advice.details),
+            const SizedBox(height: 16),
+            const Text(
+              'How to fix the connection',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Text(advice.nextSteps),
+            if (modeAdvice != null) ...[
+              const SizedBox(height: 14),
+              Text(
+                modeAdvice.wrongMode
+                    ? 'Wrong camera USB setting detected'
+                    : 'Connection-mode guidance for this camera',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              Text(modeAdvice.nextSteps),
+            ],
+            const SizedBox(height: 12),
+            SelectableText(
+              'Connection code: $code',
+              style: Theme.of(dialogContext).textTheme.bodySmall,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Close'),
           ),
-          SizedBox(height: 12),
-          Text('1. On the camera, choose its shooting USB mode.'),
-          SizedBox(height: 5),
-          Text(
-            'Look for PC Remote, Remote Shooting or USB Tether Shooting. Avoid Mass Storage, Card Reader and USB Streaming.',
-            style: TextStyle(fontSize: 12),
-          ),
-          SizedBox(height: 10),
-          Text('2. Connect the data cable, then tap Connect & start.'),
-          SizedBox(height: 10),
-          Text(
-            '3. Wait for Ready, then keep using the camera shutter normally.',
-          ),
-          SizedBox(height: 5),
-          Text(
-            'Each received new photo is added to the AirPix transfer queue and starts uploading automatically.',
-            style: TextStyle(fontSize: 12),
-          ),
-          SizedBox(height: 12),
-          Text(
-            'AirPix has dedicated live-shooting handling for supported Canon EOS, Nikon, Sony and Fujifilm connections. Exact camera behavior still depends on the model and firmware.',
-            style: TextStyle(fontSize: 12),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.help_outline),
+            label: const Text('Camera setup help'),
           ),
         ],
       ),
-      actions: [
-        FilledButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Done'),
-        ),
-      ],
-    ),
+    );
+    if (showSetup == true && mounted) await _showLiveCameraSetup();
+  }
+
+  Future<void> _showLiveCameraSetup() => showDialog<void>(
+    context: context,
+    builder: (_) => const UsbCameraSetupHelpDialog(),
   );
 
   Future<void> _pickOtgFilesFromFiles() async {
@@ -2465,6 +2502,13 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         if (_isUsbReleaseError(error.code)) _usbReleaseIssue = _otgStatus;
       });
       AppToast.error(advice.title);
+      unawaited(
+        _showUsbLiveFailure(
+          advice,
+          error.code,
+          modeAdvice: UsbShootingModeAdvice.fromFailure(error),
+        ),
+      );
     } catch (error) {
       if (_otgActive(generation)) {
         _safeSetState(() {
@@ -2671,12 +2715,80 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _startPcUsbTestBridge() async {
-    if (!mounted || _disposed) return;
-    if (!Platform.isAndroid) {
-      AppToast.error('The PC USB test bridge currently uses Android ADB.');
-      return;
+  Future<Uri?> _choosePcSimulatorAddress() async {
+    if (Platform.isAndroid) {
+      // Android uses USB ADB reverse, not a camera/PTP connection.
+      return Uri.parse('http://127.0.0.1:8765');
     }
+    if (!Platform.isIOS) return null;
+    final controller = TextEditingController(
+      text: const String.fromEnvironment('AIRPIX_PC_SIMULATOR_URL'),
+    );
+    try {
+      final address = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('PC photo simulator'),
+          scrollable: true,
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Test photo receiving and cloud uploads from your PC. '
+                'This does NOT make the PC a USB/PTP camera or prove real '
+                'camera cable compatibility.',
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                key: const Key('pc_simulator_address'),
+                controller: controller,
+                autofocus: true,
+                keyboardType: TextInputType.url,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(
+                  labelText: 'PC IP address and port',
+                  hintText: '192.168.1.10:8765',
+                  helperText:
+                      'Same Wi-Fi or iPhone USB Personal Hotspot network',
+                ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Run start-ios.ps1 on your PC first. Use the PC IPv4 address '
+                'it displays, not localhost. On iPhone, allow Local Network '
+                'access when asked.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, controller.text),
+              child: const Text('Connect simulator'),
+            ),
+          ],
+        ),
+      );
+      if (address == null || !mounted) return null;
+      return parseDebugPcSimulatorUrl(address);
+    } on FormatException catch (error) {
+      AppToast.error(error.message);
+      return null;
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _startPcUsbTestBridge() async {
+    if (!mounted || _disposed || !_pcSimulatorEnabled) return;
+    final baseUri = await _choosePcSimulatorAddress();
+    if (baseUri == null || !mounted || _disposed) return;
     final event = ActiveEventStorage.activeEvent.value;
     if (event == null) {
       AppToast.error('Select an active event first');
@@ -2711,8 +2823,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       await _startOtgAutoImport(
         target,
         generation: generation,
-        transport: DebugPcCameraTransport(),
-        source: 'pc-usb-test',
+        transport: DebugPcCameraTransport(baseUri: baseUri),
+        source: Platform.isIOS ? 'pc-network-test' : 'pc-usb-test',
       );
     } finally {
       if (_otgActive(generation)) {
@@ -3342,15 +3454,46 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                   color: AppColors.mutedForeground,
                 ),
               ),
+              const SizedBox(height: 8),
+              InkWell(
+                onTap: _showLiveCameraSetup,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 7),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.info_outline_rounded,
+                        color: AppColors.primary,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Live USB: choose your camera’s shooting-capable '
+                          'PTP/tether mode. Mass Storage, card reader or '
+                          'file-transfer mode can lock the shutter. View setup.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.mutedForeground,
+                          ),
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right_rounded, size: 18),
+                    ],
+                  ),
+                ),
+              ),
               const SizedBox(height: 12),
               LayoutBuilder(
                 builder: (context, constraints) {
                   final usbCard = _cameraConnectionCard(
                     icon: Icons.usb_rounded,
                     title: 'USB / OTG',
-                    badge: 'Recommended',
+                    badge: 'PTP live',
                     subtitle:
-                        'Connect by cable. Press the camera shutter and each new photo uploads automatically.',
+                        'Use a shooting-capable camera USB mode. AirPix checks '
+                        'for new photos each second and uploads received files.',
                     detail: _usbUploadMode == LiveCameraUploadMode.newShotsOnly
                         ? 'New shots upload automatically'
                         : 'Existing + new photos upload',
@@ -3746,6 +3889,16 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     );
   }
 
+  /// A black/locked camera display is the highest-priority failure.
+  /// Release our exact PTP owner before giving settings advice; do not
+  /// leave the shooting body held by a stalled photo receiver.
+  Future<void> _restoreUnusableCameraAndShowSetup() async {
+    if (_liveCamera != null || _usbStartRequested) {
+      await _stopOtgAutoImport();
+    }
+    if (mounted) await _showLiveCameraSetup();
+  }
+
   Future<void> _showTransferSessionPage(EventSummary event) async {
     if (!mounted || _connectionPageOpen) return;
     _connectionPageOpen = true;
@@ -3760,6 +3913,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             startedAt: _receivingEventId == event.id ? _sessionStartedAt : null,
             onStop: _stopReceivingSession,
             onShareGuestQr: () => _showGuestQr(event),
+            onCameraSetupHelp: _sessionKind == 'usb'
+                ? () => unawaited(_restoreUnusableCameraAndShowSetup())
+                : null,
             onViewHistory: () => Navigator.of(context).push<void>(
               MaterialPageRoute(
                 builder: (_) => TransferListPage(
@@ -3830,13 +3986,16 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 ],
                 const SizedBox(height: 10),
                 const Divider(height: 1),
-                if (Platform.isAndroid)
+                if (_pcSimulatorEnabled &&
+                    (Platform.isAndroid || Platform.isIOS))
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.science_outlined),
-                    title: const Text('PC USB test bridge'),
-                    subtitle: const Text(
-                      'Testing tool: send simulated camera shots from this PC over the USB/ADB cable.',
+                    title: const Text('PC camera simulator (test only)'),
+                    subtitle: Text(
+                      Platform.isAndroid
+                          ? 'Simulate photos over the Android USB/ADB test bridge.'
+                          : 'Simulate photos over local Wi-Fi or USB hotspot networking. Not a real USB/PTP camera.',
                     ),
                     onTap: _otgBusy || _uploading || _usbStartRequested
                         ? null

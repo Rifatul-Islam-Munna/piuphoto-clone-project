@@ -34,6 +34,7 @@ class CameraTransferPage extends StatefulWidget {
     this.onStop,
     this.onShareGuestQr,
     this.onViewHistory,
+    this.onCameraSetupHelp,
     this.connectionDetailsBuilder,
     this.transfers,
     this.queue,
@@ -48,6 +49,7 @@ class CameraTransferPage extends StatefulWidget {
   final Future<void> Function()? onStop;
   final VoidCallback? onShareGuestQr;
   final VoidCallback? onViewHistory;
+  final VoidCallback? onCameraSetupHelp;
   final WidgetBuilder? connectionDetailsBuilder;
 
   // Optional inputs keep the screen testable without opening a camera or
@@ -317,7 +319,10 @@ class _CameraTransferPageState extends State<CameraTransferPage> {
                                   );
                                 }
                                 if (items.isEmpty) {
-                                  return _EmptyTransfers(session: session);
+                                  return _EmptyTransfers(
+                                    session: session,
+                                    onCameraSetupHelp: widget.onCameraSetupHelp,
+                                  );
                                 }
                                 final item = items[index - 1];
                                 return _TransferPhotoCard(
@@ -396,7 +401,9 @@ class _SessionHeader extends StatelessWidget {
                   stopping
                       ? 'Stopping…'
                       : session.isActive
-                      ? 'Receiving photos'
+                      ? items.isEmpty
+                            ? 'Ready for a test shot'
+                            : 'Receiving photos'
                       : 'Receiving stopped',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -448,9 +455,10 @@ class _SessionHeader extends StatelessWidget {
 }
 
 class _EmptyTransfers extends StatelessWidget {
-  const _EmptyTransfers({required this.session});
+  const _EmptyTransfers({required this.session, this.onCameraSetupHelp});
 
   final CameraTransferSessionStatus session;
+  final VoidCallback? onCameraSetupHelp;
 
   @override
   Widget build(BuildContext context) {
@@ -473,11 +481,23 @@ class _EmptyTransfers extends StatelessWidget {
           const SizedBox(height: 5),
           Text(
             waiting
-                ? 'Keep shooting. New photos appear here and upload automatically.'
+                ? 'Take a test photo with the camera’s physical shutter. '
+                      'If its screen locks, stop and choose a shooting-capable '
+                      'USB tether mode. New photos upload when received.'
+                : session.message.trim().isNotEmpty
+                ? session.message
                 : 'Photos will appear here when the camera connection is ready.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium,
           ),
+          if (onCameraSetupHelp != null) ...[
+            const SizedBox(height: 14),
+            TextButton.icon(
+              onPressed: onCameraSetupHelp,
+              icon: const Icon(Icons.help_outline_rounded),
+              label: const Text('Camera screen black? Stop and fix USB mode'),
+            ),
+          ],
         ],
       ),
     );

@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobileapp/core/platform/live_camera_types.dart';
+import 'package:mobileapp/core/platform/live_camera_capture.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/platform/ptp_tether_camera.dart';
 import 'package:mobileapp/core/platform/ptp_tether_codec.dart';
@@ -12,6 +12,100 @@ import 'package:mobileapp/core/platform/ptp_tether_link.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'live USB polls new photos within the 1-second cadence without shutter events',
+    () async {
+      final link = _CameraLink(_Brand.nikon);
+      final transport = PtpTetherCameraTransport(
+        link: link,
+        stopGracePeriod: const Duration(milliseconds: 5),
+        stagedFileExists: (_) async => true,
+      );
+      final received = Completer<String>();
+      final capture = LiveCameraCapture(transport: transport, onUpdate: (_) {});
+      addTearDown(() async {
+        await capture.stop(notify: false);
+        await link.dispose();
+      });
+
+      expect(transport.cardScanInterval, const Duration(seconds: 1));
+      expect(capture.pollInterval, const Duration(seconds: 1));
+      await capture.start(
+        save: (file, _) async {
+          if (!received.isCompleted) received.complete(file.name);
+        },
+      );
+      // No PTP ObjectAdded event, catalog hint, or explicit receiver.poll().
+      link.addCard(31, const _Photo('NO_EVENT.JPG', 32));
+      final savedName = await received.future.timeout(
+        const Duration(seconds: 4),
+      );
+      expect(savedName, 'NO_EVENT.JPG');
+      expect(link.downloads.map((item) => item.handle), [31]);
+      // The save callback resolves before its asynchronous native ACK.
+      for (var i = 0; i < 20 && link.acknowledgements.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(link.acknowledgements, hasLength(1));
+      _expectNoCaptureOrLock(link);
+    },
+  );
+
+  test(
+    'large card uses slower read-only polling without requiring events',
+    () async {
+      final link = _CameraLink(_Brand.nikon);
+      for (var handle = 1; handle <= 1100; handle++) {
+        link.addCard(handle, _Photo('OLD_$handle.JPG', 32));
+      }
+      var now = DateTime.utc(2026, 11, 6);
+      final transport = PtpTetherCameraTransport(
+        link: link,
+        cardScanInterval: const Duration(seconds: 1),
+        eventPollInterval: const Duration(days: 1),
+        now: () => now,
+        stopGracePeriod: const Duration(milliseconds: 5),
+      );
+      addTearDown(() async {
+        await transport.stop('large-card');
+        await link.dispose();
+      });
+
+      final session = await transport.start('large-card');
+      expect(session.baselineCount, 1100);
+      expect(session.message, contains('every 3 second(s)'));
+      expect(await transport.pending('large-card'), isEmpty);
+      final initialScans = link.calls
+          .where((call) => call.opcode == 0x1007)
+          .length;
+      expect(initialScans, 1);
+
+      // Reading a large object list on *every* timer tick can compete with
+      // the physical shutter. No card list is re-enumerated before 3 seconds.
+      for (var i = 0; i < 10; i++) {
+        expect(await transport.pending('large-card'), isEmpty);
+      }
+      link.addCard(1101, const _Photo('AFTER_SHUTTER.JPG', 36));
+      now = now.add(const Duration(seconds: 2));
+      expect(await transport.pending('large-card'), isEmpty);
+      expect(
+        link.calls.where((call) => call.opcode == 0x1007).length,
+        initialScans,
+      );
+
+      now = now.add(const Duration(seconds: 1));
+      final received = await transport.pending('large-card');
+      expect(received.map((photo) => photo.name), ['AFTER_SHUTTER.JPG']);
+      expect(
+        link.calls.where((call) => call.opcode == 0x1007).length,
+        initialScans + 1,
+      );
+      await transport.download('large-card', received.single.id);
+      await transport.acknowledge('large-card', [received.single.id]);
+      _expectNoCaptureOrLock(link);
+    },
+  );
 
   group('physical camera tether workflows', () {
     test(
@@ -595,6 +689,49 @@ void main() {
     );
 
     test(
+      'temporary camera-busy responses do not break shutter polling or lose new photos',
+      () async {
+        final link = _CameraLink(_Brand.nikon);
+        final camera = _transport(link);
+        final events = <LiveCameraEvent>[];
+        final subscription = camera
+            .eventsForSession('camera-writing')
+            .listen(events.add);
+        addTearDown(() async {
+          await subscription.cancel();
+          await camera.stop('camera-writing');
+          await link.dispose();
+        });
+        await camera.start('camera-writing');
+
+        // Camera is busy writing a physical-shutter image. All four PTP
+        // attempts return DeviceBusy; receiver should keep the session,
+        // not disconnect it or display recurring fatal errors.
+        link.busyStorageResponses = 4;
+        link.addCard(55, const _Photo('PHYSICAL_SHUTTER.JPG', 24));
+        expect(await camera.pending('camera-writing'), isEmpty);
+        expect(
+          events.any(
+            (event) =>
+                event.type == 'status' &&
+                event.message.contains('saving a shot'),
+          ),
+          isTrue,
+        );
+        expect(events.any((event) => event.type == 'error'), isFalse);
+        expect(link.closed, isEmpty);
+
+        // Next normal poll recovers the new shot without needing an event.
+        final recovered = await camera.pending('camera-writing');
+        expect(recovered.map((shot) => shot.name), ['PHYSICAL_SHUTTER.JPG']);
+        await camera.download('camera-writing', recovered.single.id);
+        await camera.acknowledge('camera-writing', [recovered.single.id]);
+        expect(await camera.pending('camera-writing'), isEmpty);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
       'temporary filenames retry without blocking other complete photos',
       () async {
         final link = _CameraLink(_Brand.nikon);
@@ -859,7 +996,9 @@ void main() {
           link.calls.map((call) => call.opcode),
           containsAll([0x1001, 0x1015]),
         );
-        expect(link.calls.any((call) => call.opcode == 0x1004), isFalse);
+        // Read-only card polling is preferred when Fuji tether mode exposes
+        // card handles, even though vendor notifications remain supported.
+        expect(link.calls.any((call) => call.opcode == 0x1004), isTrue);
 
         link.objects[77] = const _Photo('FUJI0001.JPG', 12);
         link.eventsController.add({
@@ -876,6 +1015,51 @@ void main() {
         await camera.acknowledge('fuji', [shot.id]);
         expect(await camera.pending('fuji'), isEmpty);
         _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Fujifilm card polling discovers photos without any event support',
+      () async {
+        final link = _CameraLink(_Brand.fuji)..advertiseFujiEvents = false;
+        link.addCard(7, const _Photo('BEFORE.JPG', 16));
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('fuji-poll');
+          await link.dispose();
+        });
+        final session = await camera.start('fuji-poll');
+        expect(session.baselineCount, 1);
+        // The baseline must never upload as a new photo.
+        expect(await camera.pending('fuji-poll'), isEmpty);
+
+        link.addCard(8, const _Photo('AFTER.JPG', 24));
+        final found = await camera.pending('fuji-poll');
+        expect(found.map((shot) => shot.name), ['AFTER.JPG']);
+        await camera.download('fuji-poll', found.single.id);
+        await camera.acknowledge('fuji-poll', [found.single.id]);
+        expect(await camera.pending('fuji-poll'), isEmpty);
+        expect(
+          link.calls.where((call) => call.opcode == 0x1007).length,
+          greaterThanOrEqualTo(2),
+        );
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Fujifilm refuses a mode without both card listing and photo events',
+      () async {
+        final link = _CameraLink(_Brand.fuji)
+          ..advertiseFujiEvents = false
+          ..unavailableOperations.add(0x1004);
+        final camera = _transport(link);
+        addTearDown(link.dispose);
+        await expectLater(
+          camera.start('fuji-no-poll'),
+          _error('TETHER_MODE_UNSUPPORTED'),
+        );
+        expect(link.calls.any((call) => call.opcode == 0x1004), isFalse);
       },
     );
 
@@ -1605,6 +1789,8 @@ void _expectNoCaptureOrLock(_CameraLink link) {
   const forbidden = {
     0x100b, // DeleteObject.
     0x100e, // InitiateCapture.
+    0x100f, // InitiateOpenCapture.
+    0x1010, // TerminateOpenCapture.
     0x910f, // EOS RemoteRelease.
     0x911b, // EOS SetUILock.
     0x9128, // EOS RemoteReleaseOn.
@@ -1698,6 +1884,8 @@ class _CameraLink implements PtpTetherLink {
   int sonyDestination = 17;
   int? sonyMemoryOverride;
   int fujiUsbMode = 5;
+  bool advertiseFujiEvents = true;
+  int busyStorageResponses = 0;
   List<int> sonyDestinationChoices = [1, 16, 17];
   bool acceptPropertyWrites = true;
   Completer<void>? openGate;
@@ -1769,6 +1957,10 @@ class _CameraLink implements PtpTetherLink {
       case 0x1001:
         return _ok(_deviceInfo());
       case 0x1004:
+        if (busyStorageResponses > 0) {
+          busyStorageResponses--;
+          return PtpTetherResponse(responseCode: 0x2019);
+        }
         return _ok(_array32(storages.keys.toList()));
       case 0x1007:
         expect(params.sublist(1), [0, 0]);
@@ -1934,7 +2126,10 @@ class _CameraLink implements PtpTetherLink {
     0,
     ..._u16(0),
     ..._array16(operations.toList()),
-    ..._array16([if (brand == _Brand.fuji) 0xc004 else 0x4002]),
+    ..._array16([
+      if (brand != _Brand.fuji || advertiseFujiEvents)
+        if (brand == _Brand.fuji) 0xc004 else 0x4002,
+    ]),
     ..._array16([if (brand == _Brand.fuji) PtpTetherPropertyCode.fujiUsbMode]),
     ..._array16([0x3801]),
     ..._array16([0x3801]),
