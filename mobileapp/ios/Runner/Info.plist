@@ -27,9 +27,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>AirPix uses camera access to capture photos and communicate with supported external USB/PTP cameras.</string>
+	<string>AirPix uses the camera to scan event QR codes, take event photos, and receive photos from supported USB cameras.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>AirPix connects directly to cameras on your local Wi-Fi to discover, import, and auto-upload new photos.</string>
+	<string>AirPix finds and connects to cameras on your Wi-Fi network to receive photos and upload them to your selected event.</string>
 	<key>NSBonjourServices</key>
 	<array>
 
@@ -40,9 +40,9 @@
 
 	</array>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>AirPix needs photo library add access to save downloaded event photos.</string>
+	<string>AirPix saves event photos to your photo library when you choose Save to Photos.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>AirPix needs photo library access to select and upload event photos.</string>
+	<string>AirPix lets you select photos from your library to upload to your selected event.</string>
 	<key>NSAppTransportSecurity</key>
 
 	<dict>

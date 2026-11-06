@@ -9,12 +9,76 @@ import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/platform/ptp_tether_camera.dart';
 import 'package:mobileapp/core/platform/ptp_tether_codec.dart';
 import 'package:mobileapp/core/platform/ptp_tether_link.dart';
+import 'package:mobileapp/core/platform/usb_camera_mode_advisor.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-    'live USB polls new photos within the 3-second cadence without shutter events',
+    'unverified USB identity closes with brand guidance before any vendor command',
+    () async {
+      final link = _CameraLink(_Brand.canon)..vendorIdOverride = 0x1234;
+      final camera = _transport(link);
+      addTearDown(link.dispose);
+      try {
+        await camera.start('unverified-identity');
+        fail('An unknown USB identity must not inherit Canon control commands');
+      } on PlatformException catch (error) {
+        expect(error.code, 'PTP_SHOOTING_COMMAND_BLOCKED');
+        expect(
+          UsbShootingModeAdvice.fromFailure(error)?.nextSteps,
+          contains('Photo Import/Remote Control'),
+        );
+      }
+      expect(
+        link.calls.map((call) => call.opcode),
+        everyElement(lessThan(0x9000)),
+      );
+      expect(link.closed, ['unverified-identity']);
+      expect(link.downloads, isEmpty);
+    },
+  );
+
+  test(
+    'native policy rejection cancels vendor polling and releases USB',
+    () async {
+      final link = _CameraLink(_Brand.sony);
+      final camera = PtpTetherCameraTransport(
+        link: link,
+        eventPollInterval: const Duration(milliseconds: 25),
+        stopGracePeriod: const Duration(milliseconds: 5),
+        stagedFileExists: (_) async => true,
+      );
+      final disconnected = Completer<LiveCameraEvent>();
+      final events = camera.eventsForSession('policy').listen((event) {
+        if (event.type == 'disconnected' && !disconnected.isCompleted) {
+          disconnected.complete(event);
+        }
+      });
+      addTearDown(() async {
+        await camera.stop('policy');
+        await events.cancel();
+        await link.dispose();
+      });
+      await camera.start('policy');
+      link.nativeCommandFailure = PlatformException(
+        code: 'PTP_SHOOTING_COMMAND_BLOCKED',
+      );
+      final event = await disconnected.future.timeout(
+        const Duration(seconds: 3),
+      );
+      expect(event.code, 'PTP_SHOOTING_COMMAND_BLOCKED');
+      await camera.stop('policy');
+      expect(link.closed, ['policy']);
+      final calls = link.calls.length;
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(link.calls.length, calls);
+      expect(link.downloads, isEmpty);
+    },
+  );
+
+  test(
+    'live USB polls new photos within the one-second cadence without shutter events',
     () async {
       final link = _CameraLink(_Brand.nikon);
       final transport = PtpTetherCameraTransport(
@@ -29,8 +93,8 @@ void main() {
         await link.dispose();
       });
 
-      expect(transport.cardScanInterval, const Duration(seconds: 3));
-      expect(capture.pollInterval, const Duration(seconds: 3));
+      expect(transport.cardScanInterval, const Duration(seconds: 1));
+      expect(capture.pollInterval, const Duration(milliseconds: 500));
       await capture.start(
         save: (file, _) async {
           if (!received.isCompleted) received.complete(file.name);
@@ -48,6 +112,71 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
       expect(link.acknowledgements, hasLength(1));
+      _expectNoCaptureOrLock(link);
+    },
+  );
+
+  for (final brand in [_Brand.panasonic, _Brand.olympus]) {
+    test(
+      '${brand.name} receives a shot on the real one-second timer without events',
+      () async {
+        final link = _CameraLink(brand);
+        final transport = PtpTetherCameraTransport(
+          link: link,
+          stagedFileExists: (_) async => true,
+        );
+        final received = Completer<String>();
+        final capture = LiveCameraCapture(
+          transport: transport,
+          onUpdate: (_) {},
+        );
+        addTearDown(() async {
+          await capture.stop(notify: false);
+          await link.dispose();
+        });
+        await capture.start(
+          save: (file, _) async {
+            if (!received.isCompleted) received.complete(file.name);
+          },
+        );
+        link.addCard(31, const _Photo('NO_EVENT.JPG', 32));
+        expect(
+          await received.future.timeout(const Duration(seconds: 8)),
+          'NO_EVENT.JPG',
+        );
+        expect(link.downloads.map((item) => item.handle), [31]);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+  }
+
+  test(
+    'fast polling backs off while the camera is saving a physical shot',
+    () async {
+      final link = _CameraLink(_Brand.nikon);
+      var now = DateTime.utc(2026, 11, 7);
+      final camera = _transport(link, now: () => now);
+      addTearDown(() async {
+        await camera.stop('busy');
+        await link.dispose();
+      });
+      await camera.start('busy');
+      link.addCard(91, const _Photo('AFTER_BUSY.JPG', 32));
+      link.busyStorageResponses = 2;
+      expect(await camera.pending('busy'), isEmpty);
+      final first = link.calls.length;
+      for (var i = 0; i < 10; i++) {
+        expect(await camera.pending('busy'), isEmpty);
+      }
+      expect(link.calls.length, first);
+      now = now.add(const Duration(milliseconds: 500));
+      expect(await camera.pending('busy'), isEmpty);
+      final second = link.calls.length;
+      now = now.add(const Duration(milliseconds: 500));
+      expect(await camera.pending('busy'), isEmpty);
+      expect(link.calls.length, second);
+      now = now.add(const Duration(milliseconds: 500));
+      expect((await camera.pending('busy')).single.name, 'AFTER_BUSY.JPG');
       _expectNoCaptureOrLock(link);
     },
   );
@@ -715,10 +844,9 @@ void main() {
         });
         await camera.start('camera-writing');
 
-        // Camera is busy writing a physical-shutter image. All four PTP
-        // attempts return DeviceBusy; receiver should keep the session,
-        // not disconnect it or display recurring fatal errors.
-        link.busyStorageResponses = 4;
+        // A busy storage response yields to the physical camera. The next
+        // allowed poll recovers, without four immediate retries.
+        link.busyStorageResponses = 1;
         link.addCard(55, const _Photo('PHYSICAL_SHUTTER.JPG', 24));
         expect(await camera.pending('camera-writing'), isEmpty);
         expect(
@@ -732,7 +860,8 @@ void main() {
         expect(events.any((event) => event.type == 'error'), isFalse);
         expect(link.closed, isEmpty);
 
-        // Next normal poll recovers the new shot without needing an event.
+        // Next permitted poll recovers the new shot without needing an event.
+        await Future<void>.delayed(const Duration(milliseconds: 510));
         final recovered = await camera.pending('camera-writing');
         expect(recovered.map((shot) => shot.name), ['PHYSICAL_SHUTTER.JPG']);
         await camera.download('camera-writing', recovered.single.id);
@@ -952,44 +1081,313 @@ void main() {
       },
     );
 
-    for (final (vendor, brand, mode) in [
-      (0x04da, 'Panasonic / LUMIX', 'PC(Tether)'),
-      (0x33a2, 'OM SYSTEM / Olympus', 'PC-control tether adapter'),
-      (0x25fb, 'Pentax / Ricoh', 'PTP/MTP'),
-    ]) {
+    for (final vendor in [0x04da, 0x33a2, 0x07b4]) {
       test(
-        '$brand is identified automatically without claiming an unsupported adapter',
+        'brand $vendor without tether capabilities is refused before writes',
         () async {
-          final link = _CameraLink(_Brand.unknown)
-            ..vendorIdOverride = vendor
-            ..model = 'Detected body';
+          final link = _CameraLink(_Brand.unknown)..vendorIdOverride = vendor;
           final camera = _transport(link);
           addTearDown(link.dispose);
           await expectLater(
-            camera.start('identified-$vendor'),
-            throwsA(
-              isA<PlatformException>()
-                  .having(
-                    (error) => error.code,
-                    'code',
-                    'TETHER_CAMERA_UNSUPPORTED',
-                  )
-                  .having(
-                    (error) => error.message,
-                    'message',
-                    allOf(
-                      contains(brand),
-                      contains(mode),
-                      contains('does not yet provide'),
-                    ),
-                  ),
-            ),
+            camera.start('unsupported'),
+            _error('TETHER_MODE_UNSUPPORTED'),
           );
-          expect(link.calls.map((call) => call.opcode).toSet(), {0x1001});
-          expect(link.closed, contains('identified-$vendor'));
+          expect(link.calls.map((call) => call.opcode), [0x1001]);
+          expect(link.closed, ['unsupported']);
         },
       );
     }
+
+    for (final brand in [_Brand.panasonic, _Brand.olympus]) {
+      test(
+        '${brand.name} polls card shots and acknowledges without deleting originals',
+        () async {
+          final link = _CameraLink(brand)
+            ..addCard(1, const _Photo('OLD.JPG', 24));
+          final camera = _transport(link);
+          addTearDown(() async {
+            await camera.stop('vendor');
+            await link.dispose();
+          });
+          expect((await camera.start('vendor')).baselineCount, 1);
+          expect(await camera.pending('vendor'), isEmpty);
+          link.addCard(2, const _Photo('NEW.JPG', 24));
+          final pending = await camera.pending('vendor');
+          expect(pending.map((p) => p.name), ['NEW.JPG']);
+          await camera.download('vendor', pending.single.id);
+          await camera.acknowledge('vendor', [pending.single.id]);
+          expect(await camera.pending('vendor'), isEmpty);
+          expect(link.objects.keys, containsAll([1, 2]));
+          _expectNoCaptureOrLock(link);
+          expect(link.calls.where((c) => c.opcode == 0x940b), isEmpty);
+          expect(
+            link.calls
+                .where((c) => c.opcode == 0x1016)
+                .every((c) => c.params.single == 0xd052),
+            isTrue,
+          );
+        },
+      );
+
+      test('${brand.name} prioritizes new shots over old photos', () async {
+        final link = _CameraLink(brand)
+          ..addCard(1, const _Photo('OLD.JPG', 24));
+        final camera = _transport(
+          link,
+          uploadMode: LiveCameraUploadMode.existingAndNew,
+        );
+        addTearDown(() async {
+          await camera.stop('both');
+          await link.dispose();
+        });
+        await camera.start('both');
+        link.addCard(2, const _Photo('NEW.JPG', 24));
+        expect((await camera.pending('both')).first.name, 'NEW.JPG');
+      });
+
+      test('${brand.name} stops polling when card recording changes', () async {
+        final link = _CameraLink(brand);
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('changed');
+          await link.dispose();
+        });
+        await camera.start('changed');
+        link.panasonicTarget = 1;
+        link.olympusTarget = 1;
+        link.addCard(3, const _Photo('HOST.JPG', 24));
+        await expectLater(
+          camera.pending('changed'),
+          _error('TETHER_MODE_CHANGED'),
+        );
+        expect(link.downloads, isEmpty);
+        expect(link.calls.where((c) => c.opcode == 0x940b), isEmpty);
+      });
+    }
+
+    for (final target in [1, 3, 65535]) {
+      test(
+        'LUMIX rejects unverified target $target without a setter',
+        () async {
+          final link = _CameraLink(_Brand.panasonic)..panasonicTarget = target;
+          final camera = _transport(link);
+          addTearDown(link.dispose);
+          await expectLater(
+            camera.start('target'),
+            _error('TETHER_CAMERA_SETTING_REQUIRED'),
+          );
+          expect(link.calls.map((c) => c.opcode), [0x1001, 0x940a]);
+          expect(link.closed, ['target']);
+        },
+      );
+    }
+
+    test('LUMIX accepts SD + PC without changing the destination', () async {
+      final link = _CameraLink(_Brand.panasonic)..panasonicTarget = 2;
+      final camera = _transport(link);
+      addTearDown(() async {
+        await camera.stop('both-target');
+        await link.dispose();
+      });
+      await camera.start('both-target');
+      expect(link.panasonicTarget, 2);
+      expect(link.calls.where((c) => c.opcode == 0x940b), isEmpty);
+    });
+
+    test('LUMIX malformed target data closes without guessing', () async {
+      final link = _CameraLink(_Brand.panasonic)..panasonicTargetReply = [0, 0];
+      final camera = _transport(link);
+      addTearDown(link.dispose);
+      await expectLater(camera.start('bad'), throwsFormatException);
+      expect(link.closed, ['bad']);
+    });
+
+    test('vendor RAM/preview hints never become card photographs', () async {
+      for (final brand in [_Brand.panasonic, _Brand.olympus]) {
+        final link = _CameraLink(brand)..panasonicTarget = 2;
+        final camera = _transport(link);
+        await camera.start('hints');
+        link.eventsController.add({
+          'sessionId': 'hints',
+          'type': 'ptpEvent',
+          'data': _usbEvent(brand == _Brand.panasonic ? 0xc109 : 0xc004, 999),
+        });
+        expect(await camera.pending('hints'), isEmpty);
+        expect(link.metadataHandles, isNot(contains(999)));
+        link.addCard(2, const _Photo('CARD.JPG', 24));
+        expect((await camera.pending('hints')).single.name, 'CARD.JPG');
+        await camera.stop('hints');
+        await link.dispose();
+      }
+    });
+
+    test(
+      'OM control-off notification restores and releases the connection',
+      () async {
+        final link = _CameraLink(_Brand.olympus);
+        final camera = _transport(link);
+        addTearDown(link.dispose);
+        await camera.start('off');
+        link.eventsController.add({
+          'sessionId': 'off',
+          'type': 'ptpEvent',
+          'data': _usbEvent(0xc105, 0),
+        });
+        await camera.stop('off');
+        expect(link.olympusControl, 2);
+        expect(link.closed, ['off']);
+      },
+    );
+
+    test('OM restores the original connection mode after stop', () async {
+      final link = _CameraLink(_Brand.olympus);
+      final camera = _transport(link);
+      addTearDown(link.dispose);
+      await camera.start('om');
+      expect(link.olympusControl, 1);
+      await camera.stop('om');
+      expect(link.olympusControl, 2);
+      final writes = link.calls.where((c) => c.opcode == 0x1016).toList();
+      expect(writes.map((c) => c.params), [
+        [0xd052],
+        [0xd052],
+      ]);
+      expect(writes.map((c) => c.data!.first), [1, 2]);
+      expect(link.closed, ['om']);
+    });
+
+    test(
+      'OM does not write or restore a connection already in PC mode',
+      () async {
+        final link = _CameraLink(_Brand.olympus)..olympusControl = 1;
+        final camera = _transport(link);
+        addTearDown(link.dispose);
+        await camera.start('existing-pc');
+        await camera.stop('existing-pc');
+        expect(link.olympusControl, 1);
+        expect(link.calls.where((c) => c.opcode == 0x1016), isEmpty);
+      },
+    );
+
+    test('OM refuses host-only recording before connection writes', () async {
+      final link = _CameraLink(_Brand.olympus)..olympusTarget = 1;
+      final camera = _transport(link);
+      addTearDown(link.dispose);
+      await expectLater(
+        camera.start('host'),
+        _error('TETHER_CAMERA_SETTING_REQUIRED'),
+      );
+      expect(link.calls.where((c) => c.opcode == 0x1016), isEmpty);
+      expect(link.olympusControl, 2);
+    });
+
+    test(
+      'OM refuses read-only or non-reversible control descriptors',
+      () async {
+        for (final link in [
+          _CameraLink(_Brand.olympus)..olympusWritable = false,
+          _CameraLink(_Brand.olympus)..olympusChoices = [1],
+          _CameraLink(_Brand.olympus)..olympusAdvertiseProperties = false,
+        ]) {
+          final camera = _transport(link);
+          await expectLater(
+            camera.start('unsafe'),
+            _error('TETHER_MODE_UNSUPPORTED'),
+          );
+          expect(link.calls.where((c) => c.opcode == 0x1016), isEmpty);
+          await link.dispose();
+        }
+      },
+    );
+
+    test(
+      'OM failed connection readback still attempts restoration and closes',
+      () async {
+        final link = _CameraLink(_Brand.olympus)..olympusAcceptStart = false;
+        final camera = _transport(link);
+        addTearDown(link.dispose);
+        await expectLater(
+          camera.start('failed'),
+          _error('TETHER_CAMERA_SETTING_REQUIRED'),
+        );
+        expect(
+          link.calls.where((c) => c.opcode == 0x1016).map((c) => c.data!.first),
+          [1, 2],
+        );
+        expect(link.closed, ['failed']);
+      },
+    );
+
+    test(
+      'OM restoration failure is visible and still closes the native session',
+      () async {
+        final link = _CameraLink(_Brand.olympus)..olympusAcceptRestore = false;
+        final camera = _transport(link);
+        addTearDown(link.dispose);
+        await camera.start('restore');
+        await expectLater(
+          camera.stop('restore'),
+          _error('TETHER_RELEASE_INCOMPLETE'),
+        );
+        expect(link.closed, ['restore']);
+      },
+    );
+
+    test(
+      'OM physical disconnect never attempts a write to a disconnected body',
+      () async {
+        final link = _CameraLink(_Brand.olympus);
+        final camera = _transport(link);
+        addTearDown(link.dispose);
+        await camera.start('unplug');
+        link.eventsController.add({
+          'sessionId': 'unplug',
+          'type': 'disconnected',
+        });
+        await camera.stop('unplug');
+        expect(
+          link.calls.where((c) => c.opcode == 0x1016).map((c) => c.data!.first),
+          [1],
+        );
+        expect(link.closed, ['unplug']);
+      },
+    );
+
+    test(
+      'Pentax refuses unverified PTP without enabling Mass Storage',
+      () async {
+        final link = _CameraLink(_Brand.pentax);
+        final camera = _transport(link);
+        addTearDown(link.dispose);
+        await expectLater(
+          camera.start('pentax'),
+          _error('TETHER_CAMERA_UNSUPPORTED'),
+        );
+        expect(link.calls.map((c) => c.opcode), [0x1001]);
+        expect(link.closed, ['pentax']);
+      },
+    );
+
+    test(
+      'Pentax capability-confirmed connection uses only read-only card commands',
+      () async {
+        final link = _CameraLink(_Brand.pentax)..physicalShutter = 'supported';
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('pentax');
+          await link.dispose();
+        });
+        await camera.start('pentax');
+        link.addCard(7, const _Photo('IMGP0007.JPG', 24));
+        expect((await camera.pending('pentax')).single.name, 'IMGP0007.JPG');
+        expect(
+          link.calls.every(
+            (c) => const {0x1001, 0x1004, 0x1007, 0x1008}.contains(c.opcode),
+          ),
+          isTrue,
+        );
+      },
+    );
 
     test(
       'Fujifilm USB tether mode receives a physical-shutter object event',
@@ -1815,7 +2213,7 @@ void _expectNoCaptureOrLock(_CameraLink link) {
   );
 }
 
-enum _Brand { canon, nikon, sony, fuji, unknown }
+enum _Brand { canon, nikon, sony, fuji, panasonic, olympus, pentax, unknown }
 
 class _Photo {
   const _Photo(
@@ -1862,12 +2260,16 @@ class _CameraLink implements PtpTetherLink {
         _Brand.nikon => 'Nikon Z6',
         _Brand.sony => 'ILCE-7M4',
         _Brand.fuji => 'FUJIFILM X-T5',
+        _Brand.panasonic => 'DC-GH5',
+        _Brand.olympus => 'OM-1',
+        _Brand.pentax => 'PENTAX K-1',
         _Brand.unknown => 'Unprofiled Camera',
       };
 
   final _Brand brand;
   String model;
   int? vendorIdOverride;
+  PlatformException? nativeCommandFailure;
   String physicalShutter = 'unknown';
   final eventsController = StreamController<Map<Object?, Object?>>.broadcast(
     sync: true,
@@ -1895,6 +2297,15 @@ class _CameraLink implements PtpTetherLink {
   int sonyDestination = 17;
   int? sonyMemoryOverride;
   int fujiUsbMode = 5;
+  int panasonicTarget = 0;
+  List<int>? panasonicTargetReply;
+  int olympusControl = 2;
+  int olympusTarget = 2;
+  bool olympusWritable = true;
+  bool olympusAdvertiseProperties = true;
+  bool olympusAcceptStart = true;
+  bool olympusAcceptRestore = true;
+  List<int> olympusChoices = [1, 2];
   bool advertiseFujiEvents = true;
   int busyStorageResponses = 0;
   List<int> sonyDestinationChoices = [1, 16, 17];
@@ -1913,6 +2324,8 @@ class _CameraLink implements PtpTetherLink {
     if (brand == _Brand.nikon) ...{0x90c2, 0x90c7, 0x941c},
     if (brand == _Brand.sony) ...{0x9201, 0x9202, 0x9205, 0x9209},
     if (brand == _Brand.fuji) 0x1015,
+    if (brand == _Brand.panasonic) ...{0x9404, 0x940a},
+    if (brand == _Brand.olympus) ...{0x9486, 0x1014, 0x1015, 0x1016},
   }.difference(unavailableOperations);
 
   void addCard(int handle, _Photo photo, {int storage = 1}) {
@@ -1941,6 +2354,9 @@ class _CameraLink implements PtpTetherLink {
             _Brand.nikon => 0x04b0,
             _Brand.sony => 0x054c,
             _Brand.fuji => 0x04cb,
+            _Brand.panasonic => 0x04da,
+            _Brand.olympus => 0x33a2,
+            _Brand.pentax => 0x0a17,
             _Brand.unknown => 0,
           }),
       physicalShutter: physicalShutter,
@@ -1959,6 +2375,7 @@ class _CameraLink implements PtpTetherLink {
   }) async {
     calls.add(_Call(sessionId, opcode, List.of(params), outData));
     timeline.add('command:${opcode.toRadixString(16)}');
+    if (nativeCommandFailure != null) throw nativeCommandFailure!;
     if (!operations.contains(opcode)) {
       throw StateError(
         'Unadvertised camera command ${opcode.toRadixString(16)}',
@@ -2062,7 +2479,43 @@ class _CameraLink implements PtpTetherLink {
           ..._sonyProperty(0xd222, 4, sonyDestination, sonyDestinationChoices),
           ..._sonyProperty(0xd215, 4, memory, null, writable: false),
         ]);
+      case 0x940a:
+        expect(brand, _Brand.panasonic);
+        expect(params, [0x08000090]);
+        return _ok(
+          panasonicTargetReply ??
+              [..._u32(0x08000091), ..._u32(2), ..._u16(panasonicTarget)],
+        );
+      case 0x1014:
+        expect(brand, _Brand.olympus);
+        expect(params, [0xd052]);
+        return _ok([
+          ..._u16(0xd052),
+          ..._u16(4),
+          olympusWritable ? 1 : 0,
+          ..._u16(2),
+          ..._u16(olympusControl),
+          2,
+          ..._u16(olympusChoices.length),
+          for (final value in olympusChoices) ..._u16(value),
+        ]);
+      case 0x1016:
+        expect(brand, _Brand.olympus);
+        expect(params, [0xd052]);
+        final value = PtpTetherCodec.decodeValue(4, outData!) as int;
+        expect([1, 2], contains(value));
+        if ((value == 1 && olympusAcceptStart) ||
+            (value == 2 && olympusAcceptRestore)) {
+          olympusControl = value;
+        }
+        return _ok();
       case 0x1015:
+        if (brand == _Brand.olympus) {
+          expect([0xd052, 0xd0dc], contains(params.single));
+          return _ok(
+            _u16(params.single == 0xd052 ? olympusControl : olympusTarget),
+          );
+        }
         expect(brand, _Brand.fuji);
         expect(params, [PtpTetherPropertyCode.fujiUsbMode]);
         return _ok(_u16(fujiUsbMode));
@@ -2131,6 +2584,9 @@ class _CameraLink implements PtpTetherLink {
       _Brand.nikon => 10,
       _Brand.sony => 17,
       _Brand.fuji => 14,
+      _Brand.panasonic => 28,
+      _Brand.olympus => 0xfffd,
+      _Brand.pentax => 13,
       _Brand.unknown => 0,
     }),
     ..._u16(100),
@@ -2141,7 +2597,13 @@ class _CameraLink implements PtpTetherLink {
       if (brand != _Brand.fuji || advertiseFujiEvents)
         if (brand == _Brand.fuji) 0xc004 else 0x4002,
     ]),
-    ..._array16([if (brand == _Brand.fuji) PtpTetherPropertyCode.fujiUsbMode]),
+    ..._array16([
+      if (brand == _Brand.fuji) PtpTetherPropertyCode.fujiUsbMode,
+      if (brand == _Brand.olympus && olympusAdvertiseProperties) ...[
+        0xd052,
+        0xd0dc,
+      ],
+    ]),
     ..._array16([0x3801]),
     ..._array16([0x3801]),
     ..._string(switch (brand) {
@@ -2149,6 +2611,9 @@ class _CameraLink implements PtpTetherLink {
       _Brand.nikon => 'Nikon',
       _Brand.sony => 'Sony',
       _Brand.fuji => 'FUJIFILM',
+      _Brand.panasonic => 'Panasonic',
+      _Brand.olympus => 'OM SYSTEM',
+      _Brand.pentax => 'PENTAX',
       _Brand.unknown => 'Unprofiled',
     }),
     ..._string(model),

@@ -14,7 +14,11 @@ class UsbCameraSetupHelpDialog extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('1. Choose the camera’s shooting USB mode below.'),
+          const Text(
+            '1. On the camera, choose USB remote control / tethered shooting. '
+            'It may be called Remote Shooting, PC Remote, or PC(Tether). '
+            'Find your brand below for the exact setting.',
+          ),
           const SizedBox(height: 10),
           const Text('2. Connect a data cable, then tap Connect & start.'),
           const SizedBox(height: 10),
@@ -25,7 +29,7 @@ class UsbCameraSetupHelpDialog extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           const Text(
-            'AirPix checks for new photos every 3 seconds (up to 5 seconds '
+            'AirPix checks for new photos every second (up to 5 seconds '
             'for large cards), even without '
             'a shutter event. The camera must expose photos through its '
             'shooting-capable PTP/tether protocol. Ordinary PTP/MTP file '
@@ -56,9 +60,17 @@ class UsbCameraSetupHelpDialog extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           const Text(
-            'If the camera screen or shutter locks, release the connection '
-            'and check its USB mode. Support depends on model and firmware; '
-            'a successful connection is not a completed shooting test.',
+            'No automatic storage-mode fallback',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'If setup fails, AirPix stops receiving and shows setup guidance. '
+            'It never selects Mass Storage, Card Reader or USB Streaming. '
+            'If the camera screen or shutter becomes unavailable, tap Stop '
+            'session, unplug USB, then check the camera setting before retrying. '
+            'The camera controls its USB mode and display; compatibility '
+            'depends on the model and firmware.',
           ),
         ],
       ),
@@ -75,22 +87,21 @@ class UsbCameraSetupHelpDialog extends StatelessWidget {
     (
       'Panasonic / LUMIX',
       'PC(Tether)',
-      'Select the model’s PC(Tether) shooting connection, not PC(Storage), '
-          'and keep a writable memory card inserted. This build has no '
-          'dedicated LUMIX vendor-mode adapter yet. It can only monitor '
-          'the body when iOS exposes physical-shutter support and standard '
-          'PTP card-object commands in a shooting-capable mode. Otherwise '
-          'use a supported camera FTP route; do not use storage mode.',
+      'Select PC(Tether) and keep a writable memory card inserted. AirPix '
+          'checks the LUMIX tether capabilities and confirms SD or SD + PC '
+          'recording without changing that setting. New card photos are '
+          'checked about every second, even without photo notifications. '
+          'PC(Storage) and unsupported tether modes are rejected.',
     ),
     (
       'Olympus / OM SYSTEM',
       'RAW/Control or camera-to-computer control icon',
-      'Choose the shooting/control USB mode in your camera manual and '
-          'insert a writable card, not Storage/MTP mode. This build does '
-          'not implement OM-D vendor PC-control negotiation. Generic live '
-          'PTP is used only when iOS explicitly reports physical-shutter '
-          'support and standard card-object commands. An unsupported model '
-          'will be rejected instead of forcing a file-transfer session.',
+      'Select RAW/Control (the camera-to-computer control icon on some '
+          'models) and camera-card recording. AirPix verifies the OM-D '
+          'protocol, opens its PC connection when permitted, and restores '
+          'the previous connection mode on Stop. It does not change shooting '
+          'settings or start live view. New card photos are checked about '
+          'every second. Model and firmware testing is still required.',
     ),
     (
       'Pentax / Ricoh',
@@ -98,6 +109,7 @@ class UsbCameraSetupHelpDialog extends StatelessWidget {
       'Live receiving is available only when the phone explicitly confirms '
           'physical-shutter support on this connection. PTP/MTP file access '
           'or a desktop tethering app does not confirm iPhone support. '
+          'The Pentax SCSI protocol requires Mass Storage and is not used. '
           'Otherwise use manual import for stored photos or camera FTP when '
           'available. Do not switch to Mass Storage for Live shooting.',
     ),
@@ -118,6 +130,18 @@ class UsbCameraSetupHelpDialog extends StatelessWidget {
           'must still negotiate the Nikon shooting protocol and verify '
           'the physical shutter works. Use a data cable and writable card; '
           'file-import capability alone is not proof of live shooting.',
+    ),
+    (
+      'Sony Alpha 7R IV (ILCE-7RM4)',
+      'PC Remote Function > USB',
+      'Unplug USB. MENU > Network > Ctrl w/ Smartphone > Off. '
+          'Open Network > PC Remote Function: set PC Remote to On, '
+          'PC Remote Cnct Method to USB, and Still Img. Save Dest. to '
+          'PC+Camera. Use Camera priority where available, keep a writable '
+          'card inserted, then reconnect and choose New shots only in AirPix. '
+          'This model uses PC Remote Function, unlike the Alpha 7 IV menu. '
+          'For quicker JPEG transfer, you can choose JPEG Only for RAW+J PC '
+          'Save Img and 2M for PC Save Image Size; 2M reduces upload resolution.',
     ),
     (
       'Sony Alpha 7 IV (ILCE-7M4)',

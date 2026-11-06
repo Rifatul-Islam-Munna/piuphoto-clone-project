@@ -17,6 +17,8 @@ class _Camera implements LiveCameraTransport {
   int failedDownloads = 0;
   int failedAcks = 0;
   int failedStops = 0;
+  PlatformException? pendingError;
+  PlatformException? downloadError;
   Completer<void>? opening;
   Completer<void>? closing;
   Completer<void>? downloadGate;
@@ -55,12 +57,14 @@ class _Camera implements LiveCameraTransport {
   @override
   Future<List<ConnectedCameraImage>> pending(String sessionId) async {
     pendingCalls++;
+    if (pendingError != null) throw pendingError!;
     return List.of(photos);
   }
 
   @override
   Future<OtgPickedFile> download(String sessionId, String imageId) async {
     downloaded.add(imageId);
+    if (downloadError != null) throw downloadError!;
     if (failedDownloads > 0) {
       failedDownloads--;
       throw PlatformException(code: 'CAMERA_FILE_NOT_READY');
@@ -114,6 +118,38 @@ void main() {
     await capture.stop();
     await camera.signals.close();
   });
+
+  for (final duringDownload in [false, true]) {
+    test(
+      'blocked native command stops receiving without retry (download: $duringDownload)',
+      () async {
+        final saved = <String>[];
+        final session = await capture.start(
+          save: (file, _) async => saved.add(file.id!),
+        );
+        await capture.poll();
+        final blocked = PlatformException(
+          code: 'PTP_SHOOTING_COMMAND_BLOCKED',
+          message: 'Receiving stopped; check the camera USB shooting mode.',
+        );
+        if (duringDownload) {
+          camera.downloadError = blocked;
+          camera.add('blocked-shot');
+        } else {
+          camera.pendingError = blocked;
+        }
+        await capture.poll();
+        expect(camera.stopped, [session.id]);
+        expect(saved, isEmpty);
+        expect(camera.acknowledgements, isEmpty);
+        expect(updates.last.phase, LiveCameraPhase.disconnected);
+        expect(updates.last.code, 'PTP_SHOOTING_COMMAND_BLOCKED');
+        final checks = camera.pendingCalls;
+        await capture.poll();
+        expect(camera.pendingCalls, checks);
+      },
+    );
+  }
 
   test(
     'waits for local persistence before acknowledging a new photo',

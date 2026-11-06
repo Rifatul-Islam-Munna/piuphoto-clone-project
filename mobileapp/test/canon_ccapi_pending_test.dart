@@ -4,9 +4,163 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dio/dio.dart';
+import 'package:crypto/crypto.dart';
 import 'package:mobileapp/core/platform/canon_ccapi_camera.dart';
 
 void main() {
+  test(
+    'only event and content reads are allowed, even for camera-provided URLs',
+    () async {
+      final server = await _CcapiServer.start();
+      server.events.add(
+        const _Events({
+          'addedcontents': [
+            '/capture/SHOT.JPG',
+            '/snapshot.JPG',
+            '/live/SHOT.JPG',
+            '/ccapi/ver140/shooting/control/shutterbutton.JPG',
+            '/ccapi/ver140/contents/../../shooting/SHOT.JPG',
+            '/ccapi/ver140/contents/SAFE.JPG',
+          ],
+        }),
+      );
+      final camera = await _connect(server);
+      addTearDown(() async {
+        await camera.close();
+        await server.close();
+      });
+      final pending = await camera.pollAddedContents();
+      expect(pending.map((p) => p.name), ['SAFE.JPG']);
+      for (final path in [
+        '/capture/SHOT.JPG',
+        '/live.JPG',
+        '/ccapi/ver140/shooting/control/shutterbutton.JPG',
+      ]) {
+        expect(
+          await camera.download(
+            CanonCcapiContent(
+              url: camera.origin.resolve(path).toString(),
+              name: 'SHOT.JPG',
+            ),
+          ),
+          isNull,
+        );
+      }
+      expect(server.downloadRequests, 0);
+      expect(await camera.download(pending.single), hasLength(4));
+      expect(
+        server.requests.every(
+          (r) =>
+              r.method == 'GET' &&
+              (r.uri.path.endsWith('/event/polling') ||
+                  r.uri.path == '/ccapi/ver140/contents/SAFE.JPG'),
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test('a content redirect cannot invoke a capture or live-view URL', () async {
+    final server = await _CcapiServer.start();
+    server.events.add(
+      const _Events({
+        'addedcontents': ['/ccapi/ver140/contents/REDIRECT.JPG'],
+      }),
+    );
+    final camera = await _connect(server);
+    addTearDown(() async {
+      await camera.close();
+      await server.close();
+    });
+    final content = (await camera.pollAddedContents()).single;
+    server.redirectDownloads = true;
+    expect(await camera.download(content), isNull);
+    expect(server.requests.where((r) => r.uri.path == '/capture'), isEmpty);
+    expect((await camera.pollAddedContents()).single.url, content.url);
+  });
+
+  test(
+    'event discovery redirects are refused without probing control URLs',
+    () async {
+      final server = await _CcapiServer.start();
+      server.redirectEvents = true;
+      addTearDown(server.close);
+      final camera = await CanonCcapiCamera.discover([
+        Uri.parse('http://127.0.0.1:${server.port}'),
+      ], exactEndpoint: true);
+      expect(camera, isNull);
+      expect(server.requests, hasLength(5));
+      expect(
+        server.requests.every((r) => r.uri.path.endsWith('/event/polling')),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'stopping while connecting cancels discovery without more probes',
+    () async {
+      final server = await _CcapiServer.start();
+      server.holdPoll = Completer<void>();
+      addTearDown(server.close);
+      final token = CancelToken();
+      final connecting = CanonCcapiCamera.discover(
+        [Uri.parse('http://127.0.0.1:${server.port}')],
+        exactEndpoint: true,
+        cancellation: token,
+      );
+      await server.firstRequest.future;
+      token.cancel('Stopped');
+      expect(await connecting.timeout(const Duration(seconds: 2)), isNull);
+      expect(server.requests, hasLength(1));
+    },
+  );
+
+  for (final scheme in ['Basic', 'Digest']) {
+    test(
+      '$scheme login uses a camera challenge and only read endpoints',
+      () async {
+        final server = await _CcapiServer.start();
+        server.authentication = scheme;
+        addTearDown(server.close);
+        final camera = await CanonCcapiCamera.discover(
+          [Uri.parse('http://127.0.0.1:${server.port}')],
+          exactEndpoint: true,
+          username: 'photographer',
+          password: 'test-password',
+        );
+        expect(camera, isNotNull);
+        addTearDown(camera!.close);
+        server.events.add(
+          const _Events({
+            'addedcontents': ['/ccapi/ver140/contents/AUTH.JPG'],
+          }),
+        );
+        final photo = (await camera.pollAddedContents()).single;
+        expect(await camera.download(photo), [1, 2, 3, 4]);
+        expect(server.authenticatedRequests, greaterThanOrEqualTo(3));
+        expect(server.firstAuthorization, isNull);
+        expect(server.requests.every((r) => r.method == 'GET'), isTrue);
+      },
+    );
+  }
+
+  test('wrong camera login fails with bounded attempts', () async {
+    final server = await _CcapiServer.start();
+    server.authentication = 'Digest';
+    addTearDown(server.close);
+    final camera = await CanonCcapiCamera.discover(
+      [Uri.parse('http://127.0.0.1:${server.port}')],
+      exactEndpoint: true,
+      username: 'photographer',
+      password: 'wrong',
+    );
+    expect(camera, isNull);
+    expect(server.requests.length, lessThanOrEqualTo(10));
+    expect(server.authenticatedRequests, 0);
+  });
+
   test(
     'discovery announcements survive polling/download failure until local acknowledgement',
     () async {
@@ -208,6 +362,13 @@ class _CcapiServer {
   final events = Queue<_Events>();
   final pollStarted = Completer<void>();
   Completer<void>? holdPoll;
+  final requests = <HttpRequest>[];
+  final firstRequest = Completer<void>();
+  String? authentication;
+  String? firstAuthorization;
+  int authenticatedRequests = 0;
+  bool redirectDownloads = false;
+  bool redirectEvents = false;
   int pollRequests = 0;
   int downloadRequests = 0;
   int failDownloads = 0;
@@ -227,7 +388,34 @@ class _CcapiServer {
 
   Future<void> _request(HttpRequest request) async {
     try {
+      if (requests.isEmpty) {
+        firstAuthorization = request.headers.value(
+          HttpHeaders.authorizationHeader,
+        );
+        firstRequest.complete();
+      }
+      requests.add(request);
+      if (authentication != null) {
+        if (!_authorized(request)) {
+          request.response.statusCode = 401;
+          request.response.headers.set(
+            HttpHeaders.wwwAuthenticateHeader,
+            authentication == 'Basic'
+                ? 'Basic realm="Camera"'
+                : 'Digest realm="Camera", nonce="test-nonce", algorithm=MD5, qop="auth"',
+          );
+          await request.response.close();
+          return;
+        }
+        authenticatedRequests++;
+      }
       if (request.uri.path.endsWith('/event/polling')) {
+        if (redirectEvents) {
+          request.response.statusCode = 302;
+          request.response.headers.set(HttpHeaders.locationHeader, '/capture');
+          await request.response.close();
+          return;
+        }
         pollRequests++;
         if (pollRequests > 1 && !pollStarted.isCompleted) {
           pollStarted.complete();
@@ -239,6 +427,12 @@ class _CcapiServer {
         request.response.write(jsonEncode(event.payload));
       } else {
         downloadRequests++;
+        if (redirectDownloads) {
+          request.response.statusCode = 302;
+          request.response.headers.set(HttpHeaders.locationHeader, '/capture');
+          await request.response.close();
+          return;
+        }
         if (failDownloads > 0) {
           failDownloads--;
           request.response.statusCode = 503;
@@ -262,6 +456,30 @@ class _CcapiServer {
     } catch (_) {
       // The client may cancel a held response or deliberately reject a body.
     }
+  }
+
+  bool _authorized(HttpRequest request) {
+    final header = request.headers.value(HttpHeaders.authorizationHeader) ?? '';
+    if (authentication == 'Basic') {
+      return header ==
+          'Basic ${base64Encode(utf8.encode('photographer:test-password'))}';
+    }
+    if (!header.startsWith('Digest ')) return false;
+    final fields = <String, String>{
+      for (final match in RegExp(
+        r'(\w+)=(?:"([^"]*)"|([^,\s]+))',
+      ).allMatches(header))
+        match.group(1)!: match.group(2) ?? match.group(3)!,
+    };
+    String hash(String value) => md5.convert(utf8.encode(value)).toString();
+    final ha1 = hash('photographer:Camera:test-password');
+    final ha2 = hash('GET:${request.uri}');
+    final nc = fields['nc'];
+    final cnonce = fields['cnonce'];
+    final expected = hash('$ha1:test-nonce:$nc:$cnonce:auth:$ha2');
+    return fields['username'] == 'photographer' &&
+        fields['uri'] == request.uri.toString() &&
+        fields['response'] == expected;
   }
 
   Future<void> close() async {

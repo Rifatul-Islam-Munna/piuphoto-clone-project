@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:mobileapp/core/upload/camera_private_files.dart';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
@@ -756,6 +758,12 @@ class UploadQueueService {
   /// A failed delete retries cleanup only; it must never trigger another upload.
   static Future<void> _cleanupCompletedFile(PendingUploadItem item) async {
     try {
+      if (!await CameraPrivateFiles.isQueuePath(item.localPath)) {
+        throw FileSystemException(
+          'Refusing cleanup outside private upload queue',
+          item.localPath,
+        );
+      }
       final type = await FileSystemEntity.type(
         item.localPath,
         followLinks: false,

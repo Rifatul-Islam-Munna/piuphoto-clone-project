@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -21,12 +20,9 @@ import 'package:mobileapp/core/platform/transfer_screen_awake.dart';
 import 'package:mobileapp/core/platform/device_settings.dart';
 import 'package:mobileapp/core/platform/gallery_auto_import.dart';
 import 'package:mobileapp/core/platform/live_camera_capture.dart';
-import 'package:mobileapp/core/platform/network_camera_discovery.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/platform/usb_camera_guidance.dart';
 import 'package:mobileapp/core/platform/usb_camera_mode_advisor.dart';
-import 'package:mobileapp/core/platform/ptp_ip_camera.dart';
-import 'package:mobileapp/core/platform/upnp_camera_media.dart';
 import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/camera_ftp_profile_storage.dart';
@@ -50,26 +46,12 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mobileapp/pages/upload/canon_wireless_setup_dialog.dart';
 
 // Keep simulator UI out of production unless an explicit test build enables it.
 const bool _pcSimulatorEnabled =
     kDebugMode || bool.fromEnvironment('AIRPIX_ENABLE_PC_CAMERA_SIMULATOR');
-
-class _CameraProbe {
-  const _CameraProbe({
-    required this.sourceUrl,
-    required this.imageUrl,
-    required this.signature,
-    required this.usesListing,
-    this.initialKeys = const <String>{},
-  });
-
-  final String sourceUrl;
-  final String imageUrl;
-  final String signature;
-  final bool usesListing;
-  final Set<String> initialKeys;
-}
 
 class _SelectedUploadFile {
   const _SelectedUploadFile({required this.path, required this.name});
@@ -113,12 +95,6 @@ const _cameraDeniedCodes = {
   'USB_PERMISSION_REQUIRED',
 };
 
-class _PtpProbe {
-  const _PtpProbe(this.camera);
-
-  final PtpIpCamera camera;
-}
-
 enum _WirelessImportMode { ftp, sharedNetwork, cameraHotspot }
 
 class _WirelessCaptureTarget {
@@ -158,7 +134,6 @@ class UploadPage extends StatefulWidget {
 
 class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   final _picker = ImagePicker();
-  final Dio _cameraDio = Dio();
   final List<_SelectedUploadFile> _selectedFiles = [];
   Timer? _wirelessTimer;
   Timer? _galleryTimer;
@@ -213,19 +188,14 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   int _wirelessFailureCount = 0;
   int? _gallerySinceMs;
   final Set<String> _processedGalleryIds = {};
-  final Set<String> _processedWirelessIds = {};
   String? _galleryStatus;
   String? _otgStatus;
   String? _uploadStatus;
   String? _wirelessStatus;
   String? _otgSourceName;
-  String? _wirelessSourceUrl;
-  String? _wirelessImageUrl;
-  String? _lastWirelessSignature;
-  PtpIpCamera? _ptpIpCamera;
   CanonCcapiCamera? _canonCcapiCamera;
-  UpnpCameraMedia? _upnpCameraMedia;
-  bool _wirelessUsesListing = false;
+  CancelToken? _wirelessConnectCancellation;
+  DateTime? _wirelessRetryAfter;
   String? _loadedAlbumEventId;
   String? _selectedAlbumId;
   List<AlbumModel> _albums = [];
@@ -302,7 +272,10 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   }
 
   bool _wirelessActive(int generation) =>
-      mounted && !_disposed && generation == _wirelessGeneration;
+      mounted &&
+      !_disposed &&
+      generation == _wirelessGeneration &&
+      ActiveEventStorage.activeEvent.value?.id == _receivingEventId;
 
   bool _otgActive(int generation) =>
       mounted && !_disposed && generation == _otgGeneration;
@@ -407,12 +380,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     final canonCamera = _canonCcapiCamera;
     _canonCcapiCamera = null;
     if (canonCamera != null) unawaited(canonCamera.close());
-    _cameraDio.close(force: true);
-    final ptpCamera = _ptpIpCamera;
-    _ptpIpCamera = null;
-    if (ptpCamera != null) {
-      unawaited(ptpCamera.close());
-    }
+    _wirelessConnectCancellation?.cancel('Page closed');
     super.dispose();
   }
 
@@ -1312,587 +1280,17 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     }
   }
 
-  String _signatureForBytes(Uint8List bytes) {
-    var hash = 2166136261;
-    for (final byte in bytes) {
-      hash ^= byte;
-      hash = (hash * 16777619) & 0xffffffff;
-    }
-    return '${bytes.length}:$hash';
-  }
-
-  String _filenameFromUrl(String url) {
-    final uri = Uri.tryParse(url);
-    final segment = uri?.pathSegments.isNotEmpty ?? false
-        ? uri!.pathSegments.last
-        : '';
-    if (segment.contains('.')) {
-      return segment;
-    }
-    return 'wireless-${DateTime.now().millisecondsSinceEpoch}.jpg';
-  }
-
-  bool _looksLikeImage(Uint8List bytes) {
-    if (bytes.length < 4) return false;
-    final isJpeg = bytes[0] == 0xff && bytes[1] == 0xd8;
-    final isPng = bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4e;
-    final isGif = bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46;
-    final isWebp =
-        bytes.length > 12 &&
-        bytes[0] == 0x52 &&
-        bytes[1] == 0x49 &&
-        bytes[2] == 0x46 &&
-        bytes[8] == 0x57 &&
-        bytes[9] == 0x45 &&
-        bytes[10] == 0x42 &&
-        bytes[11] == 0x50;
-    return isJpeg || isPng || isGif || isWebp;
-  }
-
-  List<String> _wirelessCameraHosts() => const [
-    'http://192.168.0.1',
-    'http://192.168.0.10',
-    'http://192.168.0.100',
-    'http://192.168.1.1',
-    'http://192.168.1.2',
-    'http://192.168.1.10',
-    'http://192.168.1.100',
-    'http://192.168.1.254',
-    'http://192.168.2.1',
-    'http://192.168.3.1',
-    'http://192.168.4.1',
-    'http://192.168.5.1',
-    'http://192.168.8.1',
-    'http://192.168.42.1',
-    'http://192.168.49.1',
-    'http://192.168.100.1',
-    'http://192.168.122.1',
-    'http://192.168.137.1',
-    'http://10.0.0.1',
-    'http://10.0.0.10',
-    'http://10.0.1.1',
-    'http://172.16.0.1',
-    'http://172.20.10.1',
-  ];
-
-  List<String> _wirelessCameraCandidates() {
-    final hosts = _wirelessCameraHosts();
-    const paths = [
-      '/',
-      '/index.html',
-      '/DCIM/',
-      '/DCIM/100CANON/',
-      '/DCIM/101CANON/',
-      '/DCIM/100EOS/',
-      '/DCIM/101EOS/',
-      '/DCIM/100NIKON/',
-      '/DCIM/101NIKON/',
-      '/DCIM/100MSDCF/',
-      '/DCIM/101MSDCF/',
-      '/DCIM/100_FUJI/',
-      '/DCIM/101_FUJI/',
-      '/DCIM/100_PANA/',
-      '/DCIM/101_PANA/',
-      '/DCIM/100PENTX/',
-      '/DCIM/101PENTX/',
-      '/DCIM/100OLYMP/',
-      '/DCIM/101OLYMP/',
-      '/DCIM/100RICOH/',
-      '/DCIM/101RICOH/',
-      '/DCIM/100LEICA/',
-      '/DCIM/101LEICA/',
-      '/DCIM/100HASBL/',
-      '/DCIM/101HASBL/',
-      '/DCIM/100GOPRO/',
-      '/DCIM/101GOPRO/',
-      '/DCIM/100MEDIA/',
-      '/DCIM/101MEDIA/',
-      '/DCIM/100APPLE/',
-      '/DCIM/100ANDRO/',
-      '/sd/DCIM/',
-      '/latest.jpg',
-      '/latest.jpeg',
-      '/image.jpg',
-      '/photo.jpg',
-      '/capture',
-      '/snapshot',
-      '/shot.jpg',
-      '/view.jpg',
-      '/live.jpg',
-      '/live',
-      '/api/v1/photos/latest',
-    ];
-
-    return [
-      for (final host in hosts)
-        for (final path in paths) '$host$path',
-    ];
-  }
-
-  List<String> _candidateUrlsForDiscovery(DiscoveredCameraService service) {
-    final parsed = Uri.tryParse(service.url);
-    if (parsed == null) return [service.url];
-
-    final base = parsed.removeFragment().replace(query: '').toString();
-    final origin = parsed
-        .replace(path: '/', query: '', fragment: '')
-        .toString();
-    final urls = <String>{base, origin};
-
-    const extraPaths = [
-      '/latest.jpg',
-      '/latest.jpeg',
-      '/image.jpg',
-      '/photo.jpg',
-      '/capture',
-      '/snapshot',
-      '/shot.jpg',
-      '/DCIM/',
-    ];
-
-    for (final path in extraPaths) {
-      urls.add(parsed.replace(path: path, query: '', fragment: '').toString());
-      urls.add(Uri.parse(origin).resolve(path).toString());
-    }
-
-    return urls.toList(growable: false);
-  }
-
-  bool _looksLikeCameraListing(
-    String body,
-    String sourceUrl,
-    List<String> imageLinks,
-  ) {
-    final haystack = '${sourceUrl.toLowerCase()}\n${body.toLowerCase()}';
-    const hints = [
-      'camera',
-      'dcim',
-      'canon',
-      'eos',
-      'nikon',
-      'sony',
-      'alpha',
-      'fujifilm',
-      'fuji',
-      'lumix',
-      'panasonic',
-      'olympus',
-      'om system',
-      'pentax',
-      'ricoh',
-      'leica',
-      'hasselblad',
-      'ptp',
-      'image capture',
-    ];
-    if (hints.any(haystack.contains)) return true;
-
-    final cameraName = RegExp(
-      r'(?:^|[/_-])(?:img|dsc|dscn|dscf|pict|_mg|pxl)[_-]?\d+',
-      caseSensitive: false,
-    );
-    return imageLinks.any((url) {
-      final path = Uri.tryParse(url)?.path ?? url;
-      return cameraName.hasMatch(path);
-    });
-  }
-
-  List<String> _extractImageLinks(String body, String sourceUrl) {
-    final matches = RegExp(
-      r'''(?:href|src)\s*=\s*["']([^"']+\.(?:jpe?g|png|gif|webp|heic))(?:\?[^"']*)?["']''',
-      caseSensitive: false,
-    ).allMatches(body);
-
-    final results = <String>[];
-    for (final match in matches) {
-      final raw = match.group(1);
-      if (raw == null || raw.isEmpty) continue;
-      final resolved = Uri.parse(sourceUrl).resolve(raw).toString();
-      if (!results.contains(resolved)) {
-        results.add(resolved);
-      }
-    }
-    return results;
-  }
-
-  Future<Uint8List?> _downloadImageBytes(String url) async {
-    final response = await _cameraDio.get<List<int>>(
-      url,
-      options: Options(
-        responseType: ResponseType.bytes,
-        receiveTimeout: const Duration(seconds: 3),
-        sendTimeout: const Duration(seconds: 3),
-        validateStatus: (status) => status != null && status < 500,
-      ),
-    );
-    final contentType = response.headers.value(Headers.contentTypeHeader) ?? '';
-    final bytes = Uint8List.fromList(response.data ?? []);
-    final returnsImage =
-        contentType.toLowerCase().startsWith('image/') ||
-        (contentType.isEmpty && _looksLikeImage(bytes));
-    if (bytes.isEmpty || !returnsImage) return null;
-    return bytes;
-  }
-
-  Future<_CameraProbe?> _probeCameraUrl(String url) async {
-    try {
-      final response = await _cameraDio.get<List<int>>(
-        url,
-        options: Options(
-          responseType: ResponseType.bytes,
-          receiveTimeout: const Duration(seconds: 2),
-          sendTimeout: const Duration(seconds: 2),
-          validateStatus: (status) => status != null && status < 500,
-        ),
-      );
-      final contentType =
-          response.headers.value(Headers.contentTypeHeader) ?? '';
-      final bytes = Uint8List.fromList(response.data ?? []);
-      final returnsImage =
-          contentType.toLowerCase().startsWith('image/') ||
-          (contentType.isEmpty && _looksLikeImage(bytes));
-
-      if (bytes.isNotEmpty && returnsImage) {
-        return _CameraProbe(
-          sourceUrl: url,
-          imageUrl: url,
-          signature: _signatureForBytes(bytes),
-          usesListing: false,
-        );
-      }
-
-      final body = utf8.decode(bytes, allowMalformed: true);
-      if (body.isEmpty) return null;
-      final imageLinks = _extractImageLinks(body, url);
-      if (imageLinks.isEmpty ||
-          !_looksLikeCameraListing(body, url, imageLinks)) {
-        return null;
-      }
-
-      final latestImageUrl = imageLinks.last;
-      final imageBytes = await _downloadImageBytes(latestImageUrl);
-      if (imageBytes == null) return null;
-
-      return _CameraProbe(
-        sourceUrl: url,
-        imageUrl: latestImageUrl,
-        signature: _signatureForBytes(imageBytes),
-        usesListing: true,
-        initialKeys: imageLinks.length <= 500
-            ? imageLinks.toSet()
-            : imageLinks.sublist(imageLinks.length - 500).toSet(),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<List<String>> _localPtpIpHosts() async {
-    final hosts = <String>{};
-    try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLoopback: false,
-        includeLinkLocal: false,
-      );
-      for (final interface in interfaces) {
-        for (final address in interface.addresses) {
-          final parts = address.address.split('.');
-          if (parts.length != 4) continue;
-          final octets = parts.map(int.tryParse).toList();
-          if (octets.any((value) => value == null)) continue;
-          final a = octets[0]!;
-          final b = octets[1]!;
-          final isPrivate =
-              a == 10 ||
-              (a == 172 && b >= 16 && b <= 31) ||
-              (a == 192 && b == 168);
-          if (!isPrivate) continue;
-          final prefix = '${parts[0]}.${parts[1]}.${parts[2]}';
-          for (var host = 1; host <= 254; host++) {
-            if (host.toString() == parts[3]) continue;
-            hosts.add('$prefix.$host');
-          }
-        }
-      }
-    } catch (_) {}
-    return hosts.toList(growable: false);
-  }
-
-  Future<List<Uri>> _localHttpCameraOrigins() async {
-    final hosts = await _localPtpIpHosts();
-    if (hosts.isEmpty) return const [];
-    final limitedHosts = hosts.take(508).toList(growable: false);
-    final origins = <Uri>{};
-    var cursor = 0;
-
-    Future<void> worker() async {
-      while (cursor < limitedHosts.length) {
-        final host = limitedHosts[cursor++];
-        for (final port in const [80, 8080]) {
-          Socket? socket;
-          try {
-            socket = await Socket.connect(
-              host,
-              port,
-              timeout: const Duration(milliseconds: 180),
-            );
-            origins.add(Uri(scheme: 'http', host: host, port: port, path: '/'));
-          } catch (_) {
-          } finally {
-            socket?.destroy();
-          }
-        }
-      }
-    }
-
-    final workerCount = limitedHosts.length < 48 ? limitedHosts.length : 48;
-    await Future.wait([for (var i = 0; i < workerCount; i++) worker()]);
-    return origins.toList(growable: false);
-  }
-
-  Future<_PtpProbe?> _discoverPtpIpCamera(
-    List<DiscoveredCameraService> discovered,
-  ) async {
-    final primaryTargets = <MapEntry<String, int>>[];
-    final seen = <String>{};
-
-    void addPrimary(String host, int port) {
-      if (host.isEmpty) return;
-      final key = '$host|$port';
-      if (seen.add(key)) primaryTargets.add(MapEntry(host, port));
-    }
-
-    for (final service in discovered) {
-      final uri = Uri.tryParse(service.url);
-      if (uri == null || uri.host.isEmpty) continue;
-      final description = service.description?.toLowerCase() ?? '';
-      final ptpPort = description.contains('ptp')
-          ? uri.port
-          : PtpIpCamera.defaultPort;
-      addPrimary(uri.host, ptpPort);
-      if (ptpPort != PtpIpCamera.defaultPort) {
-        addPrimary(uri.host, PtpIpCamera.defaultPort);
-      }
-    }
-
-    for (final url in _wirelessCameraHosts()) {
-      final uri = Uri.tryParse(url);
-      if (uri != null && uri.host.isNotEmpty) {
-        addPrimary(uri.host, PtpIpCamera.defaultPort);
-      }
-    }
-
-    Future<_PtpProbe?> probeTargets(
-      List<MapEntry<String, int>> targets, {
-      required int batchSize,
-      required Duration connectTimeout,
-    }) async {
-      for (var start = 0; start < targets.length; start += batchSize) {
-        final end = (start + batchSize < targets.length)
-            ? start + batchSize
-            : targets.length;
-        final batch = targets.sublist(start, end);
-        final attempts = await Future.wait(
-          batch.map((target) async {
-            final camera = await PtpIpCamera.connect(
-              target.key,
-              port: target.value,
-              timeout: connectTimeout,
-            );
-            if (camera == null) return null;
-            try {
-              await camera.establishLiveBaseline();
-              return _PtpProbe(camera);
-            } catch (_) {
-              await camera.close();
-              return null;
-            }
-          }),
-        );
-
-        _PtpProbe? winner;
-        for (final attempt in attempts) {
-          if (attempt != null) {
-            winner = attempt;
-            break;
-          }
-        }
-        if (winner != null) {
-          for (final attempt in attempts.whereType<_PtpProbe>()) {
-            if (!identical(attempt.camera, winner.camera)) {
-              unawaited(attempt.camera.close());
-            }
-          }
-          debugPrint(
-            '[Camera] PTP/IP connected ${winner.camera.host}:${winner.camera.port}',
-          );
-          return winner;
-        }
-      }
-      return null;
-    }
-
-    final primary = await probeTargets(
-      primaryTargets,
-      batchSize: 8,
-      connectTimeout: const Duration(milliseconds: 800),
-    );
-    if (primary != null) return primary;
-
-    final localHosts = await _localPtpIpHosts();
-    final subnetTargets = <MapEntry<String, int>>[];
-    for (final host in localHosts) {
-      final key = '$host|${PtpIpCamera.defaultPort}';
-      if (seen.add(key)) {
-        subnetTargets.add(MapEntry(host, PtpIpCamera.defaultPort));
-      }
-    }
-    if (subnetTargets.isNotEmpty) {
-      debugPrint(
-        '[Camera] Fast PTP/IP subnet scan: ${subnetTargets.length} hosts',
-      );
-    }
-    return probeTargets(
-      subnetTargets,
-      batchSize: 32,
-      connectTimeout: const Duration(milliseconds: 300),
-    );
-  }
-
-  Future<_CameraProbe?> _discoverWirelessCamera(int generation) async {
-    final oldPtpCamera = _ptpIpCamera;
-    _ptpIpCamera = null;
-    final oldCanonCamera = _canonCcapiCamera;
-    _canonCcapiCamera = null;
-    if (oldCanonCamera != null) unawaited(oldCanonCamera.close());
-    _upnpCameraMedia = null;
-    if (oldPtpCamera != null) {
-      unawaited(oldPtpCamera.close());
-    }
-
-    final discovered = await NetworkCameraDiscovery.discover(
-      timeout: const Duration(seconds: 3),
-    );
-    if (!_wirelessActive(generation)) return null;
-
-    final ptpProbe = await _discoverPtpIpCamera(discovered);
-    if (!_wirelessActive(generation)) {
-      if (ptpProbe != null) unawaited(ptpProbe.camera.close());
-      return null;
-    }
-    if (ptpProbe != null) {
-      _ptpIpCamera = ptpProbe.camera;
-      final source = 'ptpip://${ptpProbe.camera.host}:${ptpProbe.camera.port}/';
-      return _CameraProbe(
-        sourceUrl: source,
-        imageUrl: source,
-        signature: 'ptpip-ready',
-        usesListing: false,
-      );
-    }
-
-    final localHttpOrigins = await _localHttpCameraOrigins();
-    if (!_wirelessActive(generation)) return null;
-    if (localHttpOrigins.isNotEmpty) {
-      debugPrint(
-        '[Camera] Reachable local HTTP camera candidates: ${localHttpOrigins.length}',
-      );
-    }
-
-    final canonOrigins = <Uri>{...localHttpOrigins};
-    for (final service in discovered) {
-      final uri = Uri.tryParse(service.url);
-      if (uri != null) canonOrigins.add(uri);
-    }
-    for (final host in _wirelessCameraHosts()) {
-      final uri = Uri.tryParse(host);
-      if (uri != null) canonOrigins.add(uri);
-    }
-    final canon = await CanonCcapiCamera.discover(
-      canonOrigins,
-      timeout: const Duration(milliseconds: 800),
-    );
-    if (!_wirelessActive(generation)) {
-      await canon?.close();
-      return null;
-    }
-    if (canon != null) {
-      _canonCcapiCamera = canon;
-      return _CameraProbe(
-        sourceUrl: canon.sourceUrl,
-        imageUrl: canon.sourceUrl,
-        signature: 'canon-ccapi-ready',
-        usesListing: false,
-      );
-    }
-
-    final upnpLocations = discovered
-        .where((service) => service.source == 'ssdp')
-        .map((service) => Uri.tryParse(service.url))
-        .whereType<Uri>();
-    final upnp = await UpnpCameraMedia.discover(
-      upnpLocations,
-      timeout: const Duration(milliseconds: 900),
-    );
-    if (!_wirelessActive(generation)) return null;
-    if (upnp != null) {
-      final images = await upnp
-          .recentImages(limit: 50)
-          .timeout(const Duration(seconds: 8), onTimeout: () => const []);
-      if (!_wirelessActive(generation)) return null;
-      _upnpCameraMedia = upnp;
-      return _CameraProbe(
-        sourceUrl: upnp.sourceUrl,
-        imageUrl: upnp.sourceUrl,
-        signature: images.isEmpty ? 'upnp-ready' : images.first.fingerprint,
-        usesListing: false,
-        initialKeys: {for (final image in images) image.fingerprint},
-      );
-    }
-
-    final candidates = <String>{
-      for (final service in discovered) ..._candidateUrlsForDiscovery(service),
-      for (final origin in localHttpOrigins)
-        ..._candidateUrlsForDiscovery(
-          DiscoveredCameraService(url: origin.toString(), source: 'subnet'),
-        ),
-      ..._wirelessCameraCandidates(),
-    }.toList(growable: false);
-    if (candidates.isEmpty) return null;
-    final completer = Completer<_CameraProbe?>();
-    var cursor = 0;
-    var workersLeft = candidates.length < 16 ? candidates.length : 16;
-
-    Future<void> worker() async {
-      while (!completer.isCompleted && cursor < candidates.length) {
-        final url = candidates[cursor++];
-        final probe = await _probeCameraUrl(url);
-        if (probe != null && !completer.isCompleted) {
-          completer.complete(probe);
-          return;
-        }
-      }
-      workersLeft -= 1;
-      if (workersLeft == 0 && !completer.isCompleted) {
-        completer.complete(null);
-      }
-    }
-
-    for (var i = 0; i < workersLeft; i++) {
-      unawaited(worker());
-    }
-    return completer.future.timeout(
-      const Duration(seconds: 8),
-      onTimeout: () => null,
-    );
-  }
-
   Future<void> _findAndStartWirelessImport(
     EventSummary event,
     _WirelessImportMode mode,
   ) async {
     if (_wirelessShutdown != null) await _wirelessShutdown;
+    if (!mounted ||
+        _disposed ||
+        _wirelessImporting ||
+        ActiveEventStorage.activeEvent.value?.id != event.id) {
+      return;
+    }
     _beginReceivingSession(event, 'wireless');
     final target = _WirelessCaptureTarget(
       event: event,
@@ -1900,60 +1298,110 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       isEnhanced: _isEnhanced,
       albumId: _selectedAlbumId,
     );
-    _wirelessTimer?.cancel();
     final generation = ++_wirelessGeneration;
+    final cancellation = CancelToken();
+    _wirelessConnectCancellation = cancellation;
     _safeSetState(() {
       _wirelessScanning = true;
-      _wirelessBusy = false;
-      _autoImporting = false;
-      _wirelessSourceUrl = null;
-      _wirelessImageUrl = null;
-      _wirelessUsesListing = false;
-      _wirelessStatus = mode == _WirelessImportMode.cameraHotspot
-          ? 'Searching for camera hotspot image feed...'
-          : 'Searching for shared-network camera...';
+      _wirelessStatus = 'Set up the camera CCAPI connection.';
     });
-
-    final probe = await _discoverWirelessCamera(generation);
-    if (!_wirelessActive(generation)) return;
-
-    if (probe == null) {
-      _safeSetState(() {
-        _wirelessScanning = false;
-        _wirelessStatus = mode == _WirelessImportMode.cameraHotspot
-            ? 'No camera hotspot feed found. Connect phone to camera Wi-Fi and try again.'
-            : 'No shared-network camera found. Put phone and camera on same network.';
-      });
-      return;
-    }
-
-    _processedWirelessIds
-      ..clear()
-      ..addAll(probe.initialKeys);
-    _safeSetState(() {
-      _wirelessScanning = false;
-      _wirelessFailureCount = 0;
-      _wirelessSourceUrl = probe.sourceUrl;
-      _wirelessImageUrl = probe.imageUrl;
-      _wirelessUsesListing = probe.usesListing;
-      _lastWirelessSignature = probe.signature;
-      _autoImporting = true;
-      _wirelessStatus = mode == _WirelessImportMode.cameraHotspot
-          ? 'Camera hotspot connected. New photos upload to cloud when internet is available.'
-          : 'Camera connected. Waiting for new photos...';
-    });
-
-    _wirelessAwakeOwner = 'wireless-$_receiverOwnerId-$generation';
-    await TransferScreenAwake.setEnabled(_wirelessAwakeOwner!, true);
-    if (!_wirelessActive(generation)) return;
-    _wirelessTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
-      if (!_wirelessActive(generation)) {
-        timer.cancel();
+    CanonCcapiCamera? camera;
+    try {
+      SharedPreferences? preferences;
+      try {
+        preferences = await SharedPreferences.getInstance();
+      } catch (_) {}
+      if (!mounted || !_wirelessActive(generation)) return;
+      final settings = await showDialog<CanonWirelessSettings>(
+        context: context,
+        builder: (_) => CanonWirelessSetupDialog(
+          initialAddress:
+              preferences?.getString('canon_ccapi_address_v1') ?? '',
+          cameraHotspot: mode == _WirelessImportMode.cameraHotspot,
+        ),
+      );
+      if (!_wirelessActive(generation)) return;
+      if (settings == null) {
+        _safeSetState(() => _wirelessStatus = 'Wireless setup cancelled.');
         return;
       }
+      _safeSetState(
+        () => _wirelessStatus =
+            'Connecting to Canon CCAPI. Allow Local Network access if asked...',
+      );
+      camera = await CanonCcapiCamera.discover(
+        [settings.origin],
+        exactEndpoint: true,
+        cancellation: cancellation,
+        timeout: const Duration(seconds: 3),
+        username: settings.username,
+        password: settings.password,
+      );
+      if (!_wirelessActive(generation)) {
+        await camera?.close();
+        return;
+      }
+      if (camera == null) {
+        _safeSetState(
+          () => _wirelessStatus =
+              'CCAPI did not connect. Check the camera address, port, login and Wi-Fi. '
+              'On iPhone, enable AirPix in Settings > Privacy & Security > Local Network. '
+              'No other camera mode was attempted.',
+        );
+        AppToast.error(
+          'Canon CCAPI connection failed. Check setup and Local Network access.',
+        );
+        return;
+      }
+      _canonCcapiCamera = camera;
+      _safeSetState(() {
+        _wirelessScanning = false;
+        _wirelessFailureCount = 0;
+        _wirelessRetryAfter = null;
+        _autoImporting = true;
+        _wirelessStatus =
+            'Canon CCAPI connected. Take a photo with the camera shutter.';
+      });
+      _wirelessAwakeOwner = 'wireless-$_receiverOwnerId-$generation';
+      await TransferScreenAwake.setEnabled(_wirelessAwakeOwner!, true);
+      if (!_wirelessActive(generation)) return;
+      _wirelessTimer = Timer.periodic(const Duration(milliseconds: 500), (
+        timer,
+      ) {
+        if (!_wirelessActive(generation)) {
+          timer.cancel();
+          return;
+        }
+        unawaited(_pollWirelessCamera(target, generation));
+      });
+      // Discovery can consume an added-photo event; process it immediately.
       unawaited(_pollWirelessCamera(target, generation));
-    });
-    unawaited(_showTransferSessionPage(event));
+      unawaited(_showTransferSessionPage(event));
+      try {
+        await preferences?.setString(
+          'canon_ccapi_address_v1',
+          settings.origin.toString(),
+        );
+      } catch (_) {
+        /* Remembering an address must not interrupt receiving. */
+      }
+    } catch (_) {
+      await camera?.close();
+      if (_wirelessActive(generation)) {
+        await _stopWirelessImport();
+        _safeSetState(
+          () => _wirelessStatus =
+              'Wireless connection stopped. Check camera setup and try again.',
+        );
+      }
+    } finally {
+      if (identical(_wirelessConnectCancellation, cancellation)) {
+        _wirelessConnectCancellation = null;
+      }
+      if (_wirelessActive(generation)) {
+        _safeSetState(() => _wirelessScanning = false);
+      }
+    }
   }
 
   Future<void> _saveWirelessBytes({
@@ -1990,59 +1438,6 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<bool> _pollPtpIpCamera(
-    _WirelessCaptureTarget target,
-    int generation,
-  ) async {
-    if (!_wirelessActive(generation)) return true;
-    final camera = _ptpIpCamera;
-    if (camera == null) return false;
-    final images = await camera.pendingImages();
-    if (!_wirelessActive(generation)) return true;
-    if (images.isEmpty) {
-      _safeSetState(
-        () =>
-            _wirelessStatus = 'PTP/IP camera connected. Waiting for a photo...',
-      );
-      return true;
-    }
-
-    // All new objects remain pending until their local queue copy is saved.
-    for (final image in images) {
-      if (!_wirelessActive(generation)) return true;
-      _safeSetState(
-        () => _wirelessStatus = 'New camera photo found. Importing...',
-      );
-      final bytes = await camera.downloadImage(
-        image.handle,
-        expectedSize: image.size,
-      );
-      if (bytes == null || bytes.isEmpty) {
-        // Keep this handle pending without blocking newer frames in the burst.
-        continue;
-      }
-
-      final imageKey =
-          'ptpip://${camera.host}:${camera.port}/${image.handle}/${Uri.encodeComponent(image.name)}';
-      await _saveWirelessBytes(
-        target: target,
-        generation: generation,
-        bytes: bytes,
-        filename: image.name,
-        imageKey: imageKey,
-        signature: image.fingerprint,
-        source: 'wireless-ptpip',
-        cameraId: 'PTP/IP ${camera.host}:${camera.port}',
-      );
-      camera.acknowledgeImages([image.handle]);
-      if (!_wirelessActive(generation)) return true;
-      _lastWirelessSignature = image.fingerprint;
-      _wirelessImageUrl = imageKey;
-    }
-    _wirelessFailureCount = 0;
-    return true;
-  }
-
   Future<bool> _pollCanonCcapiCamera(
     _WirelessCaptureTarget target,
     int generation,
@@ -2061,13 +1456,22 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       return true;
     }
 
+    var downloadFailed = false;
     for (final content in fresh) {
       if (!_wirelessActive(generation)) return true;
       _safeSetState(
         () => _wirelessStatus = 'New Canon photo found. Importing...',
       );
-      final bytes = await camera.download(content);
+      Uint8List? bytes;
+      try {
+        bytes = await camera.download(content);
+      } catch (_) {
+        if (camera.isClosed) rethrow;
+        downloadFailed = true;
+        continue; // Keep this photo pending and allow later burst photos through.
+      }
       if (bytes == null || bytes.isEmpty) {
+        downloadFailed = true;
         // The announcement remains pending until a complete file can be read.
         continue;
       }
@@ -2084,70 +1488,12 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       );
       camera.acknowledgeContents([content.url]);
       if (!_wirelessActive(generation)) return true;
-      _lastWirelessSignature = content.url;
-      _wirelessImageUrl = content.url;
     }
-    _wirelessFailureCount = 0;
-    return true;
-  }
-
-  Future<bool> _pollUpnpCamera(
-    _WirelessCaptureTarget target,
-    int generation,
-  ) async {
-    if (!_wirelessActive(generation)) return true;
-    final camera = _upnpCameraMedia;
-    if (camera == null) return false;
-
-    final images = await camera
-        .recentImages(limit: 50)
-        .timeout(const Duration(seconds: 10));
-    if (!_wirelessActive(generation)) return true;
-    if (images.isEmpty) {
-      _safeSetState(() {
-        _wirelessStatus = 'UPnP/DLNA camera connected. Waiting for photos...';
-      });
-      return true;
-    }
-
-    final fresh = images
-        .where((image) => !_processedWirelessIds.contains(image.fingerprint))
-        .toList(growable: false);
-    if (fresh.isEmpty) {
-      _safeSetState(
-        () => _wirelessStatus = 'Camera connected. No new photo yet.',
+    if (downloadFailed) {
+      throw const SocketException(
+        'Camera photo is not ready; retry pending contents',
       );
-      return true;
     }
-
-    for (final image in fresh.reversed) {
-      if (!_wirelessActive(generation)) return true;
-      _safeSetState(
-        () => _wirelessStatus = 'New network camera photo found. Importing...',
-      );
-      final bytes = await camera
-          .download(image)
-          .timeout(const Duration(seconds: 60));
-      if (bytes == null || bytes.isEmpty) {
-        throw const SocketException('UPnP camera returned an empty image');
-      }
-
-      await _saveWirelessBytes(
-        target: target,
-        generation: generation,
-        bytes: bytes,
-        filename: image.name,
-        imageKey: image.url,
-        signature: image.fingerprint,
-        source: 'wireless-upnp',
-        cameraId: camera.sourceUrl,
-      );
-      if (!_wirelessActive(generation)) return true;
-      _processedWirelessIds.add(image.fingerprint);
-      _lastWirelessSignature = image.fingerprint;
-      _wirelessImageUrl = image.url;
-    }
-    _wirelessFailureCount = 0;
     return true;
   }
 
@@ -2155,133 +1501,39 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     _WirelessCaptureTarget target,
     int generation,
   ) async {
-    if (!_wirelessActive(generation) || _wirelessBusy) return;
-
-    final sourceUrl = _wirelessSourceUrl;
-    if (sourceUrl == null) {
-      _safeSetState(() => _wirelessStatus = 'Connect a wireless camera first');
+    if (!_wirelessActive(generation) ||
+        _wirelessBusy ||
+        _canonCcapiCamera == null) {
       return;
     }
-
-    _safeSetState(() {
-      _wirelessBusy = true;
-      _wirelessStatus = 'Checking camera...';
-    });
-
+    if (_wirelessRetryAfter?.isAfter(DateTime.now()) == true) return;
+    _wirelessBusy = true;
     try {
-      if (await _pollPtpIpCamera(target, generation)) {
-        return;
-      }
-      if (await _pollCanonCcapiCamera(target, generation)) {
-        return;
-      }
-      if (await _pollUpnpCamera(target, generation)) {
-        return;
-      }
-
-      var imageUrl = _wirelessImageUrl ?? sourceUrl;
-
-      if (_wirelessUsesListing) {
-        final listingResponse = await _cameraDio.get<List<int>>(
-          sourceUrl,
-          options: Options(responseType: ResponseType.bytes),
-        );
-        if (!_wirelessActive(generation)) return;
-        final listingBytes = Uint8List.fromList(listingResponse.data ?? []);
-        final body = utf8.decode(listingBytes, allowMalformed: true);
-        final imageLinks = _extractImageLinks(body, sourceUrl);
-        if (imageLinks.isEmpty) {
-          _safeSetState(
-            () => _wirelessStatus = 'Camera folder page has no image links',
-          );
-          return;
-        }
-
-        final freshLinks = imageLinks
-            .where((url) => !_processedWirelessIds.contains(url))
-            .toList(growable: false);
-        if (freshLinks.isEmpty) {
-          _safeSetState(() => _wirelessStatus = 'No new image yet');
-          return;
-        }
-
-        for (final url in freshLinks) {
-          if (!_wirelessActive(generation)) return;
-          final bytes = await _downloadImageBytes(url);
-          if (bytes == null) continue;
-          final signature = _signatureForBytes(bytes);
-          _safeSetState(
-            () => _wirelessStatus = 'New camera image found. Importing...',
-          );
-          await _saveWirelessBytes(
-            target: target,
-            generation: generation,
-            bytes: bytes,
-            filename: _filenameFromUrl(url),
-            imageKey: url,
-            signature: signature,
-            source: 'wireless-http',
-            cameraId: sourceUrl,
-          );
-          if (!_wirelessActive(generation)) return;
-          _processedWirelessIds.add(url);
-          _wirelessImageUrl = url;
-          _lastWirelessSignature = signature;
-        }
+      await _pollCanonCcapiCamera(target, generation);
+      if (_wirelessActive(generation)) {
         _wirelessFailureCount = 0;
-        return;
+        _wirelessRetryAfter = null;
       }
-
-      final bytes = await _downloadImageBytes(imageUrl);
-      if (!_wirelessActive(generation)) return;
-      if (bytes == null) {
-        _safeSetState(
-          () => _wirelessStatus = 'Camera source did not return an image',
-        );
-        return;
-      }
-
-      _wirelessImageUrl = imageUrl;
-      final signature = _signatureForBytes(bytes);
-      if (signature == _lastWirelessSignature) {
-        _safeSetState(() => _wirelessStatus = 'No new image yet');
-        return;
-      }
-
-      _safeSetState(() => _wirelessStatus = 'New image found. Importing...');
-      await _saveWirelessBytes(
-        target: target,
-        generation: generation,
-        bytes: bytes,
-        filename: _filenameFromUrl(imageUrl),
-        imageKey: imageUrl,
-        signature: signature,
-        source: 'wireless-http',
-        cameraId: sourceUrl,
-      );
-      _lastWirelessSignature = signature;
-      _wirelessFailureCount = 0;
     } catch (_) {
       if (!_wirelessActive(generation)) return;
-      if (_ptpIpCamera?.isClosed == true ||
-          _canonCcapiCamera?.isClosed == true) {
+      if (_canonCcapiCamera?.isClosed != false) {
         await _stopWirelessImport();
         _safeSetState(
           () => _wirelessStatus =
-              'The camera connection ended. Start a new session before shooting again.',
+              'Camera connection ended. Check shooting mode and reconnect.',
         );
         return;
       }
-      _safeSetState(() {
-        _wirelessFailureCount += 1;
-        _wirelessStatus = _wirelessFailureCount >= 3
-            ? 'Wireless import unstable. Keeping session, retrying automatically.'
-            : 'Camera transfer failed. Checking Wi-Fi and retrying...';
-      });
+      _wirelessFailureCount++;
+      final delay = min(5000, 500 * (1 << min(_wirelessFailureCount - 1, 4)));
+      _wirelessRetryAfter = DateTime.now().add(Duration(milliseconds: delay));
+      _safeSetState(
+        () => _wirelessStatus =
+            'Camera not responding. Retrying the same CCAPI connection; '
+            'received photos remain queued. Check Wi-Fi and Local Network access.',
+      );
     } finally {
-      if (_wirelessActive(generation)) {
-        _safeSetState(() => _wirelessBusy = false);
-      }
+      if (_wirelessActive(generation)) _wirelessBusy = false;
     }
   }
 
@@ -2420,8 +1672,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     final capture = LiveCameraCapture(
       transport: transport,
       uploadMode: target.uploadMode,
-      // Check the shooting-mode photo queue even if shutter events are lost.
-      pollInterval: const Duration(seconds: 3),
+      // Use the receiver's fast fallback even if shutter events are lost.
       onUpdate: (update) {
         if (!_otgActive(generation)) return;
         _safeSetState(() {
@@ -2635,27 +1886,21 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     _wirelessAwakeOwner = null;
     _wirelessTimer?.cancel();
     _wirelessTimer = null;
-    final ptpCamera = _ptpIpCamera;
-    _ptpIpCamera = null;
+    _wirelessConnectCancellation?.cancel('Receiving stopped');
+    _wirelessConnectCancellation = null;
+    _wirelessRetryAfter = null;
     final canonCamera = _canonCcapiCamera;
     _canonCcapiCamera = null;
-    _upnpCameraMedia = null;
-    _processedWirelessIds.clear();
     _safeSetState(() {
       _autoImporting = false;
       _wirelessScanning = false;
       _wirelessBusy = false;
       _wirelessFailureCount = 0;
-      _wirelessSourceUrl = null;
-      _wirelessImageUrl = null;
-      _wirelessUsesListing = false;
-      _lastWirelessSignature = null;
       _wirelessStatus =
           'Receiving stopped. Received photos continue uploading to cloud.';
     });
     try {
       if (ftp != null) await ftp.stop();
-      if (ptpCamera != null) await ptpCamera.close();
       if (canonCamera != null) await canonCamera.close();
     } finally {
       if (awakeOwner != null) {
@@ -2865,45 +2110,59 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       context: context,
       builder: (context) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.add_a_photo_outlined),
-                title: const Text('Live shooting with camera FTP'),
-                subtitle: const Text(
-                  'For cameras with FTP automatic transfer. Each new photo uploads to your event automatically while you keep shooting.',
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                    'Wireless live shooting: use camera FTP auto-send or Canon CCAPI on supported models. '
+                    'Keep the camera in shooting mode and AirPix open. No file-transfer or live-view fallback is used.',
+                  ),
                 ),
-                onTap: () => Navigator.of(context).pop(_WirelessImportMode.ftp),
-              ),
-              ListTile(
-                leading: const Icon(Icons.router_outlined),
-                title: const Text('Find an existing camera Wi-Fi feed'),
-                subtitle: const Text(
-                  'Use when phone + camera are on the same router. Uploads can go online immediately.',
+                ListTile(
+                  leading: const Icon(Icons.add_a_photo_outlined),
+                  title: const Text('Live shooting with camera FTP'),
+                  subtitle: const Text(
+                    'For cameras with FTP automatic transfer. Each new photo uploads to your event automatically while you keep shooting.',
+                  ),
+                  onTap: () =>
+                      Navigator.of(context).pop(_WirelessImportMode.ftp),
                 ),
-                onTap: () => Navigator.of(
-                  context,
-                ).pop(_WirelessImportMode.sharedNetwork),
-              ),
-              ListTile(
-                leading: const Icon(Icons.wifi_tethering_outlined),
-                title: const Text('Connect to a camera hotspot feed'),
-                subtitle: const Text(
-                  'A camera hotspot may have no internet. Photos upload automatically whenever internet access is available.',
+                ListTile(
+                  leading: const Icon(Icons.router_outlined),
+                  title: const Text('Canon CCAPI on shared Wi-Fi'),
+                  subtitle: const Text(
+                    'For a Canon camera with CCAPI enabled. Enter its address and allow Local Network access. Internet on this Wi-Fi enables immediate uploads.',
+                  ),
+                  onTap: () => Navigator.of(
+                    context,
+                  ).pop(_WirelessImportMode.sharedNetwork),
                 ),
-                onTap: () => Navigator.of(
-                  context,
-                ).pop(_WirelessImportMode.cameraHotspot),
-              ),
-            ],
+                ListTile(
+                  leading: const Icon(Icons.wifi_tethering_outlined),
+                  title: const Text('Canon CCAPI on camera Wi-Fi'),
+                  subtitle: const Text(
+                    'Enable Canon CCAPI, then join the camera hotspot in phone Wi-Fi settings. Photos queue when this network has no internet.',
+                  ),
+                  onTap: () => Navigator.of(
+                    context,
+                  ).pop(_WirelessImportMode.cameraHotspot),
+                ),
+              ],
+            ),
           ),
         );
       },
     );
 
-    if (!mounted || choice == null) return;
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    if (!mounted ||
+        _disposed ||
+        choice == null ||
+        ActiveEventStorage.activeEvent.value?.id != event.id) {
+      return;
+    }
     if (choice == _WirelessImportMode.ftp) {
       await _startFtpCameraSession(event);
     } else {
@@ -2914,6 +2173,12 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   Future<void> _startFtpCameraSession(EventSummary event) async {
     if (_ftpStarting) return;
     if (_wirelessShutdown != null) await _wirelessShutdown;
+    if (!mounted ||
+        _disposed ||
+        _wirelessImporting ||
+        ActiveEventStorage.activeEvent.value?.id != event.id) {
+      return;
+    }
     _beginReceivingSession(event, 'ftp');
     final generation = ++_wirelessGeneration;
     final albumId = _selectedAlbumId;
@@ -2979,6 +2244,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             cameraId: 'Camera FTP',
             fingerprint: '${event.id}|wireless-ftp|${file.fingerprint}',
           );
+          // The durable queue owns a separate copy; journal staging cleanup.
+          await CameraStagingCleanup.release(file.localPath);
           if (_wirelessActive(generation)) {
             _safeSetState(() {
               _ftpHasReceived = true;
@@ -3082,7 +2349,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                   const Text(
                     '1. Join the same Wi-Fi network on the camera and phone.\n'
                     '2. Enter these settings in the camera FTP profile.\n'
-                    '3. Turn on automatic transfer after each shot, then take a photo.',
+                    '3. Turn on automatic transfer after each shot, then return to shooting and take a photo.\n'
+                    'Sony: Auto Trans When Shot / Auto Transfer. Other models: Automatic FTP transfer / Auto send (names vary).\n'
+                    '4. Allow Local Network access if asked. Keep AirPix open while shooting.',
                   ),
                   const SizedBox(height: 12),
                   for (final setting in settings.entries)
@@ -3147,6 +2416,39 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
               ),
             ),
           ],
+        ),
+      );
+    }
+    if (_sessionKind == 'wireless' && _canonCcapiCamera != null) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Canon CCAPI: photo receiving',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              Text(_canonCcapiCamera!.sourceUrl),
+              const Text(
+                'Use the camera shutter. AirPix reads new-photo events every 0.5 seconds when idle. '
+                'Keep AirPix open and allow Local Network access. Photos wait safely in the upload queue when internet is unavailable.',
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  await _stopWirelessImport();
+                  _safeSetState(
+                    () => _wirelessStatus =
+                        'Connection released. Check camera shooting mode before reconnecting.',
+                  );
+                },
+                icon: const Icon(Icons.link_off),
+                label: const Text('Camera cannot shoot? Stop connection'),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -3473,9 +2775,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                       const SizedBox(width: 8),
                       const Expanded(
                         child: Text(
-                          'Live USB: choose your camera’s shooting-capable '
-                          'PTP/tether mode. Mass Storage, card reader or '
-                          'file-transfer mode can lock the shutter. View setup.',
+                          'Before USB: select Remote Shooting / PC Remote / '
+                          'Tether on the camera. Names vary by brand. '
+                          'Tap for your camera’s USB mode and setup.',
                           style: TextStyle(
                             fontSize: 12,
                             color: AppColors.mutedForeground,
@@ -3495,8 +2797,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     title: 'USB / OTG',
                     badge: 'PTP live',
                     subtitle:
-                        'Use a shooting-capable camera USB mode. AirPix checks '
-                        'for new photos each second and uploads received files.',
+                        'Choose the USB shooting mode on your camera first. '
+                        'New photos sync automatically. AirPix never switches '
+                        'to Mass Storage if connection fails.',
                     detail: _usbUploadMode == LiveCameraUploadMode.newShotsOnly
                         ? 'New shots upload automatically'
                         : 'Existing + new photos upload',
@@ -3514,7 +2817,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     icon: Icons.wifi_tethering_rounded,
                     title: 'Wireless',
                     subtitle:
-                        'Use camera Wi-Fi or FTP. Start once and keep shooting while AirPix receives photos.',
+                        'Use camera FTP auto-send or Canon CCAPI on supported models. Keep AirPix open while shooting.',
                     detail: 'New shots upload automatically',
                     active: _wirelessImporting,
                     busy: _wirelessBusy || _wirelessScanning,
@@ -4087,7 +3390,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 4),
               const Text(
-                'Use your camera Wi-Fi or FTP connection. New received photos upload automatically.',
+                'Use camera FTP auto-send or Canon CCAPI. Keep both devices on the same Wi-Fi and AirPix open. '
+                'On iPhone, check Settings > Privacy & Security > Local Network > AirPix. '
+                'Bluetooth pairing alone cannot deliver full photos. Location access is not needed for these connections.',
                 style: TextStyle(
                   fontSize: 12,
                   color: AppColors.mutedForeground,

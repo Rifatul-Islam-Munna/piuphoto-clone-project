@@ -4,9 +4,11 @@ import 'package:mobileapp/core/platform/usb_camera_guidance.dart';
 void main() {
   test('passive USB blocks shutter, deletion and UI-lock actions', () {
     final advice = UsbCameraGuidance.forStatus('PTP_SHOOTING_COMMAND_BLOCKED');
-    expect(advice.title, contains('blocked for safety'));
-    expect(advice.details, contains('delete'));
-    expect(advice.nextSteps, contains('physical shutter'));
+    expect(advice.title, contains('Receiving stopped'));
+    expect(advice.details, contains('does not allow'));
+    expect(advice.nextSteps, contains('Camera setup'));
+    expect(advice.nextSteps, contains('PC Remote'));
+    expect(advice.nextSteps, contains('will not try Mass Storage'));
   });
 
   test('USB permission errors identify whether phone settings are needed', () {

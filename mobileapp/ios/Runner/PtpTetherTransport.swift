@@ -358,8 +358,10 @@ enum PtpShootingSafety {
   static let blocked: Set<UInt16> = [
     0x100B, // PTP DeleteObject
     0x100E, // PTP InitiateCapture
-    0x100F, // PTP InitiateOpenCapture
-    0x1010, // PTP TerminateOpenCapture
+    0x100F, // PTP FormatStore
+    0x1010, // PTP ResetDevice
+    0x100C, 0x100D, 0x1011, 0x1012, 0x1013,
+    0x1017, 0x1018, 0x1019, 0x101A, 0x101C,
     0x910F, // Canon EOS RemoteRelease
     0x911B, // Canon EOS UILock
     0x9128, // Canon EOS RemoteReleaseOn
@@ -369,8 +371,50 @@ enum PtpShootingSafety {
     0x1016, 0x9110, 0x9205, 0x9206, // Camera property writes
   ]
 
-  static func isAllowed(_ opcode: UInt16) -> Bool {
-    !blocked.contains(opcode)
+  private static let readOperations: Set<UInt16> = [
+    0x1001, 0x1004, 0x1005, 0x1007, 0x1008, 0x1009, 0x100A,
+    0x1014, 0x1015, 0x101B
+  ]
+
+  static func isAllowed(
+    _ opcode: UInt16, vendorID: Int = 0,
+    parameters: [UInt32] = [], outgoing: Data? = nil
+  ) -> Bool {
+    let olympus = vendorID == 0x07B4 || vendorID == 0x33A2
+    if olympus && opcode == 0x1016 {
+      guard parameters == [0xD052], let outgoing = outgoing else { return false }
+      // Only begin/restore the OM connection; no shooting-setting writes.
+      return outgoing == Data([1, 0]) || outgoing == Data([2, 0])
+    }
+    if blocked.contains(opcode) { return false }
+    if let outgoing = outgoing, !outgoing.isEmpty { return false }
+    if readOperations.contains(opcode) { return true }
+    // Only the receiver's exact vendor negotiation/read operations are allowed.
+    // Unknown identities never inherit another brand's command meanings.
+    switch vendorID {
+    case 0x04A9:
+      switch opcode {
+      case 0x9114, 0x9115: return parameters == [0] || parameters == [1]
+      case 0x9116: return parameters.isEmpty
+      case 0x9127: return parameters == [0xD11C]
+      case 0x9117: return parameters.count == 1 && parameters[0] > 0 &&
+        parameters[0] < 0xFFFFFFFF
+      case 0x9107: return true // Native download validates partial-read ranges.
+      default: return false
+      }
+    case 0x04B0:
+      return (opcode == 0x90C2 && parameters == [0]) ||
+        ((opcode == 0x90C7 || opcode == 0x941C) && parameters.isEmpty)
+    case 0x054C:
+      return (opcode == 0x9201 &&
+        (parameters == [1, 0, 0] || parameters == [2, 0, 0] ||
+         parameters == [3, 0, 0])) ||
+        (opcode == 0x9202 && parameters == [0x12C, 1]) ||
+        (opcode == 0x9209 && parameters.isEmpty)
+    case 0x04DA:
+      return opcode == 0x940A && parameters == [0x08000090]
+    default: return false
+    }
   }
 }
 
@@ -462,10 +506,11 @@ final class PtpTetherTransport {
   ) {
     guard !closed else { completion(.failure(Self.ended)); return }
     guard download == nil else { completion(.failure(Self.busy)); return }
-    guard PtpShootingSafety.isAllowed(opcode) else {
+    guard PtpShootingSafety.isAllowed(opcode, vendorID: Int(camera.usbVendorID),
+      parameters: parameters, outgoing: outgoing) else {
       completion(.failure(PtpTetherFailure(
         code: "PTP_SHOOTING_COMMAND_BLOCKED",
-        message: "AirPix is a passive photo receiver: shutter, screen and camera controls stay with the photographer."
+        message: "This command is not approved for this camera. Receiving stops without switching USB modes."
       )))
       return
     }
@@ -490,6 +535,12 @@ final class PtpTetherTransport {
     guard !closed else { completion(.failure(Self.ended)); return }
     guard !acknowledgedTransfers.contains(transferID) else {
       completion(.failure(PtpTetherFailure(code: "PTP_ALREADY_ACKNOWLEDGED", message: "This photograph has already been saved to the upload queue.")))
+      return
+    }
+    guard PtpShootingSafety.isAllowed(partialOpcode ?? 0x1009,
+      vendorID: Int(camera.usbVendorID)) else {
+      completion(.failure(PtpTetherFailure(code: "PTP_SHOOTING_COMMAND_BLOCKED",
+        message: "This download opcode belongs to a different camera protocol.")))
       return
     }
     guard handle > 0, expectedSize > 0, expectedSize <= PtpTetherCodec.fileLimit,

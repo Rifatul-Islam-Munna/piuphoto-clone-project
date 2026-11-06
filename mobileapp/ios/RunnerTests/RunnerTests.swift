@@ -5,12 +5,91 @@ import XCTest
 @testable import Runner
 
 class RunnerTests: XCTestCase {
+  func testRejectsCrossBrandUnknownAndUnsafeModeCommands() {
+    let approved: [(Int, UInt16, [UInt32])] = [
+      (0x4a9, 0x9114, [0x0]),
+      (0x4a9, 0x9114, [0x1]),
+      (0x4a9, 0x9115, [0x0]),
+      (0x4a9, 0x9115, [0x1]),
+      (0x4a9, 0x9116, []),
+      (0x4a9, 0x9127, [0xd11c]),
+      (0x4a9, 0x9117, [0x2a]),
+      (0x4a9, 0x9107, []),
+      (0x4b0, 0x90c2, [0x0]),
+      (0x4b0, 0x90c7, []),
+      (0x4b0, 0x941c, []),
+      (0x54c, 0x9201, [0x1, 0x0, 0x0]),
+      (0x54c, 0x9201, [0x2, 0x0, 0x0]),
+      (0x54c, 0x9201, [0x3, 0x0, 0x0]),
+      (0x54c, 0x9202, [0x12c, 0x1]),
+      (0x54c, 0x9209, []),
+      (0x4da, 0x940a, [0x8000090]),
+    ]
+    let vendors = [0, 0x1234, 0x04a9, 0x04b0, 0x054c, 0x04cb, 0x04da, 0x33a2, 0x0a17]
+    for (vendor, opcode, parameters) in approved {
+      XCTAssertTrue(PtpShootingSafety.isAllowed(opcode, vendorID: vendor, parameters: parameters))
+      for other in vendors where other != vendor {
+        XCTAssertFalse(PtpShootingSafety.isAllowed(opcode, vendorID: other, parameters: parameters))
+      }
+    }
+    let unsafe: [(Int, UInt16, [UInt32])] = [
+      (0x4a9, 0x9114, []),
+      (0x4a9, 0x9114, [0x2]),
+      (0x4a9, 0x9115, [0x2]),
+      (0x4a9, 0x9117, [0x0]),
+      (0x4a9, 0x9127, [0xd1b0]),
+      (0x4b0, 0x90c2, [0x1]),
+      (0x4b0, 0x90c2, []),
+      (0x54c, 0x9201, [0x1, 0x1, 0x0]),
+      (0x54c, 0x9201, [0x4, 0x0, 0x0]),
+      (0x54c, 0x9202, []),
+      (0x54c, 0x9209, [0x1]),
+    ]
+    for (vendor, opcode, parameters) in unsafe {
+      XCTAssertFalse(PtpShootingSafety.isAllowed(opcode, vendorID: vendor, parameters: parameters))
+    }
+    let denied: [UInt16] = [0x1002, 0x1003, 0x90c0, 0x90c1, 0x920a, 0x920b, 0x9152, 0x9999]
+    for vendor in vendors {
+      for opcode in denied {
+        XCTAssertFalse(PtpShootingSafety.isAllowed(opcode, vendorID: vendor))
+      }
+      XCTAssertFalse(PtpShootingSafety.isAllowed(0x1009, vendorID: vendor, outgoing: Data([1])))
+    }
+  }
+
+
+  func testVendorSafetyAllowsOnlyReadsAndExactOMConnectionHandshake() {
+    for vendor in [0x04DA, 0x07B4, 0x33A2, 0x0A17, 0x25FB] {
+      for opcode in [UInt16(0x100C), 0x100D, 0x1013, 0x1017, 0x101C,
+        0x9403, 0x9404, 0x940B, 0x9412, 0x9704,
+        0x9107, 0x910B, 0x9481, 0x9489, 0x948C, 0x94BE] {
+        XCTAssertFalse(PtpShootingSafety.isAllowed(opcode, vendorID: vendor))
+      }
+      XCTAssertTrue(PtpShootingSafety.isAllowed(0x1009, vendorID: vendor))
+      XCTAssertTrue(PtpShootingSafety.isAllowed(0x101B, vendorID: vendor))
+    }
+    XCTAssertTrue(PtpShootingSafety.isAllowed(0x940A, vendorID: 0x04DA,
+      parameters: [0x08000090]))
+    XCTAssertFalse(PtpShootingSafety.isAllowed(0x940A, vendorID: 0x04DA))
+    for vendor in [0x07B4, 0x33A2] {
+      for value in [UInt8(1), 2] {
+        XCTAssertTrue(PtpShootingSafety.isAllowed(0x1016, vendorID: vendor,
+          parameters: [0xD052], outgoing: Data([value, 0])))
+      }
+      for bytes in [[], [0, 0], [3, 0], [1], [1, 1], [1, 0, 0]] as [[UInt8]] {
+        XCTAssertFalse(PtpShootingSafety.isAllowed(0x1016, vendorID: vendor,
+          parameters: [0xD052], outgoing: Data(bytes)))
+      }
+      XCTAssertFalse(PtpShootingSafety.isAllowed(0x1016, vendorID: vendor,
+        parameters: [0xD0DC], outgoing: Data([2, 0])))
+    }
+    XCTAssertFalse(PtpShootingSafety.isAllowed(0x1016, vendorID: 0x04DA,
+      parameters: [0xD052], outgoing: Data([1, 0])))
+  }
 
   func testPassivePtpAllowsReadingButBlocksRemoteShutterAndUiLock() {
     let allowed: [UInt16] = [
       0x1001, 0x1004, 0x1007, 0x1008, 0x1009, 0x101B,
-      0x9114, 0x9115, 0x9116, 0x90C2, 0x90C7,
-      0x9201, 0x9202, 0x9209
     ]
     for opcode in allowed {
       XCTAssertTrue(PtpShootingSafety.isAllowed(opcode),

@@ -445,6 +445,96 @@ void main() {
     );
 
     test(
+      'vendor event collisions never turn modes or properties into photos',
+      () {
+        Uint8List event(int code) => Uint8List.fromList([
+          16,
+          0,
+          0,
+          0,
+          4,
+          0,
+          code & 255,
+          code >> 8,
+          0,
+          0,
+          0,
+          0,
+          42,
+          0,
+          0,
+          0,
+        ]);
+        final lumix = PtpTetherCodec.decodeUsbEvent(
+          event(0xc108),
+          vendorExtensionId: 28,
+        );
+        final om = PtpTetherCodec.decodeUsbEvent(
+          event(0xc108),
+          vendorExtensionId: 0xfffd,
+        );
+        expect(lumix.kind, PtpTetherEventKind.objectAdded);
+        expect(lumix.handle, 42);
+        expect(om.kind, PtpTetherEventKind.propertyChanged);
+        expect(om.handle, isNull);
+        for (final code in [0xc004, 0xc101, 0xc104]) {
+          expect(
+            PtpTetherCodec.decodeUsbEvent(
+              event(code),
+              vendorExtensionId: 0xfffd,
+            ).handle,
+            isNull,
+          );
+        }
+        expect(
+          PtpTetherCodec.decodeUsbEvent(
+            event(0xc004),
+            vendorExtensionId: 14,
+          ).handle,
+          42,
+        );
+        expect(
+          PtpTetherCodec.decodeUsbEvent(
+            event(0xc101),
+            vendorExtensionId: 10,
+          ).kind,
+          PtpTetherEventKind.objectTransfer,
+        );
+        for (final code in [0xc004, 0xc101, 0xc108, 0xc201]) {
+          expect(
+            PtpTetherCodec.decodeUsbEvent(event(code)).kind,
+            PtpTetherEventKind.unknown,
+          );
+        }
+        for (final code in [0xc002, 0xc102]) {
+          expect(
+            PtpTetherCodec.decodeUsbEvent(
+              event(code),
+              vendorExtensionId: 0xfffd,
+            ).handle,
+            42,
+          );
+        }
+      },
+    );
+
+    test('LUMIX target packets require exact type, field size and payload', () {
+      final valid = _hex('91 00 00 08 02 00 00 00 02 00');
+      expect(PtpTetherCodec.decodePanasonicCaptureTarget(valid), 2);
+      for (final bad in [
+        Uint8List.fromList(valid)..[0] = 0,
+        Uint8List.fromList(valid)..[4] = 4,
+        Uint8List.fromList(valid.take(9).toList()),
+        Uint8List.fromList([...valid, 0]),
+      ]) {
+        expect(
+          () => PtpTetherCodec.decodePanasonicCaptureTarget(bad),
+          throwsFormatException,
+        );
+      }
+    });
+
+    test(
       'USB events require an exact event container, never DATA or RESPONSE',
       () {
         final bytes = _hex('10 00 00 00 04 00 02 40 ff ff ff ff 2a 00 00 00');

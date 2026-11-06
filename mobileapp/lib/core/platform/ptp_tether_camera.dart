@@ -9,7 +9,16 @@ import 'package:mobileapp/core/platform/ptp_tether_codec.dart';
 import 'package:mobileapp/core/platform/ptp_tether_link.dart';
 import 'package:mobileapp/core/platform/ptp_shooting_safety.dart';
 
-enum _TetherFamily { canonEos, nikon, sony, fuji, standard }
+enum _TetherFamily {
+  canonEos,
+  nikon,
+  sony,
+  fuji,
+  panasonic,
+  olympus,
+  pentax,
+  standard,
+}
 
 class PtpTetherCommandException extends PlatformException {
   PtpTetherCommandException(this.opcode, this.responseCode)
@@ -84,6 +93,9 @@ class _TetherRun {
   final Map<int, List<int>> canonChoices = {};
   Map<int, PtpProperty> sonyProperties = {};
   int? fujiUsbMode;
+  int? olympusOriginalControlMode;
+  bool olympusRestoreRequired = false;
+  bool canReleaseAfterError = false;
   int sonyProtocol = 0;
   int sonySequence = 0;
   int baselineCount = 0;
@@ -107,10 +119,11 @@ class _TetherRun {
   Timer? timer;
   DateTime? lastCardScan;
   int consecutiveCameraBusyChecks = 0;
+  DateTime? pollRetryAfter;
 }
 
 /// Original PTP tether implementation using documented wire formats and the
-/// protocol behavior recorded by libgphoto2 (see docs/USB_TETHER_PROTOCOLS.md).
+/// protocol behavior recorded by libgphoto2 (see docs/USB_TETHER_SUPPORT.md).
 /// No proprietary SDK or libgphoto2 source is embedded. In particular, no remote
 /// shutter, UI-lock, live-view or delete command is used for physical shooting.
 class PtpTetherCameraTransport implements LiveCameraTransport {
@@ -119,8 +132,8 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     this.uploadMode = LiveCameraUploadMode.newShotsOnly,
     // Notifications are optional wake-ups. Polling remains active without
     // a shutter event; one active PTP transaction at a time protects the body.
-    this.eventPollInterval = const Duration(seconds: 3),
-    this.cardScanInterval = const Duration(seconds: 3),
+    this.eventPollInterval = const Duration(milliseconds: 500),
+    this.cardScanInterval = const Duration(seconds: 1),
     this.stopGracePeriod = const Duration(seconds: 3),
     Future<void> Function(Duration)? delay,
     DateTime Function()? now,
@@ -228,9 +241,19 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     bool duringClose = false,
     int busyRetries = 3,
   }) async {
-    PtpShootingSafety.requirePassive(opcode);
+    PtpShootingSafety.requirePassive(
+      opcode,
+      vendorId: run.connection?.vendorId ?? 0,
+      params: params,
+      data: data,
+    );
     for (var attempt = 0; ; attempt++) {
       if (!duringClose) _checkActive(run);
+      if (!duringClose &&
+          run.ready &&
+          run.pollRetryAfter?.isAfter(_now()) == true) {
+        throw PtpTetherCommandException(opcode, 0x2019);
+      }
       final response = await _link.command(
         run.id,
         opcode,
@@ -238,6 +261,18 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         outData: data,
       );
       if (response.succeeded) return response;
+      if (response.responseCode == 0x2019 &&
+          run.ready &&
+          !duringClose &&
+          opcode != 0x1008) {
+        // Give exposure/card writing priority. Faster polling must not create
+        // a tight retry loop while the physical camera is busy.
+        final exponent = run.consecutiveCameraBusyChecks.clamp(0, 3);
+        run.pollRetryAfter = _now().add(
+          Duration(milliseconds: (500 * (1 << exponent)).clamp(500, 3000)),
+        );
+        throw PtpTetherCommandException(opcode, response.responseCode);
+      }
       if (response.responseCode == 0x2019 &&
           attempt < busyRetries &&
           !duringClose) {
@@ -306,6 +341,9 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         _TetherFamily.nikon => 'Nikon',
         _TetherFamily.sony => 'Sony',
         _TetherFamily.fuji => 'Fujifilm',
+        _TetherFamily.panasonic => 'Panasonic / LUMIX',
+        _TetherFamily.olympus => 'OM SYSTEM / Olympus',
+        _TetherFamily.pentax => 'Pentax / Ricoh',
         _TetherFamily.standard => 'USB camera',
       };
       final monitoring =
@@ -314,7 +352,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
                 'card list is not exposed in tether mode.'
           : run.family == _TetherFamily.sony
           ? 'AirPix checks the Sony shooting-mode queue every '
-                '${eventPollInterval.inSeconds} seconds without '
+                '${eventPollInterval.inMilliseconds / 1000} seconds without '
                 'requiring a shutter event.'
           : 'AirPix monitors camera events and checks for new card photos '
                 'every ${_effectiveCardScanInterval(run).inSeconds} second(s) '
@@ -336,11 +374,26 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         baselineCount: run.baselineCount,
         uploadMode: uploadMode,
       );
-    } catch (_) {
+    } catch (error) {
       try {
         await stop(sessionId);
       } catch (_) {
         // Preserve the actual negotiation failure for setup guidance.
+      }
+      final connection = run.connection;
+      if (error is PlatformException && connection != null) {
+        // Keep the camera identity after release so the UI can show the exact
+        // brand's USB mode instead of a generic connection-failed toast.
+        throw PlatformException(
+          code: error.code,
+          message: error.message,
+          stacktrace: error.stacktrace,
+          details: <Object?, Object?>{
+            if (error.details is Map) ...error.details as Map,
+            'camera': run.info?.model ?? connection.name,
+            'vendorId': connection.vendorId,
+          },
+        );
       }
       rethrow;
     }
@@ -394,6 +447,27 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     } else if (isFuji) {
       run.family = _TetherFamily.fuji;
       await _prepareFuji(run);
+    } else if (vendor == 0x04da ||
+        extension == 28 ||
+        name.contains('panasonic') ||
+        name.contains('lumix')) {
+      run.family = _TetherFamily.panasonic;
+      await _preparePanasonic(run);
+    } else if (vendor == 0x07b4 ||
+        vendor == 0x33a2 ||
+        extension == 0xfffd ||
+        name.contains('olympus') ||
+        name.contains('om system') ||
+        name.contains('omsystem')) {
+      run.family = _TetherFamily.olympus;
+      await _prepareOlympus(run);
+    } else if (vendor == 0x0a17 ||
+        vendor == 0x25fb ||
+        extension == 13 ||
+        name.contains('pentax') ||
+        name.contains('ricoh')) {
+      run.family = _TetherFamily.pentax;
+      _preparePentax(run);
     } else if (!run.fullObjectOnly &&
         run.connection!.physicalShutter == 'supported') {
       run.family = _TetherFamily.standard;
@@ -417,6 +491,130 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       run.hostTransferHandles.clear();
       run.lastCardScan = _now();
     }
+  }
+
+  Future<void> _preparePanasonic(_TetherRun run) async {
+    // Require the tether capture capability, but NEVER invoke the shutter.
+    // PC(Storage) / PictBridge card access alone is not a shooting connection.
+    _requireOperations(run, [0x9404, 0x940a, 0x1004, 0x1007, 0x1008, 0x1009]);
+    await _verifyPanasonicRecording(run);
+  }
+
+  Future<void> _verifyPanasonicRecording(_TetherRun run) async {
+    final reply = await _command(run, 0x940a, params: [0x08000090]);
+    final target = PtpTetherCodec.decodePanasonicCaptureTarget(reply.data);
+    if (target != 0 && target != 2) {
+      throw PlatformException(
+        code: run.ready
+            ? 'TETHER_MODE_CHANGED'
+            : 'TETHER_CAMERA_SETTING_REQUIRED',
+        message:
+            'Panasonic / LUMIX must use PC(Tether) and record to its '
+            'memory card (SD or SD + PC). Host-only recording is not accepted. '
+            'AirPix will not change the recording destination or USB mode.',
+      );
+    }
+  }
+
+  Future<int> _olympusValue(_TetherRun run, int property) async {
+    final reply = await _command(run, 0x1015, params: [property]);
+    return PtpTetherCodec.decodeValue(4, reply.data) as int;
+  }
+
+  Future<void> _prepareOlympus(_TetherRun run) async {
+    // 0x9486 identifies the OM-D PTP dialect, not the older XML/PictBridge
+    // control protocol. Advertised properties alone are insufficient.
+    _requireOperations(run, [
+      0x9486,
+      0x1014,
+      0x1015,
+      0x1004,
+      0x1007,
+      0x1008,
+      0x1009,
+    ]);
+    if (!run.info!.properties.containsAll([0xd052, 0xd0dc])) {
+      throw PlatformException(
+        code: 'TETHER_MODE_UNSUPPORTED',
+        message:
+            'OM SYSTEM / Olympus must expose its OM-D control and '
+            'card-recording properties. Select RAW/Control and reconnect.',
+      );
+    }
+    final reply = await _command(run, 0x1014, params: [0xd052]);
+    final control = PtpTetherCodec.decodeProperty(reply.data);
+    if (control.code != 0xd052 ||
+        control.type != 4 ||
+        !const [1, 2].contains(control.intValue)) {
+      throw const FormatException('Unsupported OM connection-mode descriptor');
+    }
+    final original = await _olympusValue(run, 0xd052);
+    if (original != control.intValue || !const [1, 2].contains(original)) {
+      throw const FormatException('OM connection-mode readback disagrees');
+    }
+    // Keep originals on the card. Never write the capture target.
+    await _verifyOlympusRecording(run, verifyControl: false);
+    await _cardHandles(run); // Prime card access before PC-session negotiation.
+    if (original == 2) {
+      _requireOperations(run, [0x1016]);
+      if (!control.writable ||
+          control.form != 2 ||
+          !control.values.contains(1) ||
+          !control.values.contains(2)) {
+        throw PlatformException(
+          code: 'TETHER_MODE_UNSUPPORTED',
+          message:
+              'OM SYSTEM / Olympus does not permit reversible PC-session '
+              'negotiation on this connection. Select RAW/Control.',
+        );
+      }
+      run.olympusOriginalControlMode = original;
+      // Mark before sending: a lost response may still have applied the change.
+      run.olympusRestoreRequired = true;
+      await _command(
+        run,
+        0x1016,
+        params: [0xd052],
+        data: PtpTetherCodec.encodeValue(4, 1),
+      );
+      await _delay(const Duration(milliseconds: 100));
+    }
+    await _verifyOlympusRecording(run);
+  }
+
+  Future<void> _verifyOlympusRecording(
+    _TetherRun run, {
+    bool verifyControl = true,
+  }) async {
+    final target = await _olympusValue(run, 0xd0dc);
+    final control = verifyControl ? await _olympusValue(run, 0xd052) : 1;
+    if (target != 2 || control != 1) {
+      throw PlatformException(
+        code: run.ready
+            ? 'TETHER_MODE_CHANGED'
+            : 'TETHER_CAMERA_SETTING_REQUIRED',
+        message:
+            'OM SYSTEM / Olympus needs a RAW/Control connection and '
+            'camera-card recording. AirPix leaves shooting settings unchanged; '
+            'restore card recording before starting again.',
+      );
+    }
+  }
+
+  void _preparePentax(_TetherRun run) {
+    // pkTriggerCord's vendor protocol uses SCSI over Mass Storage, not PTP.
+    // It cannot be implemented by relabelling an iPhone card importer.
+    if (run.connection!.physicalShutter != 'supported') {
+      throw PlatformException(
+        code: 'TETHER_CAMERA_UNSUPPORTED',
+        message:
+            'Pentax / Ricoh USB live shooting is not verified for this '
+            'connection. Its documented Pentax SCSI tether protocol requires '
+            'Mass Storage, which AirPix never enables. PTP/MTP file access '
+            'alone does not prove that you can keep shooting.',
+      );
+    }
+    _requireOperations(run, [0x1004, 0x1007, 0x1008, 0x1009]);
   }
 
   Future<void> _prepareFuji(_TetherRun run) async {
@@ -502,33 +700,6 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       return 'Fujifilm camera detected: $identity. Select USB TETHER SHOOTING '
           'AUTO/FIXED for new-shot transfer. USB CARD READER is for existing '
           'files; unsupported Fuji modes are rejected instead of locking the body.';
-    }
-    if (vendor == 0x04da ||
-        extension == 28 ||
-        name.contains('panasonic') ||
-        name.contains('lumix')) {
-      return 'Panasonic / LUMIX camera detected: $identity. The shooting mode '
-          'is PC(Tether), but this build does not yet provide its vendor tether '
-          'adapter. Use camera FTP if your model supports it.';
-    }
-    if (vendor == 0x07b4 ||
-        vendor == 0x33a2 ||
-        extension == 0xfffd ||
-        name.contains('olympus') ||
-        name.contains('omsystem') ||
-        name.contains('om system')) {
-      return 'OM SYSTEM / Olympus camera detected: $identity. This build does '
-          'not yet provide its PC-control tether adapter. Check the model’s '
-          'tethered-shooting USB mode; file import alone does not enable it.';
-    }
-    if (vendor == 0x0a17 ||
-        vendor == 0x25fb ||
-        extension == 13 ||
-        name.contains('pentax') ||
-        name.contains('ricoh')) {
-      return 'Pentax / Ricoh camera detected: $identity. This build does not '
-          'yet provide its tether adapter. PTP/MTP access to existing photos '
-          'does not confirm shooting support. Use camera FTP if your model supports it.';
     }
     return '$identity has no supported shooting adapter in this build. '
         'Use camera FTP when available, or manual import for stored photos.';
@@ -879,7 +1050,35 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       final bytes = event['data'];
       if (bytes is Uint8List) {
         try {
-          final packet = PtpTetherCodec.decodeUsbEvent(bytes);
+          final packet = PtpTetherCodec.decodeUsbEvent(
+            bytes,
+            vendorExtensionId: switch (run.family) {
+              _TetherFamily.nikon => 10,
+              _TetherFamily.sony => 17,
+              _TetherFamily.fuji => 14,
+              _TetherFamily.panasonic => 28,
+              _TetherFamily.olympus => 0xfffd,
+              _ => 0,
+            },
+          );
+          // RAM/preview notifications are not card handles. Ignore them and
+          // let card reconciliation verify the target and discover the original.
+          final invalidMode =
+              run.family == _TetherFamily.olympus &&
+              const {0xc005, 0xc105}.contains(packet.code);
+          if (invalidMode && run.ready) {
+            _reportPollError(
+              run,
+              PlatformException(
+                code: 'TETHER_MODE_CHANGED',
+                message:
+                    'The OM camera ended its control connection. '
+                    'Receiving stopped; reconnect '
+                    'in the documented shooting mode with card recording.',
+              ),
+            );
+            return;
+          }
           if (packet.code == 0x4004 || packet.code == 0x4005) {
             if (run.ready) {
               run.disconnected = true;
@@ -972,11 +1171,20 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
           'PTP_WRITE_FAILED',
           'PTP_DATA_LIMIT',
           'TETHER_MODE_CHANGED',
+          'PTP_SHOOTING_COMMAND_BLOCKED',
           'CAMERA_STORAGE_CHANGED',
         }.contains(code)) {
+      run.canReleaseAfterError =
+          code == 'TETHER_MODE_CHANGED' ||
+          code == 'PTP_SHOOTING_COMMAND_BLOCKED';
       run.disconnected = true;
       run.timer?.cancel();
       _emit(run, 'disconnected', message, code: code);
+      // A completed mode-change reply or a locally blocked command is safe
+      // to close/restore. A broken transport gets no further rollback bytes.
+      if (run.canReleaseAfterError) {
+        unawaited(stop(run.id).catchError((Object _) {}));
+      }
     } else {
       _emit(run, 'error', 'Camera check will retry. $message', code: code);
     }
@@ -985,6 +1193,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
   Future<void> _refresh(_TetherRun run) {
     final current = run.refresh;
     if (current != null) return current;
+    if (run.pollRetryAfter?.isAfter(_now()) == true) return Future.value();
     // An ordinary PTP DeviceBusy response is expected while the physical
     // shutter is exposing/writing a photo. Do not claim a broken connection
     // or repeat a red failure on each 1-second poll: retry next tick.
@@ -1014,7 +1223,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
   }
 
   /// Full card-handle enumeration can block a camera busy saving a physical
-  /// shutter shot. Cards use a three-second fallback by default; large cards
+  /// shutter shot. Small cards use a one-second fallback; large cards
   /// use a scan capped at five seconds. PTP events still wake photo handling early,
   /// without relying on them for correctness.
   Duration _effectiveCardScanInterval(_TetherRun run) {
@@ -1054,6 +1263,9 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         await _refreshSony(run);
       case _TetherFamily.fuji:
         break;
+      case _TetherFamily.panasonic:
+      case _TetherFamily.olympus:
+      case _TetherFamily.pentax:
       case _TetherFamily.standard:
         break;
     }
@@ -1062,6 +1274,11 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       if ((run.family != _TetherFamily.fuji || run.fujiCardPolling) &&
           (lastScan == null ||
               _now().difference(lastScan) >= _effectiveCardScanInterval(run))) {
+        if (run.family == _TetherFamily.panasonic) {
+          await _verifyPanasonicRecording(run);
+        } else if (run.family == _TetherFamily.olympus) {
+          await _verifyOlympusRecording(run);
+        }
         final handles = await _cardHandles(run);
         // A previous InvalidObjectHandle can refer to a removed or temporary
         // card entry. Retire that hint only when a subsequent complete scan
@@ -1478,6 +1695,10 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
                 run.operations.contains(0x9107)
           ? 0x9107
           : null;
+      PtpShootingSafety.requirePassive(
+        partialOpcode ?? 0x1009,
+        vendorId: run.connection?.vendorId ?? 0,
+      );
       final file = await _link.download(
         sessionId,
         transferId: photo.id,
@@ -1567,7 +1788,18 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       // Closing native USB aborts a stalled transaction. Never queue rollback
       // bytes into an in-flight PTP data stream.
     }
-    if (idle && !run.disconnected && run.connection != null) {
+    PlatformException? releaseFailure;
+    if (run.olympusRestoreRequired && !idle && !run.disconnected) {
+      releaseFailure = PlatformException(
+        code: 'TETHER_RELEASE_INCOMPLETE',
+        message:
+            'The OM camera did not finish its USB command in time. '
+            'Unplug USB and check its screen and physical controls.',
+      );
+    }
+    if (idle &&
+        (!run.disconnected || run.canReleaseAfterError) &&
+        run.connection != null) {
       var rollbackStreamUsable = true;
       Future<void> bestEffort(int opcode, List<int> params) async {
         if (!rollbackStreamUsable) return;
@@ -1584,6 +1816,36 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         } catch (_) {}
       }
 
+      if (run.olympusRestoreRequired) {
+        try {
+          final original = run.olympusOriginalControlMode!;
+          await _command(
+            run,
+            0x1016,
+            params: [0xd052],
+            data: PtpTetherCodec.encodeValue(4, original),
+            duringClose: true,
+          ).timeout(const Duration(seconds: 2));
+          final reply = await _command(
+            run,
+            0x1015,
+            params: [0xd052],
+            duringClose: true,
+          ).timeout(const Duration(seconds: 2));
+          if (PtpTetherCodec.decodeValue(4, reply.data) != original) {
+            throw const FormatException('OM connection mode was not restored');
+          }
+          run.olympusRestoreRequired = false;
+        } catch (_) {
+          rollbackStreamUsable = false;
+          releaseFailure = PlatformException(
+            code: 'TETHER_RELEASE_INCOMPLETE',
+            message:
+                'OM camera control restoration could not be confirmed. '
+                'Unplug USB and check the camera screen and physical controls.',
+          );
+        }
+      }
       if (run.canonRemote) {
         // Same display-restoration sequence used by the upstream EOS protocol.
         // Card recording is retained; never leave a body in host-only RAM mode.
@@ -1595,6 +1857,9 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       // Sony Connect phase 3 is the final OPEN phase, not a disconnect command.
       // Close the standard native session; do not change priority to Application
       // or put recording back into a RAM-only destination during shutdown.
+    }
+    if (releaseFailure != null) {
+      _emit(run, 'error', releaseFailure.message!, code: releaseFailure.code);
     }
     try {
       await _link.close(run.id);
@@ -1608,5 +1873,6 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       run.pending.removeWhere((_, photo) => photo.staged == null);
       if (run.pending.isEmpty) _runs.remove(run.id);
     }
+    if (releaseFailure != null) throw releaseFailure;
   }
 }

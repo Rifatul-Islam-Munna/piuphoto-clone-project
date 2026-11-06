@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:mobileapp/core/di/locator.dart';
+import 'package:mobileapp/core/upload/camera_private_files.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Only private camera staging copies whose durable upload queue save succeeded
@@ -26,6 +27,12 @@ class CameraStagingCleanup {
   /// Caller has already persisted a separate queue copy or a cloud receipt.
   static Future<void> release(String path) => _serial(() async {
     if (path.isEmpty) return;
+    if (!await CameraPrivateFiles.isStagingPath(path)) {
+      throw FileSystemException(
+        'Refusing cleanup outside private camera staging',
+        path,
+      );
+    }
     final prefs = getIt<SharedPreferences>();
     final paths = (prefs.getStringList(_key) ?? const <String>[]).toSet();
     if (paths.add(path)) await _save(prefs, paths);
@@ -48,6 +55,9 @@ class CameraStagingCleanup {
 
   static Future<bool> _remove(String path) async {
     try {
+      // Revalidate persisted paths after restart; discard an unsafe journal
+      // entry without touching its file.
+      if (!await CameraPrivateFiles.isStagingPath(path)) return true;
       final type = await FileSystemEntity.type(path, followLinks: false);
       if (type == FileSystemEntityType.notFound) return true;
       // Never recurse: a wrong path must not delete a directory of photographs.

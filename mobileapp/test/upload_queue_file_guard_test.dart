@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobileapp/core/di/locator.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
@@ -11,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
   late Directory directory;
   late File cameraDownload;
   late File queuedCopy;
@@ -30,7 +32,10 @@ void main() {
       'live-capture-queue-test-',
     );
     cameraDownload = File('${directory.path}/camera-download.jpg');
-    queuedCopy = File('${directory.path}/queued-copy.jpg');
+    await Directory('${directory.path}/upload_queue').create();
+    queuedCopy = File('${directory.path}/upload_queue/queued-copy.jpg');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (_) async => directory.path);
     await cameraDownload.writeAsBytes([1, 2, 3], flush: true);
     await UploadQueueStorage.add(
       PendingUploadItem(
@@ -48,10 +53,38 @@ void main() {
   });
 
   tearDown(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, null);
     TransferLedgerStorage.items.value = const [];
     await getIt.reset();
     await directory.delete(recursive: true);
   });
+
+  test(
+    'completed receipt cannot authorize deletion outside private upload queue',
+    () async {
+      final unsafe = PendingUploadItem(
+        id: 'outside',
+        eventId: event.id,
+        eventTitle: event.title,
+        localPath: cameraDownload.path,
+        filename: 'original.jpg',
+        source: 'usb',
+        isEnhanced: false,
+        createdAt: 1,
+      );
+      await UploadQueueStorage.add(unsafe);
+      await UploadQueueStorage.markCompleted(['outside']);
+      await UploadQueueService.processQueue();
+      expect(await cameraDownload.readAsBytes(), [1, 2, 3]);
+      expect(
+        UploadQueueStorage.items.value
+            .firstWhere((p) => p.id == 'outside')
+            .lastError,
+        'Uploaded; temporary file cleanup pending',
+      );
+    },
+  );
 
   test(
     'confirmed upload deletes queue buffer and retains camera original',

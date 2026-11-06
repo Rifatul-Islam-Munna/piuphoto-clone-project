@@ -60,6 +60,9 @@ class UsbShootingModeAdvice {
       camera?.name ?? peripheral?.name ?? '',
       camera?.usbVendorId ?? peripheral?.vendorId ?? 0,
     );
+    final instructions = brand.instructionsFor(
+      camera?.name ?? peripheral?.name ?? '',
+    );
     final transport = (camera?.transportType ?? peripheral?.category ?? '')
         .toLowerCase()
         .replaceAll(' ', '')
@@ -88,8 +91,10 @@ class UsbShootingModeAdvice {
         status: 'Check cable and USB settings',
         nextSteps:
             'Use a powered-on camera, USB data cable and suitable '
-            'adapter. Select its shooting-capable USB connection and retry. '
-            'iOS might not expose an incompatible USB device at all.',
+            'adapter. On the camera, select Remote Shooting / PC Remote / '
+            'Tether (names vary by brand), then retry. Open Camera setup '
+            'for your model. AirPix never switches to Mass Storage. '
+            'iOS may not expose an incompatible USB device.',
       );
     }
     if (transferOnly) {
@@ -98,8 +103,9 @@ class UsbShootingModeAdvice {
         title: 'Wrong USB mode for live shooting',
         status: 'Storage / import mode detected',
         nextSteps:
-            '${brand.instructions} Disconnect USB before changing '
-            'the camera mode. Reconnect, choose New shots only, and test '
+            '$instructions Disconnect USB before changing '
+            'the camera mode. AirPix will not change it or fall back to '
+            'Mass Storage. Reconnect, choose New shots only, and test '
             'that the camera shutter and screen remain functional.',
       );
     }
@@ -115,7 +121,7 @@ class UsbShootingModeAdvice {
           ? 'Live connection; test shot required'
           : 'PTP/tether capability unverified',
       nextSteps:
-          '${brand.instructions} PTP/MTP can be correct for some '
+          '$instructions PTP/MTP can be correct for some '
           'cameras but stored-file access does not confirm live shooting. '
           'Take a new picture with the physical shutter, check that '
           'the screen is usable, and verify arrival in Camera transfers.',
@@ -161,6 +167,17 @@ enum _CameraBrand {
     return other;
   }
 
+  String instructionsFor(String label) {
+    final model = label.toLowerCase().replaceAll(RegExp('[^a-z0-9]'), '');
+    if (this == sony && (model.contains('7rm4') || model.contains('7riv'))) {
+      return 'Sony Alpha 7R IV: disconnect USB. In Network, set Ctrl w/ '
+          'Smartphone to Off. Open PC Remote Function: PC Remote = On, '
+          'PC Remote Cnct Method = USB, Still Img. Save Dest. = PC+Camera. '
+          'Keep a writable card inserted and use Camera priority where available.';
+    }
+    return instructions;
+  }
+
   String get instructions => switch (this) {
     canon =>
       'Canon EOS: select a remote-control PTP connection. On '
@@ -178,14 +195,16 @@ enum _CameraBrand {
       'Fujifilm: select USB TETHER SHOOTING AUTO/FIXED rather '
           'than USB CARD READER or RAW conversion.',
     panasonic =>
-      'Panasonic/LUMIX: select PC(Tether), not PC(Storage). '
-          'This build may still need a vendor-specific driver.',
+      'Panasonic/LUMIX: select PC(Tether) and SD or SD + PC recording '
+          'with a writable card inserted. PC(Storage) is for file import.',
     olympus =>
-      'Olympus/OM SYSTEM: select the model-specific camera '
-          'control mode; storage import is not evidence of live tether.',
+      'Olympus/OM SYSTEM: select RAW/Control or the camera-to-computer '
+          'control icon on supported models, with camera-card recording. '
+          'Storage import is not evidence of live tether.',
     pentax =>
-      'Pentax/Ricoh: check the model’s supported remote-shooting '
-          'connection. Generic PTP/MTP may allow only stored-photo import.',
+      'Pentax/Ricoh: this connection must explicitly support the physical '
+          'shutter while using PTP. There is no universal USB setting for '
+          'iPhone tethering; Mass Storage/SCSI control is not used.',
     other =>
       'Choose the camera model’s shooting-capable PTP/MTP or '
           'tether mode, not Mass Storage or a card reader.',

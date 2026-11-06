@@ -21,16 +21,55 @@ import java.util.concurrent.atomic.AtomicInteger
 /** Prevents all passive USB camera receivers from deleting, shooting, or UI-locking. */
 internal object PtpShootingSafety {
     private val blocked = setOf(
-        0x100b, 0x100e, 0x100f, 0x1010,
+        0x100b, 0x100c, 0x100d, 0x100e, 0x100f, 0x1010,
+        0x1011, 0x1012, 0x1013, 0x1017, 0x1018, 0x1019, 0x101a, 0x101c,
         0x910f, 0x911b, 0x9128, 0x9129, 0x9151, 0x9207,
         0x1016, 0x9110, 0x9205, 0x9206, // Camera property writes
     )
 
-    fun requirePassive(opcode: Int) {
-        if (opcode in blocked) {
+    private val readOperations = setOf(
+        0x1001, 0x1004, 0x1005, 0x1007, 0x1008, 0x1009, 0x100a,
+        0x1014, 0x1015, 0x101b,
+    )
+
+    fun isAllowed(opcode: Int, vendorId: Int = 0,
+        parameters: List<Long> = emptyList(), outgoing: ByteArray? = null): Boolean {
+        val olympus = vendorId == 0x07b4 || vendorId == 0x33a2
+        if (olympus && opcode == 0x1016) {
+            return parameters == listOf(0xd052L) && outgoing != null &&
+                (outgoing.contentEquals(byteArrayOf(1, 0)) ||
+                 outgoing.contentEquals(byteArrayOf(2, 0)))
+        }
+        if (opcode in blocked || (outgoing != null && outgoing.isNotEmpty())) return false
+        if (opcode in readOperations) return true
+        // Default-deny vendor commands; USB identity and exact negotiation values
+        // must match. Never allow host priority, capture or live-view as a fallback.
+        return when (vendorId) {
+            0x04a9 -> when (opcode) {
+                0x9114, 0x9115 -> parameters == listOf(0L) || parameters == listOf(1L)
+                0x9116 -> parameters.isEmpty()
+                0x9127 -> parameters == listOf(0xd11cL)
+                0x9117 -> parameters.size == 1 && parameters[0] in 1L until 0xffffffffL
+                0x9107 -> true // Native download validates partial-read ranges.
+                else -> false
+            }
+            0x04b0 -> (opcode == 0x90c2 && parameters == listOf(0L)) ||
+                (opcode in setOf(0x90c7, 0x941c) && parameters.isEmpty())
+            0x054c -> (opcode == 0x9201 &&
+                parameters in listOf(listOf(1L, 0L, 0L), listOf(2L, 0L, 0L), listOf(3L, 0L, 0L))) ||
+                (opcode == 0x9202 && parameters == listOf(0x12cL, 1L)) ||
+                (opcode == 0x9209 && parameters.isEmpty())
+            0x04da -> opcode == 0x940a && parameters == listOf(0x08000090L)
+            else -> false
+        }
+    }
+
+    fun requirePassive(opcode: Int, vendorId: Int = 0,
+        parameters: List<Long> = emptyList(), outgoing: ByteArray? = null) {
+        if (!isAllowed(opcode, vendorId, parameters, outgoing)) {
             throw PtpWireException(
                 "PTP_SHOOTING_COMMAND_BLOCKED",
-                "AirPix only receives photos over PTP; the camera shutter, screen and controls remain with the photographer.",
+                "This command is not approved for this camera. Receiving stops without switching USB modes.",
                 false,
             )
         }
@@ -272,12 +311,12 @@ internal class PtpTetherController(
                         if (opcode !in 1..0xffff || opcode == 0x1002 || opcode == 0x1003) {
                             throw PtpWireException("PTP_INVALID_ARGUMENT", "Open and close are owned by the native USB session.", false)
                         }
-                        PtpShootingSafety.requirePassive(opcode)
                         if (opcode == 0x1009 || opcode == 0x101b || opcode == 0x9107) {
                             throw PtpWireException("PTP_STREAM_REQUIRED", "Camera photos must use the native file transfer method.", false)
                         }
                         val parameters = call.argument<List<*>>("params")?.map { uint(it, "parameter") } ?: emptyList()
                         val outData = call.argument<ByteArray>("outData")
+                        PtpShootingSafety.requirePassive(opcode, active?.device?.vendorId ?: 0, parameters, outData)
                         submit(result, active) {
                             val selected = active?.takeIf(::current) ?: throw PtpWireException("PTP_SESSION_CLOSED", "The camera session has ended.", false)
                             val reply = selected.transport.command(opcode, parameters, outData)
@@ -295,6 +334,7 @@ internal class PtpTetherController(
                                 allowStart = active != null && current(active),
                             ) { opcode, parameters, output, maximum ->
                                 val selected = active?.takeIf(::current) ?: throw PtpWireException("PTP_SESSION_CLOSED", "The camera session has ended.", false)
+                                PtpShootingSafety.requirePassive(opcode, selected.device.vendorId, parameters)
                                 selected.transport.receiveObject(opcode, parameters, output, maximum)
                             }
                         }

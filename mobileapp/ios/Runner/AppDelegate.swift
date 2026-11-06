@@ -714,7 +714,7 @@ final class WiredCameraPhotoIndex {
           self.endPtpTetherSession(session, error: FlutterError(
             code: (isSony && massStorage) ? "SONY_MASS_STORAGE_MODE" : "LIVE_CAMERA_TRANSFER_ONLY",
             message: isSony
-              ? "The Sony camera is in a file-transfer/streaming USB mode, not Remote Shooting. Unplug USB, then select Setup > USB > USB Connection Mode > Remote Shooting and reconnect."
+              ? "The Sony camera is in a file-transfer/streaming USB mode. Unplug USB and select its PC Remote / Remote Shooting mode. Open Camera setup for this model's exact menu, then reconnect."
               : "The camera is exposing USB storage, media transfer or streaming, not a shooting-capable PTP connection. Unplug it and choose the model's tether/remote-shooting USB mode. Ordinary PTP/MTP import does not confirm a usable shutter.",
             details: ["camera": camera.name ?? "USB camera", "transport": camera.transportType ?? "unknown"]
           ))

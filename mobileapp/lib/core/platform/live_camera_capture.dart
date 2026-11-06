@@ -16,8 +16,8 @@ LiveCameraTransport preferredUsbCameraTransport({
 }) {
   return PtpTetherCameraTransport(
     uploadMode: uploadMode,
-    eventPollInterval: const Duration(seconds: 3),
-    cardScanInterval: const Duration(seconds: 3),
+    eventPollInterval: const Duration(milliseconds: 500),
+    cardScanInterval: const Duration(seconds: 1),
   );
 }
 
@@ -143,7 +143,7 @@ class LiveCameraCapture {
     this.uploadMode = LiveCameraUploadMode.newShotsOnly,
     required this.onUpdate,
     // Poll even without shutter notifications. A running drain is coalesced.
-    this.pollInterval = const Duration(seconds: 3),
+    this.pollInterval = const Duration(milliseconds: 500),
     this.retryDelay = const Duration(seconds: 3),
     DateTime Function()? now,
     Future<bool> Function(OtgPickedFile)? isStagedFileUsable,
@@ -402,6 +402,7 @@ class LiveCameraCapture {
                 'PTP_STAGING_FAILED',
                 'PTP_SESSION_CLOSED',
                 'PTP_TRANSPORT_FAILED',
+                'PTP_SHOOTING_COMMAND_BLOCKED',
               }.contains(error.code)) {
             await _disconnect(run, _message(error), error.code);
             return;
@@ -431,6 +432,7 @@ class LiveCameraCapture {
         'NO_CAMERA_CONNECTED',
         'PTP_SESSION_CLOSED',
         'PTP_TRANSPORT_FAILED',
+        'PTP_SHOOTING_COMMAND_BLOCKED',
         'PTP_TETHER_TIMEOUT',
         'PTP_TIMEOUT',
         'TETHER_MODE_CHANGED',

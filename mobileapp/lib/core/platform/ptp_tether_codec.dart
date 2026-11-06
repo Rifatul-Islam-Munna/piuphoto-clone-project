@@ -279,6 +279,16 @@ abstract final class PtpTetherCodec {
     return List.unmodifiable(values);
   }
 
+  static int decodePanasonicCaptureTarget(Uint8List bytes) {
+    final reader = _Reader(bytes);
+    if (reader.u32() != 0x08000091 || reader.u32() != 2) {
+      throw const FormatException('Invalid LUMIX capture-target response');
+    }
+    final target = reader.u16();
+    reader.finish();
+    return target;
+  }
+
   static PtpProperty decodeProperty(Uint8List bytes) {
     final reader = _Reader(bytes);
     final property = _property(reader);
@@ -569,13 +579,16 @@ abstract final class PtpTetherCodec {
       }
       reader.checkCount(paramCount, 4);
       final params = List<int>.generate(paramCount, (_) => reader.u32());
-      events.add(_standardEvent(code, params));
+      events.add(_standardEvent(code, params, vendorExtensionId: 10));
     }
     reader.finish();
     return List.unmodifiable(events);
   }
 
-  static PtpTetherEvent decodeUsbEvent(Uint8List bytes) {
+  static PtpTetherEvent decodeUsbEvent(
+    Uint8List bytes, {
+    int vendorExtensionId = 0,
+  }) {
     final reader = _Reader(bytes);
     final length = reader.u32();
     if (length != bytes.length || length < 12 || (length - 12) % 4 != 0) {
@@ -590,15 +603,33 @@ abstract final class PtpTetherCodec {
     if (count > 3) {
       throw const FormatException('Too many USB PTP event parameters');
     }
-    return _standardEvent(code, List.generate(count, (_) => reader.u32()));
+    return _standardEvent(
+      code,
+      List.generate(count, (_) => reader.u32()),
+      vendorExtensionId: vendorExtensionId,
+    );
   }
 
-  static PtpTetherEvent _standardEvent(int code, List<int> params) {
-    final kind = switch (code) {
-      0x4002 || 0xc004 || 0xc201 => PtpTetherEventKind.objectAdded,
-      0xc101 => PtpTetherEventKind.objectTransfer,
-      0x4003 || 0xc202 => PtpTetherEventKind.objectRemoved,
-      0x4006 || 0xc203 => PtpTetherEventKind.propertyChanged,
+  static PtpTetherEvent _standardEvent(
+    int code,
+    List<int> params, {
+    int vendorExtensionId = 0,
+  }) {
+    // Vendor event values overlap. Never interpret another brand's mode or
+    // preview notification as a photograph handle.
+    final kind = switch ((vendorExtensionId, code)) {
+      (_, 0x4002) ||
+      (14, 0xc004) ||
+      (17, 0xc201) ||
+      (28, 0xc108) ||
+      (0xfffd, 0xc002) ||
+      (0xfffd, 0xc102) => PtpTetherEventKind.objectAdded,
+      (10, 0xc101) => PtpTetherEventKind.objectTransfer,
+      (_, 0x4003) || (17, 0xc202) => PtpTetherEventKind.objectRemoved,
+      (_, 0x4006) ||
+      (17, 0xc203) ||
+      (0xfffd, 0xc008) ||
+      (0xfffd, 0xc108) => PtpTetherEventKind.propertyChanged,
       _ => PtpTetherEventKind.unknown,
     };
     if (kind != PtpTetherEventKind.unknown && params.isEmpty) {

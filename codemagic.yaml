@@ -29,6 +29,17 @@ workflows:
         script: |
           flutter pub get
 
+      - name: Verify iOS permission descriptions
+        script: |
+          plutil -lint ios/Runner/Info.plist
+          for key in NSCameraUsageDescription NSPhotoLibraryUsageDescription NSPhotoLibraryAddUsageDescription NSLocalNetworkUsageDescription; do
+            purpose=$(/usr/libexec/PlistBuddy -c "Print :$key" ios/Runner/Info.plist) || exit 1
+            if [ -z "$(echo "$purpose" | tr -d '[:space:]')" ]; then
+              echo "Missing iOS purpose string: $key"
+              exit 1
+            fi
+          done
+
       - name: Install pods
         script: |
           find . -name "Podfile" -execdir pod install \;

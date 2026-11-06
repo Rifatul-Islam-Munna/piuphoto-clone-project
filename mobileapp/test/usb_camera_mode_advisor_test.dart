@@ -26,6 +26,21 @@ UsbShootingModeAdvice advise({
 );
 
 void main() {
+  test('Alpha 7R IV failure shows its PC Remote Function menu', () {
+    for (final name in ['ILCE-7RM4', 'Sony Alpha 7R IV']) {
+      final advice = advise(
+        name: name,
+        vendor: 0x054c,
+        transport: 'Mass Storage',
+      );
+      expect(advice.nextSteps, contains('PC Remote Function'));
+      expect(advice.nextSteps, contains('PC Remote Cnct Method = USB'));
+      expect(advice.nextSteps, contains('PC+Camera'));
+      expect(advice.nextSteps, isNot(contains('Dest.+Camera')));
+      expect(advice.nextSteps, contains('will not change it'));
+    }
+  });
+
   test('native USB failure immediately displays camera-specific mode help', () {
     final failure = PlatformException(
       code: 'CAMERA_SESSION_FAILED',

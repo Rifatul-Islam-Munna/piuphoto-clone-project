@@ -33,6 +33,15 @@ void main() {
     );
     await tester.tap(find.text('Setup'));
     await tester.pumpAndSettle();
+    expect(
+      find.textContaining('USB remote control / tethered shooting'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Remote Shooting, PC Remote, or PC(Tether)'),
+      findsOneWidget,
+    );
+    expect(find.text('No automatic storage-mode fallback'), findsOneWidget);
     for (final brand in [
       'Panasonic / LUMIX',
       'Olympus / OM SYSTEM',
@@ -40,6 +49,7 @@ void main() {
       'Canon EOS',
       'Nikon',
       'Sony Alpha 7 IV (ILCE-7M4)',
+      'Sony Alpha 7R IV (ILCE-7RM4)',
     ]) {
       final tile = find.text(brand);
       await tester.ensureVisible(tile);

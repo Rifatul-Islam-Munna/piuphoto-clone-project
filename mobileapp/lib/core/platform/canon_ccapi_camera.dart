@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:mobileapp/core/platform/camera_http_auth.dart';
 
 class CanonCcapiContent {
   const CanonCcapiContent({required this.url, required this.name});
@@ -41,6 +42,8 @@ class CanonCcapiCamera {
     Duration timeout = const Duration(milliseconds: 1200),
     String? username,
     String? password,
+    bool exactEndpoint = false,
+    CancelToken? cancellation,
   }) async {
     final origins = <Uri>[];
     final seen = <String>{};
@@ -50,8 +53,8 @@ class CanonCcapiCamera {
       final scheme = uri.scheme == 'https' ? 'https' : 'http';
       final ports = <int>{
         if (uri.hasPort) uri.port,
-        8080,
-        scheme == 'https' ? 443 : 80,
+        if (!exactEndpoint) 8080,
+        if (!exactEndpoint || !uri.hasPort) scheme == 'https' ? 443 : 80,
       };
       for (final port in ports) {
         final origin = Uri(
@@ -69,22 +72,83 @@ class CanonCcapiCamera {
     }
 
     for (final origin in origins) {
+      if (cancellation?.isCancelled == true) return null;
       final dio = Dio(
         BaseOptions(
           connectTimeout: timeout,
           receiveTimeout: const Duration(seconds: 2),
           sendTimeout: timeout,
           validateStatus: (status) => status != null && status < 500,
+          followRedirects: false,
+        ),
+      );
+      // Only documented read endpoints on this exact camera are reachable.
+      // No guessed snapshot/capture/live-view URL and no redirect is permitted.
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (request, handler) {
+            if (request.method != 'GET' || !_allowsRead(origin, request.uri)) {
+              handler.reject(
+                DioException(
+                  requestOptions: request,
+                  error: 'Wireless camera control commands are blocked.',
+                ),
+              );
+              return;
+            }
+            handler.next(request);
+          },
         ),
       );
       if (username?.isNotEmpty == true) {
-        final credentials = base64Encode(
-          utf8.encode('$username:${password ?? ''}'),
+        final auth = CameraHttpAuth(username!, password ?? '');
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) {
+              final header = auth.header(request.method, request.uri);
+              if (header != null) request.headers['Authorization'] = header;
+              handler.next(request);
+            },
+            onResponse: (response, handler) async {
+              if (response.statusCode != 401 ||
+                  response.requestOptions.extra['cameraAuthRetried'] == true) {
+                handler.next(response);
+                return;
+              }
+              final challenges =
+                  response.headers['www-authenticate'] ?? const <String>[];
+              if (!challenges.any(auth.acceptChallenge)) {
+                handler.next(response);
+                return;
+              }
+              try {
+                final retry = response.requestOptions.copyWith(
+                  extra: {
+                    ...response.requestOptions.extra,
+                    'cameraAuthRetried': true,
+                  },
+                );
+                handler.resolve(await dio.fetch(retry));
+              } on DioException catch (error) {
+                handler.reject(error);
+              } catch (error) {
+                handler.reject(
+                  DioException(
+                    requestOptions: response.requestOptions,
+                    error: error,
+                  ),
+                );
+              }
+            },
+          ),
         );
-        dio.options.headers['Authorization'] = 'Basic $credentials';
       }
 
       for (final version in _versions) {
+        if (cancellation?.isCancelled == true) {
+          dio.close(force: true);
+          return null;
+        }
         final camera = CanonCcapiCamera._(
           origin: origin,
           version: version,
@@ -93,8 +157,13 @@ class CanonCcapiCamera {
         try {
           final response = await dio.getUri(
             camera._eventUri,
-            cancelToken: camera._cancelToken,
+            cancelToken: cancellation ?? camera._cancelToken,
           );
+          if (exactEndpoint &&
+              (response.statusCode == 401 || response.statusCode == 403)) {
+            dio.close(force: true);
+            return null;
+          }
           if (response.statusCode == null ||
               response.statusCode! < 200 ||
               response.statusCode! >= 300) {
@@ -119,6 +188,22 @@ class CanonCcapiCamera {
       dio.close(force: true);
     }
     return null;
+  }
+
+  static bool _allowsRead(Uri origin, Uri uri) {
+    if (uri.scheme != origin.scheme ||
+        uri.host.toLowerCase() != origin.host.toLowerCase() ||
+        uri.port != origin.port ||
+        uri.userInfo.isNotEmpty) {
+      return false;
+    }
+    final path = uri.normalizePath().path;
+    if (path != uri.path ||
+        uri.pathSegments.any((s) => s == '.' || s == '..')) {
+      return false;
+    }
+    return RegExp(r'^/ccapi/ver[0-9]+/event/polling$').hasMatch(path) ||
+        RegExp(r'^/ccapi/ver[0-9]+/contents/').hasMatch(path);
   }
 
   /// Added-content events are destructive reads on the camera. Retain them
@@ -179,7 +264,11 @@ class CanonCcapiCamera {
           resolved.userInfo.isNotEmpty) {
         continue;
       }
-      if (!_looksLikeCameraImage(resolved.path)) continue;
+      if (!_allowsRead(origin, resolved) ||
+          !resolved.path.contains('/contents/') ||
+          !_looksLikeCameraImage(resolved.path)) {
+        continue;
+      }
       final url = resolved.toString();
       if (_acknowledged.contains(url) || _pending.containsKey(url)) continue;
       final name = resolved.pathSegments.isEmpty
@@ -214,6 +303,8 @@ class CanonCcapiCamera {
     if (_closed) throw StateError('The camera connection is closed');
     final uri = Uri.tryParse(content.url);
     if (uri == null ||
+        !_allowsRead(origin, uri) ||
+        !uri.path.contains('/contents/') ||
         uri.scheme != origin.scheme ||
         uri.host.toLowerCase() != origin.host.toLowerCase() ||
         uri.port != origin.port ||

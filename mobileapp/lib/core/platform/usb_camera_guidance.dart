@@ -45,18 +45,26 @@ class UsbCameraGuidance {
             'a test photo. Import access alone does not confirm that the camera '
             'allows its shutter to work while connected.',
       ),
+      'ptp_shooting_command_blocked' => const UsbCameraGuidance(
+        title: 'Receiving stopped to protect camera controls',
+        details:
+            'This connection requested a command that AirPix does not allow.',
+        nextSteps:
+            'Unplug USB and check Camera setup for your brand. Choose '
+            'Remote Shooting / PC Remote / Tether where supported. AirPix '
+            'will not try Mass Storage or a different control mode.',
+      ),
       'sony_mass_storage_mode' => const UsbCameraGuidance(
         title: 'Sony is in USB Mass Storage mode',
         details:
             'Mass Storage is for copying existing files; it can blank the '
             'Sony shooting display and cannot keep the physical shutter live.',
         nextSteps:
-            'Unplug the USB cable. On Sony Alpha 7 IV choose MENU > Setup > '
-            'USB > USB Connection Mode > Remote Shooting (or Select When '
-            'Connect, then Remote Shooting). Under Network > Cnct./Remote '
-            'Sht. > Remote Shoot Setting, set Still Img. Save Dest. to '
-            'Dest.+Camera. Reconnect with a USB data cable and select '
-            'New shots only in AirPix.',
+            'Unplug USB and choose the model in Camera setup. On Alpha '
+            '7R IV use Network > PC Remote Function: On, USB, PC+Camera. '
+            'On Alpha 7 IV use Setup > USB > USB Connection Mode > Remote '
+            'Shooting and Still Img. Save Dest. > Dest.+Camera. Reconnect '
+            'with a USB data cable and select New shots only in AirPix.',
       ),
       'sony_ptp_control_unavailable' ||
       'sony_camera_session_failed' => const UsbCameraGuidance(
@@ -167,16 +175,6 @@ class UsbCameraGuidance {
         nextSteps:
             'Check free phone storage, recover this photo from the camera '
             'memory card, then restart Live shooting.',
-      ),
-      'ptp_shooting_command_blocked' => const UsbCameraGuidance(
-        title: 'A camera-control command was blocked for safety',
-        details:
-            'AirPix live USB only receives photographs. A request to trigger '
-            'the shutter, delete a camera photo or lock its controls was rejected.',
-        nextSteps:
-            'Keep shooting using the camera\'s physical shutter. If this '
-            'appears unexpectedly, copy the USB support report so the '
-            'camera-protocol adapter can be checked before reconnecting.',
       ),
       'camera_busy' => const UsbCameraGuidance(
         title: 'The camera is busy',
