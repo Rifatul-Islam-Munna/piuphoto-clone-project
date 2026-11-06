@@ -10,7 +10,7 @@ workflows:
 
     environment:
       flutter: stable
-      xcode: 26.6 # pinned: `latest` now points to Xcode 27.x
+      xcode: 26.5 # pinned: `latest` now points to Xcode 27.x
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.nikofly.app
