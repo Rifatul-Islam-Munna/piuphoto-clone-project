@@ -18,6 +18,7 @@ void main() {
   const fingerprint = 'event-1|camera-1|photo-1';
 
   setUp(() async {
+    UploadQueueService.stop();
     await getIt.reset();
     SharedPreferences.setMockInitialValues({});
     getIt.registerSingleton<SharedPreferences>(
@@ -51,6 +52,43 @@ void main() {
     await getIt.reset();
     await directory.delete(recursive: true);
   });
+
+  test(
+    'confirmed upload deletes queue buffer and retains camera original',
+    () async {
+      await queuedCopy.writeAsBytes([1, 2, 3]);
+      await UploadQueueStorage.markCompleted(['queued-photo']);
+      await UploadQueueService.processQueue();
+      expect(await queuedCopy.exists(), isFalse);
+      expect(await cameraDownload.readAsBytes(), [1, 2, 3]);
+      expect(UploadQueueStorage.items.value, isEmpty);
+    },
+  );
+
+  test(
+    'failed cleanup stays queued and retries without another cloud upload',
+    () async {
+      await UploadQueueStorage.markCompleted(['queued-photo']);
+      await Directory(queuedCopy.path).create();
+      await UploadQueueService.processQueue();
+      expect(UploadQueueStorage.items.value, hasLength(1));
+      expect(UploadQueueStorage.isCompleted('queued-photo'), isTrue);
+      expect(
+        UploadQueueStorage.items.value.single.lastError,
+        'Uploaded; temporary file cleanup pending',
+      );
+      await Directory(queuedCopy.path).delete();
+      await queuedCopy.writeAsBytes([1, 2, 3]);
+      // Simulate persisted queue reloaded on app restart, then retry due cleanup.
+      await UploadQueueStorage.init();
+      final pending = UploadQueueStorage.items.value.single;
+      await UploadQueueStorage.update(pending.copyWith(nextRetryAt: 0));
+      await UploadQueueService.processQueue();
+      expect(await queuedCopy.exists(), isFalse);
+      expect(UploadQueueStorage.items.value, isEmpty);
+      expect(UploadQueueStorage.isCompleted('queued-photo'), isTrue);
+    },
+  );
 
   Future<bool> importAgain() => UploadQueueService.importFileLocalFirst(
     event: event,

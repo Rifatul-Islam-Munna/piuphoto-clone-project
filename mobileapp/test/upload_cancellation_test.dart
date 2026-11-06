@@ -911,6 +911,13 @@ class _ReceiptFailurePreferences implements SharedPreferences {
   String? getString(String key) => delegate.getString(key);
 
   @override
+  List<String>? getStringList(String key) => delegate.getStringList(key);
+
+  @override
+  Future<bool> setStringList(String key, List<String> value) =>
+      delegate.setStringList(key, value);
+
+  @override
   Future<bool> setString(String key, String value) async {
     if (failReceipt && key == 'completed_upload_ids_v1') return false;
     return delegate.setString(key, value);

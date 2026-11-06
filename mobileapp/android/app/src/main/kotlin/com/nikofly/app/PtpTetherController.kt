@@ -23,6 +23,7 @@ internal object PtpShootingSafety {
     private val blocked = setOf(
         0x100b, 0x100e, 0x100f, 0x1010,
         0x910f, 0x911b, 0x9128, 0x9129, 0x9151, 0x9207,
+        0x1016, 0x9110, 0x9205, 0x9206, // Camera property writes
     )
 
     fun requirePassive(opcode: Int) {

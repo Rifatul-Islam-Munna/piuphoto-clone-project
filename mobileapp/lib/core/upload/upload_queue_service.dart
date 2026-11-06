@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
+import 'package:mobileapp/core/upload/camera_staging_cleanup.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:path_provider/path_provider.dart';
@@ -644,12 +645,13 @@ class UploadQueueService {
   }
 
   static Future<void> processQueue() async {
-    if (isProcessing.value || UploadQueueStorage.items.value.isEmpty) return;
+    if (isProcessing.value) return;
     _nextPassTimer?.cancel();
     _nextPassTimer = null;
     isProcessing.value = true;
     var shouldSchedule = true;
     try {
+      await CameraStagingCleanup.retryPending();
       final snapshot = List<PendingUploadItem>.from(
         UploadQueueStorage.items.value,
       );
@@ -673,10 +675,12 @@ class UploadQueueService {
               bytesPerSecond: 0,
             );
           }
-          try {
-            await file.delete();
-          } catch (_) {}
-          await UploadQueueStorage.remove(item.id);
+          // Honor a cleanup retry deadline; cloud completion stays durable.
+          if (item.lastError == 'Uploaded; temporary file cleanup pending' &&
+              _readyAt(item) > DateTime.now().millisecondsSinceEpoch) {
+            continue;
+          }
+          await _cleanupCompletedFile(item);
           continue;
         }
         if (_readyAt(item) > DateTime.now().millisecondsSinceEpoch) continue;
@@ -705,10 +709,7 @@ class UploadQueueService {
             albumId: item.albumId,
             transferId: item.id,
           );
-          try {
-            await file.delete();
-          } catch (_) {}
-          await UploadQueueStorage.remove(item.id);
+          await _cleanupCompletedFile(item);
         } catch (error) {
           if (_isCancelled(item.id)) continue;
           if (UploadQueueStorage.isCompleted(item.id)) {
@@ -748,6 +749,30 @@ class UploadQueueService {
     } finally {
       isProcessing.value = false;
       if (shouldSchedule) _scheduleNextPass();
+    }
+  }
+
+  /// Keep completed rows until their private upload buffer is actually gone.
+  /// A failed delete retries cleanup only; it must never trigger another upload.
+  static Future<void> _cleanupCompletedFile(PendingUploadItem item) async {
+    try {
+      final type = await FileSystemEntity.type(
+        item.localPath,
+        followLinks: false,
+      );
+      if (type != FileSystemEntityType.notFound) {
+        await File(item.localPath).delete();
+      }
+      await UploadQueueStorage.remove(item.id);
+    } on FileSystemException {
+      await UploadQueueStorage.update(
+        item.copyWith(
+          lastError: 'Uploaded; temporary file cleanup pending',
+          nextRetryAt:
+              DateTime.now().millisecondsSinceEpoch +
+              const Duration(seconds: 15).inMilliseconds,
+        ),
+      );
     }
   }
 

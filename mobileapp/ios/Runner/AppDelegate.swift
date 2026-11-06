@@ -208,6 +208,7 @@ final class WiredCameraPhotoIndex {
 
   private final class LiveCameraSession {
     let id: String
+    let uploadMode: String
     var camera: ICCameraDevice?
     var startResult: FlutterResult?
     var armed = false
@@ -219,8 +220,9 @@ final class WiredCameraPhotoIndex {
     var downloadedFiles: [String: [String: String]] = [:]
     var ptpEventCount = 0
 
-    init(id: String, result: @escaping FlutterResult) {
+    init(id: String, result: @escaping FlutterResult, uploadMode: String) {
       self.id = id
+      self.uploadMode = uploadMode
       startResult = result
     }
   }
@@ -1214,9 +1216,12 @@ final class WiredCameraPhotoIndex {
     // catalogue discovery is still pending. A stale stop can never stop a new run.
     let suppliedID = (arguments?["sessionId"] as? String)?
       .trimmingCharacters(in: .whitespacesAndNewlines)
+    let uploadMode = (arguments?["uploadMode"] as? String) == "existingAndNew"
+      ? "existingAndNew" : "newShotsOnly"
     let session = LiveCameraSession(
       id: suppliedID?.isEmpty == false ? suppliedID! : UUID().uuidString,
-      result: result
+      result: result,
+      uploadMode: uploadMode
     )
     liveCameraSession = session
     let wantedCameraID = arguments?["cameraId"] as? String
@@ -1287,7 +1292,8 @@ final class WiredCameraPhotoIndex {
           requestedCameraSessions.contains(ObjectIdentifier(camera)),
           !openingCameraSessions.contains(ObjectIdentifier(camera)),
           !closingCameraSessions.contains(ObjectIdentifier(camera)),
-          readyCameras.contains(ObjectIdentifier(camera))
+          (readyCameras.contains(ObjectIdentifier(camera)) ||
+           camera.contentCatalogPercentCompleted >= 100)
     else { return }
     guard !cameraAccessRestricted.contains(ObjectIdentifier(camera)) else {
       endLiveCameraSession(session, error: FlutterError(
@@ -1299,13 +1305,23 @@ final class WiredCameraPhotoIndex {
     }
 
     let baseline = cameraImageFiles(camera)
-    index.establishBaseline(baseline.map(photoIdentity))
     session.observedObjects = Set(baseline.map { ObjectIdentifier($0) })
-    session.armed = true
+    if session.uploadMode == "existingAndNew" {
+      // Keep full card objects in the same passive ImageCaptureCore reader;
+      // importing older files never requests a vendor-mode switch.
+      index.establishBaseline([])
+      session.armed = true
+      collectLiveCameraFiles(session, files: baseline)
+    } else {
+      index.establishBaseline(baseline.map(photoIdentity))
+      session.armed = true
+    }
     setScreenAwake(owner: "usb:\(session.id)", enabled: true)
     let startResult = session.startResult
     session.startResult = nil
-    let message = liveCameraMessage(camera)
+    let message = session.uploadMode == "existingAndNew"
+      ? "Camera photo catalog ready. Existing and new photos will copy while AirPix stays open. Verify the physical shutter remains usable."
+      : "Camera photo catalog ready. Existing photos skipped. AirPix checks for new photos every three seconds without changing the camera USB mode. Verify the physical shutter remains usable."
     startResult?([
       "sessionId": session.id,
       "cameraId": cameraIdentity(camera),
@@ -1314,6 +1330,7 @@ final class WiredCameraPhotoIndex {
       "physicalShutter": physicalShutterCapability(camera),
       "message": message,
       "baselineCount": baseline.count,
+      "uploadMode": session.uploadMode,
     ] as [String: Any])
     emitLiveEvent(session, type: "status", status: "waiting-for-shot", message: message)
     NSLog("[AirPix USB] Live camera session armed; baseline files: %d; physical shutter: %@",

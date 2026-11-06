@@ -21,6 +21,10 @@ class PtpShootingSafety {
     0x9129, // Canon EOS RemoteReleaseOff
     0x9151, // Canon EOS InitiateViewfinder
     0x9207, // Sony remote shutter / camera buttons
+    0x1016, // Standard property writes (including shooting settings)
+    0x9110, // Canon property writes
+    0x9205, // Sony property writes
+    0x9206, // Sony property writes
   };
 
   static bool isForbidden(int opcode) => forbiddenCommands.contains(opcode);
@@ -31,7 +35,7 @@ class PtpShootingSafety {
       code: 'PTP_SHOOTING_COMMAND_BLOCKED',
       message:
           'AirPix live USB only receives photos. The camera shutter, '
-          'screen and local controls stay under the photographer\'s control.',
+          'settings and local controls are not changed by this command.',
       details: <String, Object>{'opcode': opcode},
     );
   }

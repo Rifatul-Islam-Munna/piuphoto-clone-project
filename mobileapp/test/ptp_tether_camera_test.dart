@@ -14,7 +14,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-    'live USB polls new photos within the 1-second cadence without shutter events',
+    'live USB polls new photos within the 3-second cadence without shutter events',
     () async {
       final link = _CameraLink(_Brand.nikon);
       final transport = PtpTetherCameraTransport(
@@ -29,8 +29,8 @@ void main() {
         await link.dispose();
       });
 
-      expect(transport.cardScanInterval, const Duration(seconds: 1));
-      expect(capture.pollInterval, const Duration(seconds: 1));
+      expect(transport.cardScanInterval, const Duration(seconds: 3));
+      expect(capture.pollInterval, const Duration(seconds: 3));
       await capture.start(
         save: (file, _) async {
           if (!received.isCompleted) received.complete(file.name);
@@ -39,7 +39,7 @@ void main() {
       // No PTP ObjectAdded event, catalog hint, or explicit receiver.poll().
       link.addCard(31, const _Photo('NO_EVENT.JPG', 32));
       final savedName = await received.future.timeout(
-        const Duration(seconds: 4),
+        const Duration(seconds: 8),
       );
       expect(savedName, 'NO_EVENT.JPG');
       expect(link.downloads.map((item) => item.handle), [31]);
@@ -107,11 +107,43 @@ void main() {
     },
   );
 
+  test(
+    'Sony receives a new physical shot by polling without any event',
+    () async {
+      final link = _CameraLink(_Brand.sony);
+      final transport = PtpTetherCameraTransport(
+        link: link,
+        stagedFileExists: (_) async => true,
+      );
+      final capture = LiveCameraCapture(transport: transport, onUpdate: (_) {});
+      final received = Completer<String>();
+      addTearDown(() async {
+        await capture.stop(notify: false);
+        await link.dispose();
+      });
+      await capture.start(
+        save: (file, _) async {
+          if (!received.isCompleted) received.complete(file.name);
+        },
+      );
+      link.sonyMemory.add(const _Photo('SONY_NO_EVENT.JPG', 32));
+      expect(
+        await received.future.timeout(const Duration(seconds: 8)),
+        'SONY_NO_EVENT.JPG',
+      );
+      expect(link.sonyMemory, isEmpty);
+      expect(link.sonyDestination, 17);
+      expect(link.sonyPriority, 0);
+      expect(link.calls.where((call) => call.opcode == 0x9205), isEmpty);
+      _expectNoCaptureOrLock(link);
+    },
+  );
+
   group('physical camera tether workflows', () {
     test(
       'Canon enables EOS events, confirms card recording and imports only new shots',
       () async {
-        final link = _CameraLink(_Brand.canon)..canonDestination = 4;
+        final link = _CameraLink(_Brand.canon);
         link.addCard(1, const _Photo('OLD.JPG', 4));
         final camera = _transport(link);
         addTearDown(() async {
@@ -123,7 +155,7 @@ void main() {
         expect(session.baselineCount, 1);
         expect(session.uploadMode, LiveCameraUploadMode.newShotsOnly);
         expect(session.physicalShutter, 'unknown');
-        expect(link.canonDestination, 1);
+        expect(link.canonDestination, 2);
         expect(
           link.calls.where((call) => call.opcode == 0x9114).single.params,
           [1],
@@ -132,20 +164,7 @@ void main() {
           link.calls.where((call) => call.opcode == 0x9115).single.params,
           [1],
         );
-        expect(link.calls.where((call) => call.opcode == 0x9110).single.data, [
-          12,
-          0,
-          0,
-          0,
-          0x1c,
-          0xd1,
-          0,
-          0,
-          1,
-          0,
-          0,
-          0,
-        ]);
+        expect(link.calls.where((call) => call.opcode == 0x9110), isEmpty);
         expect(await camera.pending('canon'), isEmpty);
         expect(link.metadataHandles, isEmpty);
 
@@ -198,7 +217,7 @@ void main() {
     );
 
     test(
-      'a successful Canon write response needs matching property readback',
+      'Canon requires manual card recording and never writes settings',
       () async {
         final link = _CameraLink(_Brand.canon)
           ..canonDestination = 4
@@ -207,7 +226,7 @@ void main() {
         addTearDown(link.dispose);
         await expectLater(
           camera.start('unconfirmed'),
-          _error('TETHER_MODE_NOT_CONFIRMED'),
+          _error('TETHER_CARD_RECORDING_REQUIRED'),
         );
         expect(link.canonDestination, 4);
         expect(link.downloads, isEmpty);
@@ -399,11 +418,9 @@ void main() {
     );
 
     test(
-      'Sony handshake uses Camera priority and PC plus camera recording',
+      'Sony handshake validates Camera priority and card plus PC without writes',
       () async {
-        final link = _CameraLink(_Brand.sony)
-          ..sonyPriority = 1
-          ..sonyDestination = 1;
+        final link = _CameraLink(_Brand.sony);
         final camera = _transport(link);
         addTearDown(() async {
           await camera.stop('sony');
@@ -424,19 +441,11 @@ void main() {
           link.calls.where((call) => call.opcode == 0x9202).single.params,
           [0x12c, 1],
         );
-        final writes = link.calls
-            .where((call) => call.opcode == 0x9205)
-            .toList();
-        expect(writes.map((call) => call.params), [
-          [0xd222],
-          [0xd25a],
-        ]);
-        expect(writes[0].data, [17, 0]);
-        expect(writes[1].data, [0]);
+        expect(link.calls.where((call) => call.opcode == 0x9205), isEmpty);
         expect(link.sonyDestination, 17);
         expect(link.sonyPriority, 0);
         await camera.stop('sony');
-        expect(link.calls.where((call) => call.opcode == 0x9205), hasLength(2));
+        expect(link.calls.where((call) => call.opcode == 0x9205), isEmpty);
         _expectNoCaptureOrLock(link);
       },
     );
@@ -601,7 +610,7 @@ void main() {
     );
 
     test(
-      'Sony readback failure never publishes a ready shooting session',
+      'Sony wrong settings fail without any automatic property changes',
       () async {
         final link = _CameraLink(_Brand.sony)
           ..sonyDestination = 1
@@ -610,8 +619,10 @@ void main() {
         addTearDown(link.dispose);
         await expectLater(
           camera.start('sony-readback'),
-          _error('TETHER_MODE_NOT_CONFIRMED'),
+          _error('TETHER_CAMERA_SETTING_REQUIRED'),
         );
+        expect(link.calls.where((call) => call.opcode == 0x9205), isEmpty);
+        expect(link.sonyDestination, 1);
         expect(link.closed, contains('sony-readback'));
         expect(link.downloads, isEmpty);
       },

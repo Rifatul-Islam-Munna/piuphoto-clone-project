@@ -35,6 +35,7 @@ import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/storage/uploaded_gallery_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
+import 'package:mobileapp/core/upload/camera_staging_cleanup.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
@@ -2419,6 +2420,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     final capture = LiveCameraCapture(
       transport: transport,
       uploadMode: target.uploadMode,
+      // Check the shooting-mode photo queue even if shutter events are lost.
+      pollInterval: const Duration(seconds: 3),
       onUpdate: (update) {
         if (!_otgActive(generation)) return;
         _safeSetState(() {
@@ -2459,9 +2462,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
           if (_otgActive(generation)) {
             _safeSetState(() => _wiredPhotoReceived = true);
           }
-          try {
-            await File(file.path).delete();
-          } catch (_) {}
+          // The durable queue owns its separate copy. Journal deletion of
+          // this private camera buffer so a failed delete survives a restart.
+          await CameraStagingCleanup.release(file.path);
         },
       );
       if (!_otgActive(generation)) {

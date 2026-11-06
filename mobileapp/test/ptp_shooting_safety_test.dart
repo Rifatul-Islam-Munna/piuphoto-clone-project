@@ -6,7 +6,10 @@ void main() {
   test(
     'live USB blocks remote shutter, UI lock and camera-original deletion',
     () {
-      expect(PtpShootingSafety.forbiddenCommands.length, 10);
+      expect(
+        PtpShootingSafety.forbiddenCommands,
+        containsAll([0x1016, 0x9110, 0x9205, 0x9206]),
+      );
       for (final opcode in PtpShootingSafety.forbiddenCommands) {
         expect(PtpShootingSafety.isForbidden(opcode), isTrue);
         expect(
@@ -47,7 +50,6 @@ void main() {
         0x941c, // Nikon GetExtendedEvent
         0x9201, // Sony Connect
         0x9202, // Sony GetExtensionInfo
-        0x9205, // Sony SetProperty
         0x9209, // Sony GetAllPropertyData
         0x1015, // GetDevicePropValue
       ]) {

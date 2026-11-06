@@ -10,7 +10,7 @@ class RunnerTests: XCTestCase {
     let allowed: [UInt16] = [
       0x1001, 0x1004, 0x1007, 0x1008, 0x1009, 0x101B,
       0x9114, 0x9115, 0x9116, 0x90C2, 0x90C7,
-      0x9201, 0x9202, 0x9205, 0x9209
+      0x9201, 0x9202, 0x9209
     ]
     for opcode in allowed {
       XCTAssertTrue(PtpShootingSafety.isAllowed(opcode),
@@ -19,7 +19,8 @@ class RunnerTests: XCTestCase {
 
     let blocked: [UInt16] = [
       0x100B, 0x100E, 0x100F, 0x1010, 0x910F,
-      0x911B, 0x9128, 0x9129, 0x9151, 0x9207
+      0x911B, 0x9128, 0x9129, 0x9151, 0x9207,
+      0x1016, 0x9110, 0x9205, 0x9206
     ]
     for opcode in blocked {
       XCTAssertFalse(PtpShootingSafety.isAllowed(opcode),
@@ -103,6 +104,20 @@ class RunnerTests: XCTestCase {
     let shot = index.observe(photo(1201))
     XCTAssertTrue(shot.added)
     XCTAssertEqual(index.pendingIDs, [shot.id])
+  }
+
+  func testPassiveCatalogExistingAndNewQueuesBaselineWithoutRemoteCommands() {
+    let index = WiredCameraPhotoIndex(cameraID: "camera-a")
+    // Existing + new: baseline is intentionally empty; the ordinary
+    // ImageCaptureCore file catalog supplies the original card objects.
+    index.establishBaseline([])
+    let old = index.observe(photo(1))
+    let new = index.observe(photo(2))
+    XCTAssertTrue(old.added)
+    XCTAssertTrue(new.added)
+    XCTAssertEqual(index.pendingIDs, [old.id, new.id])
+    index.acknowledge([old.id])
+    XCTAssertEqual(index.pendingIDs, [new.id])
   }
 
   func testRepeatedEventsStayPendingUntilExplicitAcknowledgement() {

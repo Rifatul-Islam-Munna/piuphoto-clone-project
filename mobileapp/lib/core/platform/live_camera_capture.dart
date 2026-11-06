@@ -8,7 +8,25 @@ import 'package:mobileapp/core/platform/ptp_tether_camera.dart';
 
 export 'live_camera_types.dart';
 
+/// Live receiving needs a shooting protocol, not merely a readable catalog.
+/// Never fall back to MTP/Mass Storage when tether negotiation fails.
+LiveCameraTransport preferredUsbCameraTransport({
+  required TargetPlatform platform,
+  required LiveCameraUploadMode uploadMode,
+}) {
+  return PtpTetherCameraTransport(
+    uploadMode: uploadMode,
+    eventPollInterval: const Duration(seconds: 3),
+    cardScanInterval: const Duration(seconds: 3),
+  );
+}
+
 class NativeLiveCameraTransport implements LiveCameraTransport {
+  const NativeLiveCameraTransport({
+    this.uploadMode = LiveCameraUploadMode.newShotsOnly,
+  });
+
+  final LiveCameraUploadMode uploadMode;
   static const _methods = MethodChannel('airpix/otg_picker');
   static const _events = EventChannel('airpix/otg_live');
 
@@ -25,7 +43,7 @@ class NativeLiveCameraTransport implements LiveCameraTransport {
   Future<LiveCameraSession> start(String sessionId) async {
     final data = await _methods.invokeMapMethod<Object?, Object?>(
       'startLiveCameraSession',
-      {'sessionId': sessionId},
+      {'sessionId': sessionId, 'uploadMode': uploadMode.name},
     );
     return LiveCameraSession.fromMap(data ?? const {});
   }
@@ -124,14 +142,21 @@ class LiveCameraCapture {
     LiveCameraTransport? transport,
     this.uploadMode = LiveCameraUploadMode.newShotsOnly,
     required this.onUpdate,
-    // Independent of camera event notifications: pull pending photos once
-    // per second when the camera is available. A running drain is coalesced.
-    this.pollInterval = const Duration(seconds: 1),
+    // Poll even without shutter notifications. A running drain is coalesced.
+    this.pollInterval = const Duration(seconds: 3),
     this.retryDelay = const Duration(seconds: 3),
     DateTime Function()? now,
     Future<bool> Function(OtgPickedFile)? isStagedFileUsable,
   }) : _transport =
-           transport ?? PtpTetherCameraTransport(uploadMode: uploadMode),
+           transport ??
+           preferredUsbCameraTransport(
+             platform: Platform.isIOS
+                 ? TargetPlatform.iOS
+                 : Platform.isAndroid
+                 ? TargetPlatform.android
+                 : TargetPlatform.windows,
+             uploadMode: uploadMode,
+           ),
        _now = now ?? DateTime.now,
        _isStagedFileUsable = isStagedFileUsable ?? _fileIsUsable;
 

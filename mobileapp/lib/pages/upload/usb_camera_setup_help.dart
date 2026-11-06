@@ -25,7 +25,8 @@ class UsbCameraSetupHelpDialog extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           const Text(
-            'AirPix checks for new photos about once a second, even without '
+            'AirPix checks for new photos every 3 seconds (up to 5 seconds '
+            'for large cards), even without '
             'a shutter event. The camera must expose photos through its '
             'shooting-capable PTP/tether protocol. Ordinary PTP/MTP file '
             'transfer alone does not guarantee that the shutter stays usable.',
@@ -49,7 +50,9 @@ class UsbCameraSetupHelpDialog extends StatelessWidget {
           const Text(
             'Keep AirPix open and the phone unlocked while shooting. Received '
             'photos enter the upload queue automatically; cloud uploads wait '
-            'when internet is unavailable. Check upload progress separately.',
+            'when internet is unavailable. After confirmed cloud upload, the '
+            'temporary phone copy is deleted automatically. Camera-card '
+            'originals are kept. Check upload progress separately.',
           ),
           const SizedBox(height: 10),
           const Text(
@@ -122,7 +125,9 @@ class UsbCameraSetupHelpDialog extends StatelessWidget {
       'Unplug the cable first. MENU > Setup > USB > USB Connection Mode > '
           'Remote Shooting (or Sel. When Connect, then Remote Shooting). '
           'MENU > Network > Cnct./Remote Sht. > Remote Shoot Setting > '
-          'Still Img. Save Dest. > Dest.+Camera. Keep a writable card in '
+          'Still Img. Save Dest. > Dest.+Camera. Set PC Remote priority to '
+          'Camera where available. AirPix checks these settings without '
+          'changing them. Keep a writable card in '
           'the camera, use a USB data cable, and choose New shots only '
           'in AirPix. Do not select Mass Storage/MTP or USB Streaming. '
           'A working camera screen and a newly transferred test shot are '

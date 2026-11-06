@@ -366,6 +366,7 @@ enum PtpShootingSafety {
     0x9129, // Canon EOS RemoteReleaseOff
     0x9151, // Canon EOS InitiateViewfinder
     0x9207, // Sony remote shutter / camera buttons
+    0x1016, 0x9110, 0x9205, 0x9206, // Camera property writes
   ]
 
   static func isAllowed(_ opcode: UInt16) -> Bool {

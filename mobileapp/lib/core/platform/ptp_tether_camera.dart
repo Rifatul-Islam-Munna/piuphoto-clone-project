@@ -119,8 +119,8 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     this.uploadMode = LiveCameraUploadMode.newShotsOnly,
     // Notifications are optional wake-ups. Polling remains active without
     // a shutter event; one active PTP transaction at a time protects the body.
-    this.eventPollInterval = const Duration(seconds: 1),
-    this.cardScanInterval = const Duration(seconds: 1),
+    this.eventPollInterval = const Duration(seconds: 3),
+    this.cardScanInterval = const Duration(seconds: 3),
     this.stopGracePeriod = const Duration(seconds: 3),
     Future<void> Function(Duration)? delay,
     DateTime Function()? now,
@@ -313,7 +313,8 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
           ? 'This model requires a camera new-photo notification; its '
                 'card list is not exposed in tether mode.'
           : run.family == _TetherFamily.sony
-          ? 'AirPix checks the Sony shooting-mode queue every second without '
+          ? 'AirPix checks the Sony shooting-mode queue every '
+                '${eventPollInterval.inSeconds} seconds without '
                 'requiring a shutter event.'
           : 'AirPix monitors camera events and checks for new card photos '
                 'every ${_effectiveCardScanInterval(run).inSeconds} second(s) '
@@ -569,49 +570,15 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       await _delay(const Duration(milliseconds: 100));
     }
     final destination = run.canonProperties[0xd11c];
-    final choices = run.canonChoices[0xd11c] ?? const <int>[];
-    int? card = destination != null && destination > 0 && destination != 4
-        ? destination
-        : null;
-    for (final choice in choices) {
-      if (card == null && choice > 0 && choice != 4) card = choice;
-    }
-    if (card == null) {
+    if (destination == null || destination <= 0 || destination == 4) {
       throw PlatformException(
         code: 'TETHER_CARD_RECORDING_REQUIRED',
         message:
-            'The Canon camera has not exposed a memory-card recording mode. '
-            'Insert a writable card and choose recording to the camera card, then reconnect.',
+            'Set the Canon camera to record to its memory card, then reconnect. '
+            'AirPix will not change camera recording settings automatically.',
       );
     }
-    run.canonCardDestination = card;
-    if (destination != card) {
-      _requireOperations(run, [0x9110]);
-      await _command(
-        run,
-        0x9110,
-        data: PtpTetherCodec.encodeCanonProperty(0xd11c, card),
-      );
-      if (run.operations.contains(0x9127)) {
-        try {
-          await _command(run, 0x9127, params: [0xd11c]);
-        } on PtpTetherCommandException {
-          /* Verify through GetEvent below. */
-        }
-      }
-      for (var attempt = 0; attempt < 10; attempt++) {
-        await _pollCanon(run);
-        if (run.canonProperties[0xd11c] == card) break;
-        await _delay(const Duration(milliseconds: 100));
-      }
-      if (run.canonProperties[0xd11c] != card) {
-        throw PlatformException(
-          code: 'TETHER_MODE_NOT_CONFIRMED',
-          message:
-              'The Canon camera did not confirm memory-card recording. Live shooting was not started.',
-        );
-      }
-    }
+    run.canonCardDestination = destination;
     // Canon may change its advertised operations after entering remote mode.
     final updated = await _command(run, 0x1001);
     run.operations.addAll(
@@ -649,12 +616,12 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     );
     await _command(run, 0x9201, params: [3, 0, 0]);
     run.sonyConnected = true;
-    _requireOperations(run, [0x9209, 0x9205, 0x1008, 0x1009]);
+    _requireOperations(run, [0x9209, 0x1008, 0x1009]);
     await _readSonyProperties(run);
     await _ensureSonyBaselineIdle(run);
-    // Enable a card backup before accepting physical-shutter shots. Never use
-    // RAM-only (1) or temporarily set Application priority (1) to force a write.
-    await _setSonyProperty(
+    // Validate the photographer's settings; never change priority, destination,
+    // USB mode, screen, or shutter settings to make a connection succeed.
+    await _requireSonyProperty(
       run,
       0xd222,
       17,
@@ -664,7 +631,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
           'models, select PC Remote > PC+Camera. Use Remote Shooting over '
           'USB, not Mass Storage.',
     );
-    await _setSonyProperty(
+    await _requireSonyProperty(
       run,
       0xd25a,
       0,
@@ -743,34 +710,19 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     );
   }
 
-  Future<void> _setSonyProperty(
+  Future<void> _requireSonyProperty(
     _TetherRun run,
     int code,
     int value, {
     required String help,
   }) async {
-    final property = run.sonyProperties[code];
-    if (property?.intValue == value) return;
-    if (property == null ||
-        !property.writable ||
-        !property.values.contains(value)) {
-      throw PlatformException(
-        code: 'TETHER_CAMERA_SETTING_REQUIRED',
-        message: help,
-      );
-    }
-    await _command(
-      run,
-      0x9205,
-      params: [code],
-      data: PtpTetherCodec.encodeValue(property.type, value),
+    if (run.sonyProperties[code]?.intValue == value) return;
+    throw PlatformException(
+      code: 'TETHER_CAMERA_SETTING_REQUIRED',
+      message:
+          '$help AirPix leaves camera settings unchanged. '
+          'Disconnect USB, set this on the camera, then reconnect.',
     );
-    for (var attempt = 0; attempt < 8; attempt++) {
-      await _readSonyProperties(run);
-      if (run.sonyProperties[code]?.intValue == value) return;
-      await _delay(const Duration(milliseconds: 100));
-    }
-    throw PlatformException(code: 'TETHER_MODE_NOT_CONFIRMED', message: help);
   }
 
   Future<Set<int>> _cardHandles(
@@ -1062,14 +1014,20 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
   }
 
   /// Full card-handle enumeration can block a camera busy saving a physical
-  /// shutter shot. Small cards retain the 1-second fallback; large cards
-  /// use a bounded slower scan. PTP events still wake photo handling early,
+  /// shutter shot. Cards use a three-second fallback by default; large cards
+  /// use a scan capped at five seconds. PTP events still wake photo handling early,
   /// without relying on them for correctness.
   Duration _effectiveCardScanInterval(_TetherRun run) {
-    if (cardScanInterval <= Duration.zero) return cardScanInterval;
+    if (cardScanInterval <= Duration.zero ||
+        cardScanInterval > const Duration(seconds: 5)) {
+      return cardScanInterval;
+    }
     final extra = (run.observedHandles.length ~/ 500).clamp(0, 4);
     return Duration(
-      milliseconds: cardScanInterval.inMilliseconds * (1 + extra),
+      milliseconds: (cardScanInterval.inMilliseconds * (1 + extra)).clamp(
+        cardScanInterval.inMilliseconds,
+        5000,
+      ),
     );
   }
 
