@@ -561,6 +561,27 @@ final class WiredCameraPhotoIndex {
     ) ? "supported" : "unknown"
   }
 
+  /// Reject only explicitly storage-only USB modes BEFORE opening a live
+  /// session. ImageCaptureCore can discover such a camera while its rear
+  /// monitor is showing a computer icon, but file access is not live shooting.
+  /// A generic MTP/PTP label is never rejected on this basis.
+  private func storageOnlyLiveCameraError(_ camera: ICCameraDevice) -> FlutterError? {
+    guard WiredCameraLiveTransportPolicy.isKnownImportOnly(camera.transportType) else {
+      return nil
+    }
+    return FlutterError(
+      code: "LIVE_CAMERA_TRANSFER_ONLY",
+      message: "This camera is connected for storage/streaming, not verified live shooting. Stop, disconnect USB, and select the camera's shooting-capable connection. On Nikon models with USB connection priority, select Shooting instead of Upload.",
+      details: [
+        "camera": camera.name ?? "USB camera",
+        "transport": camera.transportType ?? "unknown",
+        "vendorId": Int(camera.usbVendorID),
+        "productId": Int(camera.usbProductID),
+        "physicalShutter": physicalShutterCapability(camera),
+      ]
+    )
+  }
+
   private func isLiveCameraReceiving(_ camera: ICCameraDevice) -> Bool {
     let key = ObjectIdentifier(camera)
     let ownerIsActive = (liveCameraSession?.camera === camera && liveCameraSession?.armed == true) ||
@@ -698,10 +719,15 @@ final class WiredCameraPhotoIndex {
           ))
           return
         }
+        // Block only an explicitly storage/streaming transport BEFORE the
+        // camera session opens. Generic PTP/MTP labels can be shooting-capable.
+        if let failure = self.storageOnlyLiveCameraError(camera) {
+          self.endPtpTetherSession(session, error: failure)
+          return
+        }
         // iOS does not expose ICCameraDevice.mountPoint (macOS-only).
-        // Do not guess shooting support from transportType labels. The native
-        // PTP capability check in completePtpTetherOpenIfReady decides whether
-        // this camera exposes the commands needed for advanced tethering.
+        // Do not guess shooting support from generic transportType labels. The
+        // PTP capability check determines available command passthrough.
         session.camera = camera
         self.ensureCameraControlAccess { [weak self, weak session] control in
           guard let self, let session, self.ptpTetherSession === session else { return }
@@ -1235,10 +1261,14 @@ final class WiredCameraPhotoIndex {
           ))
           return
         }
-        // iOS has no ICCameraDevice.mountPoint API. Let ImageCaptureCore open
-        // this discovered camera and provide its actual media catalog; do not
-        // reject PTP/MTP/File Transfer transport names heuristically.
-        // This path never mounts or imports from an arbitrary storage folder.
+        // A user explicitly chose the compatibility photo catalog, but this
+        // LIVE receiver must never claim a storage-only mode can keep shooting.
+        if let failure = self.storageOnlyLiveCameraError(camera) {
+          self.endLiveCameraSession(session, error: failure)
+          return
+        }
+        // iOS has no ICCameraDevice.mountPoint API. Generic PTP/MTP/File
+        // Transfer labels cannot establish whether the shutter will work.
         session.camera = camera
         session.index = WiredCameraPhotoIndex(cameraID: self.cameraIdentity(camera))
         self.emitLiveEvent(session, type: "status", status: "preparing",

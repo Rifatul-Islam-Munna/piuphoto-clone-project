@@ -16,6 +16,13 @@ void main() {
     expect(native.nextSteps, advice.nextSteps);
   });
 
+  test('explicit storage-only transport cannot be treated as live ready', () {
+    final advice = UsbCameraGuidance.forStatus('LIVE_CAMERA_TRANSFER_ONLY');
+    expect(advice.title, contains('does not support live shooting'));
+    expect(advice.nextSteps, contains('Nikon'));
+    expect(advice.nextSteps, contains('Shooting instead of Upload'));
+  });
+
   test('passive USB blocks shutter, deletion and UI-lock actions', () {
     final advice = UsbCameraGuidance.forStatus('PTP_SHOOTING_COMMAND_BLOCKED');
     expect(advice.title, contains('Receiving stopped'));

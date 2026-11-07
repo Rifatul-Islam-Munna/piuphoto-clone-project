@@ -5,6 +5,18 @@ import XCTest
 @testable import Runner
 
 class RunnerTests: XCTestCase {
+  func testLiveUsbModePreflightRejectsOnlyExplicitImportModes() {
+    for transport in ["USB Mass Storage", "MassStorage(MSC)", "PC(Storage)",
+                      "Card Reader", "USB Streaming", "exFAT"] {
+      XCTAssertTrue(WiredCameraLiveTransportPolicy.isKnownImportOnly(transport), transport)
+    }
+    for transport in ["USB", "PTP", "MTP", "USB / MTP", "USB File Transfer",
+                      "Nikon PTP/MTP", "Photo Import/Remote Control"] {
+      XCTAssertFalse(WiredCameraLiveTransportPolicy.isKnownImportOnly(transport), transport)
+    }
+    XCTAssertFalse(WiredCameraLiveTransportPolicy.isKnownImportOnly(nil))
+  }
+
   func testRejectsCrossBrandUnknownAndUnsafeModeCommands() {
     let approved: [(Int, UInt16, [UInt32])] = [
       (0x4a9, 0x9114, [0x0]),

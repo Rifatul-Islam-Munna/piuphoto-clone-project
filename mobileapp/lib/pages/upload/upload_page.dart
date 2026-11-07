@@ -148,12 +148,10 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   bool _usbStartRequested = false;
   bool _guestQrPreparing = false;
   Future<void> _usbModeSaveQueue = Future<void>.value();
-  // iPhone defaults to ImageCaptureCore's catalog reader, which does not
-  // require a raw PTP GetDeviceInfo command before connecting. This is the
-  // known camera-discovery route from the earlier implementation. The
-  // advanced vendor tether path remains selectable for cameras whose remote
-  // shooting queue does not expose a normal photo catalog.
-  bool _usbPhotoCatalogReader = Platform.isIOS;
+  // Keep the camera in its shooting-capable USB mode by using the vendor
+  // tether protocol first. The ImageCaptureCore photo catalog is an explicit
+  // compatibility choice, since opening it can lock the physical shutter.
+  bool _usbPhotoCatalogReader = false;
   bool _usbSessionPhotoCatalogReader = false;
   LiveCameraUploadMode _usbUploadMode = LiveCameraUploadMode.newShotsOnly;
   LiveCameraUploadMode _usbSessionUploadMode =
@@ -960,7 +958,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
           if (onTryPhotoCatalog != null)
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext, 'catalog'),
-              child: const Text('Try compatibility photo reader'),
+              child: const Text('Try photo catalog (shutter may lock)'),
             ),
         ],
       ),
@@ -1789,8 +1787,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       _safeSetState(() {
         _usbReleaseIssue = null;
         _otgSourceName = session.name;
-        // Reflect the actual transport when a failed PTP handshake was
-        // recovered by the passive catalog without changing USB modes.
+        // Reflect the actual transport. The live shooting path never silently
+        // falls back to a potentially shutter-locking photo catalog.
         _usbSessionPhotoCatalogReader = session.usesPhotoCatalog;
         _otgBusy = false;
       });
@@ -2565,10 +2563,11 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     : 'Take a photo using the camera shutter once the connection is ready.',
               ),
               const SizedBox(height: 8),
-              const Text(
-                'If the camera shows a transfer screen or its shutter is locked, '
-                'release this connection and choose the shooting mode supported by your camera model.',
-                style: TextStyle(fontSize: 12),
+              Text(
+                _otgSourceName?.toLowerCase().contains('nikon') == true
+                    ? 'Nikon camera black screen? On Nikon models offering USB connection priority, unplug USB and set Setup > USB connection priority > Shooting (not Upload), then reconnect. Stop this session first.'
+                    : 'If the camera shows a computer/transfer screen or its shutter is locked, stop and release USB. Choose the shooting-capable mode supported by your camera model, then reconnect.',
+                style: const TextStyle(fontSize: 12),
               ),
               TextButton.icon(
                 onPressed: () async {
@@ -2869,9 +2868,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                       const SizedBox(width: 8),
                       const Expanded(
                         child: Text(
-                          'Before USB: select Remote Shooting / PC Remote / '
-                          'Tether on the camera. Names vary by brand. '
-                          'Tap for your camera’s USB mode and setup.',
+                          'Before USB: use the camera’s shooting-capable USB '
+                          'mode. On Nikon models with USB connection priority, '
+                          'choose Shooting, not Upload. Tap for model setup.',
                           style: TextStyle(
                             fontSize: 12,
                             color: AppColors.mutedForeground,
@@ -2890,8 +2889,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     icon: Icons.usb_rounded,
                     title: 'USB / OTG',
                     badge: _usbPhotoCatalogReader
-                        ? 'PTP / MTP reader'
-                        : 'Tether',
+                        ? 'Photo catalog (may lock camera)'
+                        : 'Live shooting PTP',
                     subtitle:
                         'Choose the USB shooting mode on your camera first. '
                         'New photos sync automatically. AirPix never switches '

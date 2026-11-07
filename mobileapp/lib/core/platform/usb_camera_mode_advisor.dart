@@ -186,8 +186,11 @@ enum _CameraBrand {
           'app to Photo Import/Remote Control. Disable camera Wi-Fi on '
           'bodies that disable USB while Wi-Fi is enabled.',
     nikon =>
-      'Nikon: use its shooting-capable PTP/MTP or tether mode. '
-          'Many Nikon cameras have no separate USB mode selector.',
+      'Nikon: on models with Setup > USB connection priority, choose '
+          'Shooting (not Upload). Nikon documents that Upload keeps the '
+          'monitor blank while connected, while Shooting keeps it on. '
+          'Use MTP/PTP if that is your model’s normal shooting-capable USB '
+          'connection. Disconnect before changing settings; test the shutter.',
     sony =>
       'Sony: select PC Remote / Remote Shooting, not Mass Storage '
           'or MTP. On Alpha 7 IV, set Still Img. Save Dest. to '

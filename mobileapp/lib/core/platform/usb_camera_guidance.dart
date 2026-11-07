@@ -108,8 +108,9 @@ class UsbCameraGuidance {
         nextSteps:
             'Disconnect USB and check the camera manual for tethered '
             'shooting / PC Remote mode, then reconnect. Mode names and app '
-            'compatibility depend on the model. AirPix negotiates supported '
-            'Canon EOS, Nikon and Sony shooting connections automatically.',
+            'compatibility depend on the model. On Nikon bodies offering USB '
+            'connection priority, select Shooting instead of Upload. AirPix '
+            'negotiates supported Canon EOS, Nikon and Sony shooting connections.',
       ),
       'tether_camera_unsupported' => const UsbCameraGuidance(
         title: 'This camera does not expose a supported shooting connection',

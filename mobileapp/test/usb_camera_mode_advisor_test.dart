@@ -84,6 +84,20 @@ void main() {
     },
   );
 
+  test('Nikon black monitor advice uses documented shooting priority', () {
+    final advice = advise(
+      name: 'Nikon Z8',
+      vendor: 0x04b0,
+      transport: 'MTP/PTP',
+      active: true,
+    );
+    expect(advice.wrongMode, isFalse);
+    expect(advice.nextSteps, contains('USB connection priority'));
+    expect(advice.nextSteps, contains('Shooting'));
+    expect(advice.nextSteps, contains('not Upload'));
+    expect(advice.nextSteps, contains('monitor blank'));
+  });
+
   test('Sony Mass Storage is rejected with the right setup', () {
     final advice = advise(
       name: 'ILCE-7M4',

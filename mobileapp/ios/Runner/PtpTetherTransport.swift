@@ -390,6 +390,20 @@ final class PtpTetherStagingStore {
   }
 }
 
+/// ImageCaptureCore reports USB transport labels, not a universal camera
+/// shooting-mode property. Only reject labels that explicitly identify a
+/// storage/streaming connection. Plain USB, PTP, MTP or File Transfer labels
+/// are NOT sufficient to decide whether the physical shutter works.
+enum WiredCameraLiveTransportPolicy {
+  static func isKnownImportOnly(_ transport: String?) -> Bool {
+    guard let transport else { return false }
+    let label = transport.lowercased().filter { $0.isLetter || $0.isNumber }
+    return label.contains("massstorage") || label.contains("pcstorage") ||
+      label.contains("cardreader") || label.contains("usbstreaming") ||
+      label.contains("exfat")
+  }
+}
+
 /// Live USB receives camera photos, it never operates the shutter, deletes
 /// originals, starts video capture, or locks the camera's physical UI.
 /// Defense in depth: the shared Dart driver applies this same restriction.

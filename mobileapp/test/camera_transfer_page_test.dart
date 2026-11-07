@@ -360,7 +360,7 @@ void main() {
       final harness = _Harness([]);
       var helpRequests = 0;
       await _show(tester, harness, onCameraSetupHelp: () => helpRequests++);
-      expect(find.text('Ready for a test shot'), findsOneWidget);
+      expect(find.text('Connection prepared — test shutter'), findsOneWidget);
       await tester.tap(find.text('Camera screen black? Stop and fix USB mode'));
       await tester.pump();
       expect(helpRequests, 1);

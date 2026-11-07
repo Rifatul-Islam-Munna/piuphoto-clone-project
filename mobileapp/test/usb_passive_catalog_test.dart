@@ -18,14 +18,14 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
   test(
-    'iOS defaults to ImageCaptureCore catalog; Android remains tether-first',
+    'iOS and Android default to shooting-mode tether, not photo catalog',
     () {
       expect(
         preferredUsbCameraTransport(
           platform: TargetPlatform.iOS,
           uploadMode: LiveCameraUploadMode.newShotsOnly,
         ),
-        isA<NativeLiveCameraTransport>(),
+        isA<PtpTetherCameraTransport>(),
       );
       expect(
         preferredUsbCameraTransport(

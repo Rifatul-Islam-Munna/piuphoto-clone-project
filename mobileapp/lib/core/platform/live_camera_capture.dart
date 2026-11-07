@@ -3,25 +3,24 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
-import 'package:mobileapp/core/platform/adaptive_usb_camera_transport.dart';
 import 'package:mobileapp/core/platform/live_camera_types.dart';
 import 'package:mobileapp/core/platform/ptp_tether_camera.dart';
 import 'package:mobileapp/core/platform/mtp_catalog_camera.dart';
 
 export 'live_camera_types.dart';
 
-/// iPhone camera-catalog access is the default on the upload page, matching
-/// the earlier ImageCaptureCore discovery path. Advanced vendor tethering
-/// remains opt-in for cameras with a proprietary PC Remote photo queue.
-/// Neither route selects USB Mass Storage or operates the camera shutter.
+/// Live USB receiving must negotiate a shooting-capable tether protocol first.
+/// The plain iPhone ImageCaptureCore photo catalog can put a camera into
+/// computer/file-transfer mode, leaving its LCD and physical shutter unusable.
+/// Only use that reader when the photographer explicitly selects it for
+/// compatibility; never silently downgrade a failed live tether connection.
+/// Neither reader selects USB Mass Storage or triggers the camera shutter.
 LiveCameraTransport preferredUsbCameraTransport({
   required TargetPlatform platform,
   required LiveCameraUploadMode uploadMode,
   bool? usePhotoCatalog,
 }) {
-  // Preserve the earlier iPhone ImageCaptureCore connection behavior by
-  // default. A deliberate false opts into the advanced vendor PTP driver.
-  if (usePhotoCatalog ?? platform == TargetPlatform.iOS) {
+  if (usePhotoCatalog == true) {
     if (platform == TargetPlatform.iOS) {
       return NativeLiveCameraTransport(uploadMode: uploadMode);
     }
@@ -29,18 +28,11 @@ LiveCameraTransport preferredUsbCameraTransport({
       return MtpCatalogCameraTransport(uploadMode: uploadMode);
     }
   }
-  final tether = PtpTetherCameraTransport(
+  return PtpTetherCameraTransport(
     uploadMode: uploadMode,
     eventPollInterval: const Duration(milliseconds: 500),
     cardScanInterval: const Duration(seconds: 1),
   );
-  if (platform == TargetPlatform.iOS) {
-    return AdaptiveUsbCameraTransport(
-      tether: tether,
-      catalog: NativeLiveCameraTransport(uploadMode: uploadMode),
-    );
-  }
-  return tether;
 }
 
 class NativeLiveCameraTransport implements LiveCameraTransport {

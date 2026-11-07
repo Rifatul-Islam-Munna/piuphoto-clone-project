@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobileapp/core/platform/adaptive_usb_camera_transport.dart';
 import 'package:mobileapp/core/platform/live_camera_capture.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
+import 'package:mobileapp/core/platform/ptp_tether_camera.dart';
 
 class _ReaderFake implements LiveCameraTransport {
   _ReaderFake({
@@ -92,33 +93,30 @@ PlatformException _badGetDeviceInfo() => PlatformException(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test(
-    'iOS uses native photo catalog by default; advanced vendor is explicit',
-    () {
-      expect(
-        preferredUsbCameraTransport(
-          platform: TargetPlatform.iOS,
-          uploadMode: LiveCameraUploadMode.newShotsOnly,
-        ),
-        isA<NativeLiveCameraTransport>(),
-      );
-      expect(
-        preferredUsbCameraTransport(
-          platform: TargetPlatform.iOS,
-          uploadMode: LiveCameraUploadMode.newShotsOnly,
-          usePhotoCatalog: false,
-        ),
-        isA<AdaptiveUsbCameraTransport>(),
-      );
-      expect(
-        preferredUsbCameraTransport(
-          platform: TargetPlatform.android,
-          uploadMode: LiveCameraUploadMode.newShotsOnly,
-        ),
-        isNot(isA<AdaptiveUsbCameraTransport>()),
-      );
-    },
-  );
+  test('iOS uses live vendor tether by default; catalog requires opt-in', () {
+    expect(
+      preferredUsbCameraTransport(
+        platform: TargetPlatform.iOS,
+        uploadMode: LiveCameraUploadMode.newShotsOnly,
+      ),
+      isA<PtpTetherCameraTransport>(),
+    );
+    expect(
+      preferredUsbCameraTransport(
+        platform: TargetPlatform.iOS,
+        uploadMode: LiveCameraUploadMode.newShotsOnly,
+        usePhotoCatalog: false,
+      ),
+      isA<PtpTetherCameraTransport>(),
+    );
+    expect(
+      preferredUsbCameraTransport(
+        platform: TargetPlatform.android,
+        uploadMode: LiveCameraUploadMode.newShotsOnly,
+      ),
+      isNot(isA<AdaptiveUsbCameraTransport>()),
+    );
+  });
 
   test(
     'a failed GetDeviceInfo recovers through the SAME mode photo catalog',

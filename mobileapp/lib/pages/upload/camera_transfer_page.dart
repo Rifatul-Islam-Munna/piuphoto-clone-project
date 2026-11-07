@@ -402,7 +402,7 @@ class _SessionHeader extends StatelessWidget {
                       ? 'Stopping…'
                       : session.isActive
                       ? items.isEmpty
-                            ? 'Ready for a test shot'
+                            ? 'Connection prepared — test shutter'
                             : 'Receiving photos'
                       : 'Receiving stopped',
                   maxLines: 1,

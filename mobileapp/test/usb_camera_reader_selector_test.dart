@@ -28,7 +28,7 @@ void main() {
     );
     expect(selected, isNull);
     expect(tester.takeException(), isNull);
-    expect(find.textContaining('It does not change USB'), findsOneWidget);
+    expect(find.textContaining('may lock shutter'), findsOneWidget);
     await tester.tap(find.byType(SwitchListTile));
     expect(selected, isTrue);
   });

@@ -136,11 +136,13 @@ class UsbCameraSetupHelpDialog extends StatelessWidget {
     (
       'Nikon',
       'PTP / MTP or model-specific tether mode',
-      'Many Nikon cameras have no separate USB mode selector: their normal '
-          'PTP/MTP connection is correct for camera communication. AirPix '
-          'must still negotiate the Nikon shooting protocol and verify '
-          'the physical shutter works. Use a data cable and writable card; '
-          'file-import capability alone is not proof of live shooting.',
+      'On Nikon models with Setup menu > USB connection priority, select '
+          'Shooting, NOT Upload. Nikon documents that Upload can keep the '
+          'monitor blank while connected; Shooting keeps it on. Disconnect '
+          'USB before changing it. Many Nikon cameras normally use MTP/PTP '
+          'for USB communication; do not switch to Mass Storage. Use a '
+          'writable card and test the physical shutter and photo delivery. '
+          'The available menus vary by model and firmware.',
     ),
     (
       'Sony Alpha 7R IV (ILCE-7RM4)',

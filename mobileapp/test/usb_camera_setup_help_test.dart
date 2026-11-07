@@ -59,6 +59,8 @@ void main() {
       expect(tester.takeException(), isNull);
     }
     expect(find.textContaining('Photo Import/Remote Control'), findsWidgets);
+    expect(find.textContaining('USB connection priority'), findsWidgets);
+    expect(find.textContaining('Shooting keeps it on'), findsWidgets);
     expect(
       find.textContaining('Remote Shooting (NOT Mass Storage)'),
       findsOneWidget,
