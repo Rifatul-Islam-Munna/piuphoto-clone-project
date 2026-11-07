@@ -68,9 +68,11 @@ Stop waits for actual iOS session release; a failed close blocks a new session
 until release or disconnection. The UI displays the actually selected reader.
 
 The native iPhone readers no longer guess camera mode from the text inside
-`transportType`. To exclude mounted Mass Storage, they use Apple's documented
-`ICCameraDevice.mountPoint` property, which is set when the camera uses its
-Mass Storage transport. This is **not** an automatic mounted-storage fallback.
+`transportType`. The macOS-only `ICCameraDevice.mountPoint` API is **unavailable
+on iOS** and is never called. Instead, the default reader uses iOS
+ImageCaptureCore's actual camera session and `ICCameraDevice.mediaFiles`;
+the opt-in PTP driver uses ImageCaptureCore's PTP-command capability. Neither
+reader mounts arbitrary camera storage or selects Mass Storage automatically.
 PTP versus MTP naming alone does not establish whether a camera can still shoot.
 The camera's selected mode, firmware and iOS interface determine that behavior.
 

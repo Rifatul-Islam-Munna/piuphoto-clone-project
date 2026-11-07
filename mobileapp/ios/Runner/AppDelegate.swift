@@ -698,17 +698,10 @@ final class WiredCameraPhotoIndex {
           ))
           return
         }
-        // Apple's ICCameraDevice.mountPoint identifies cameras mounted as
-        // Mass Storage. Do not infer the protocol from transportType substrings
-        // (PTP/MTP/File Transfer are not reliable rejection criteria).
-        guard camera.mountPoint == nil else {
-          self.endPtpTetherSession(session, error: FlutterError(
-            code: "LIVE_CAMERA_TRANSFER_ONLY",
-            message: "Apple reports this camera as a mounted mass-storage device. Live receiving does not use mounted files. Reconnect in a shooting-capable camera mode.",
-            details: ["camera": camera.name ?? "USB camera", "transport": camera.transportType ?? "unknown"]
-          ))
-          return
-        }
+        // iOS does not expose ICCameraDevice.mountPoint (macOS-only).
+        // Do not guess shooting support from transportType labels. The native
+        // PTP capability check in completePtpTetherOpenIfReady decides whether
+        // this camera exposes the commands needed for advanced tethering.
         session.camera = camera
         self.ensureCameraControlAccess { [weak self, weak session] control in
           guard let self, let session, self.ptpTetherSession === session else { return }
@@ -1242,18 +1235,10 @@ final class WiredCameraPhotoIndex {
           ))
           return
         }
-        // Follow ImageCaptureCore's documented mass-storage indicator, not
-        // guessed substrings of a transport label. A camera that iOS exposes
-        // through its media catalog may still call the USB link PTP or MTP.
-        guard camera.mountPoint == nil else {
-          self.endLiveCameraSession(session, error: FlutterError(
-            code: "LIVE_CAMERA_TRANSFER_ONLY",
-            message: "Apple reports a mounted mass-storage camera. AirPix will not switch USB modes or start live shooting from a mounted card.",
-            details: nil
-          ))
-          return
-        }
-
+        // iOS has no ICCameraDevice.mountPoint API. Let ImageCaptureCore open
+        // this discovered camera and provide its actual media catalog; do not
+        // reject PTP/MTP/File Transfer transport names heuristically.
+        // This path never mounts or imports from an arbitrary storage folder.
         session.camera = camera
         session.index = WiredCameraPhotoIndex(cameraID: self.cameraIdentity(camera))
         self.emitLiveEvent(session, type: "status", status: "preparing",
