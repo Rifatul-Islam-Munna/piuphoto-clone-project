@@ -2129,6 +2129,19 @@ void main() {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
+    test(
+      'unknown native response codes are preserved but not successful',
+      () async {
+        messenger.setMockMethodCallHandler(
+          channel,
+          (_) async => <String, Object?>{'responseCode': 0x1001},
+        );
+        final reply = await MethodChannelPtpTetherLink().command('s', 0x1001);
+        expect(reply.responseCode, 0x1001);
+        expect(reply.succeeded, isFalse);
+      },
+    );
+
     test('a missing response cannot become PTP success', () async {
       messenger.setMockMethodCallHandler(
         channel,

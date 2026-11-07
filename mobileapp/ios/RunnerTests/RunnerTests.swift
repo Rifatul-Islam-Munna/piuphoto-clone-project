@@ -345,6 +345,70 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(reply.data, Data([9, 8, 7]))
   }
 
+  func testPtpAcceptsPaddedImageCaptureResponseWithoutInventingParameters() throws {
+    let parameterSets: [[UInt32]] = [[], [4096], [4096, UInt32.max]]
+    for parameters in parameterSets {
+      let original = ptpResponse(transaction: 19, parameters: parameters)
+      var padded = original
+      padded.append(Data(repeating: 0xAB, count: 32 - original.count))
+      let reply = try PtpTetherCodec.decode(
+        response: padded, data: Data([9, 8]), maximumData: 16
+      )
+      XCTAssertEqual(reply.responseCode, 0x2001)
+      XCTAssertEqual(reply.parameters, parameters)
+      XCTAssertEqual(reply.data, Data([9, 8]))
+    }
+  }
+
+  func testPtpResponseInLargerSystemBufferUsesOnlyDeclaredParameters() throws {
+    var response = ptpResponse(transaction: 42, parameters: [7])
+    response.append(Data(repeating: 0, count: 512 - response.count))
+    let reply = try PtpTetherCodec.decode(
+      response: response, data: Data([0xFF, 0xD8]), maximumData: 8
+    )
+    XCTAssertEqual(reply.responseCode, 0x2001)
+    XCTAssertEqual(reply.parameters, [7])
+    XCTAssertEqual(reply.data, Data([0xFF, 0xD8]))
+    response.append(Data(repeating: 0, count: 4097 - response.count))
+    XCTAssertEqual(try PtpTetherCodec.decode(
+      response: response, data: Data(), maximumData: 8
+    ).parameters, [7])
+  }
+
+  func testPtpUnknownResponseCodeIsPreservedWithoutInventingValidity() throws {
+    let reply = try PtpTetherCodec.decode(
+      response: ptpResponse(code: 0x1001), data: Data(), maximumData: 0
+    )
+    XCTAssertEqual(reply.responseCode, 0x1001)
+    // The vendor/command layer handles unknown results; this parser never
+    // promotes them to success or rejects them based on a guessed code range.
+  }
+
+  func testPtpPaddedBusyResponseRemainsBusy() throws {
+    var response = ptpResponse(code: 0x2019)
+    response.append(Data(repeating: 0, count: 20))
+    XCTAssertEqual(try PtpTetherCodec.decode(
+      response: response, data: Data(), maximumData: 16
+    ).responseCode, 0x2019)
+  }
+
+  func testPtpDiagnosticsIdentifyTruncationWithoutIncludingPhotoBytes() {
+    var response = ptpResponse()
+    response[0] = 16
+    XCTAssertThrowsError(try PtpTetherCodec.decode(
+      response: response, data: Data([0xFF, 0xD8]), maximumData: 16
+    )) { error in
+      let failure = (error as? PtpTetherFailure)?.forOperation(0x1001)
+      XCTAssertEqual(failure?.diagnostics["responseBytes"], "12")
+      XCTAssertEqual(failure?.diagnostics["declaredLength"], "16")
+      XCTAssertEqual(failure?.diagnostics["operation"], "0x1001")
+      XCTAssertEqual(failure?.diagnostics["decoderReason"], "declared-length")
+      XCTAssertEqual(failure?.diagnostics["responsePrefixHex"]?.count, 24)
+      XCTAssertNil(failure?.diagnostics["data"])
+      XCTAssertFalse(failure?.diagnostics["responsePrefixHex"]?.contains("FFD8") ?? false)
+    }
+  }
+
   func testPtpPayloadThatLooksLikeUsbHeaderIsNeverStripped() throws {
     // ImageCaptureCore already removes the USB data header. These bytes belong
     // to the dataset or photograph, even if they resemble another container.
@@ -747,15 +811,6 @@ class RunnerTests: XCTestCase {
       XCTAssertFalse(PtpTetherCodec.canFallbackToWholeObject(unsupported, partialOpcode: 0x101B, receivedBytes: received))
       XCTAssertFalse(PtpTetherCodec.canFallbackToWholeObject(unsupported, partialOpcode: 0x9107, receivedBytes: received))
     }
-  }
-
-  func testPtpEventRequiresCompleteEventEnvelope() {
-    var event = ptpResponse(code: 0x4002, transaction: UInt32.max, parameters: [123])
-    event[4] = 4
-    XCTAssertTrue(PtpTetherCodec.validEvent(event))
-    XCTAssertFalse(PtpTetherCodec.validEvent(ptpResponse()))
-    XCTAssertFalse(PtpTetherCodec.validEvent(Data(event.dropLast())))
-    XCTAssertFalse(PtpTetherCodec.validEvent(Data()))
   }
 
   func testPtpStagingRetainsDistinctTransfersForRepeatedSonyHandle() throws {

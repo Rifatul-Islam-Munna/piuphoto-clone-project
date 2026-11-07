@@ -81,7 +81,8 @@ class UsbShootingModeAdvice {
         transport.contains('pcstorage') ||
         transport.contains('cardreader') ||
         transport.contains('usbstreaming') ||
-        transport.contains('filetransfer') ||
+        // "File Transfer" can be an OS label for a valid PTP/MTP camera.
+        // Do not conclude the physical shutter is disabled from that label.
         transport.contains('exfat');
 
     if (camera == null && peripheral == null) {

@@ -595,7 +595,8 @@ final class WiredCameraPhotoIndex {
   }
 
   private func ptpFlutterError(_ failure: PtpTetherFailure) -> FlutterError {
-    FlutterError(code: failure.code, message: failure.message, details: nil)
+    FlutterError(code: failure.code, message: failure.message,
+                 details: failure.diagnostics.isEmpty ? nil : failure.diagnostics)
   }
 
   private func ptpUnsigned32(_ value: Any?) -> UInt32? {
@@ -697,25 +698,13 @@ final class WiredCameraPhotoIndex {
           ))
           return
         }
-        // Reject clearly labelled mass storage, card reader and streaming
-        // transports before asking ImageCaptureCore to open a PTP session.
-        // This label is only a hint: "USB" alone cannot prove PTP shooting.
-        let transport = (camera.transportType ?? "").lowercased()
-          .replacingOccurrences(of: " ", with: "")
-          .replacingOccurrences(of: "-", with: "")
-        let massStorage = transport.contains("massstorage") || transport.contains("exfat")
-        // PTP/MTP is a valid camera control transport on some Canon, Nikon
-        // and other bodies. Never reject MTP *solely by its OS label*:
-        // check negotiated camera operations and confirm a test shutter shot.
-        let transferOnly = massStorage || transport.contains("cardreader") ||
-          transport.contains("filetransfer") || transport.contains("usbstreaming")
-        guard !transferOnly else {
-          let isSony = camera.usbVendorID == 0x054c
+        // Apple's ICCameraDevice.mountPoint identifies cameras mounted as
+        // Mass Storage. Do not infer the protocol from transportType substrings
+        // (PTP/MTP/File Transfer are not reliable rejection criteria).
+        guard camera.mountPoint == nil else {
           self.endPtpTetherSession(session, error: FlutterError(
-            code: (isSony && massStorage) ? "SONY_MASS_STORAGE_MODE" : "LIVE_CAMERA_TRANSFER_ONLY",
-            message: isSony
-              ? "The Sony camera is in a file-transfer/streaming USB mode. Unplug USB and select its PC Remote / Remote Shooting mode. Open Camera setup for this model's exact menu, then reconnect."
-              : "The camera is exposing USB storage, media transfer or streaming, not a shooting-capable PTP connection. Unplug it and choose the model's tether/remote-shooting USB mode. Ordinary PTP/MTP import does not confirm a usable shutter.",
+            code: "LIVE_CAMERA_TRANSFER_ONLY",
+            message: "Apple reports this camera as a mounted mass-storage device. Live receiving does not use mounted files. Reconnect in a shooting-capable camera mode.",
             details: ["camera": camera.name ?? "USB camera", "transport": camera.transportType ?? "unknown"]
           ))
           return
@@ -1253,11 +1242,13 @@ final class WiredCameraPhotoIndex {
           ))
           return
         }
-        let transport = (camera.transportType ?? "").lowercased()
-        guard !transport.contains("massstorage"), !transport.contains("exfat") else {
+        // Follow ImageCaptureCore's documented mass-storage indicator, not
+        // guessed substrings of a transport label. A camera that iOS exposes
+        // through its media catalog may still call the USB link PTP or MTP.
+        guard camera.mountPoint == nil else {
           self.endLiveCameraSession(session, error: FlutterError(
             code: "LIVE_CAMERA_TRANSFER_ONLY",
-            message: "The camera is exposing storage, not a live camera connection. Stop, unplug the cable and select the camera's shooting-capable USB mode. Mass Storage or a card reader cannot provide live shutter capture.",
+            message: "Apple reports a mounted mass-storage camera. AirPix will not switch USB modes or start live shooting from a mounted card.",
             details: nil
           ))
           return
@@ -1338,20 +1329,31 @@ final class WiredCameraPhotoIndex {
   }
 
   private func stopLiveCameraSession(sessionID: String?, result: @escaping FlutterResult) {
+    let finished: (PtpTetherSessionRelease.Outcome) -> Void = { outcome in
+      switch outcome {
+      case .success: result(true)
+      case .failure(let failure): result(self.ptpFlutterError(failure))
+      }
+    }
+    if let release = ptpTetherReleases.values.first(where: { $0.includesOwner(sessionID) }) {
+      release.cameraStateChanged()
+      release.wait(finished)
+      return
+    }
     guard let session = liveCameraSession, session.id == sessionID else {
       result(false)
       return
     }
     endLiveCameraSession(session, error: FlutterError(
       code: "LIVE_CAMERA_CANCELLED", message: "Live camera capture stopped.", details: nil
-    ), eventType: "status")
-    result(true)
+    ), eventType: "status", releaseCompletion: finished)
   }
 
   private func endLiveCameraSession(
     _ session: LiveCameraSession,
     error: FlutterError,
-    eventType: String = "error"
+    eventType: String = "error",
+    releaseCompletion: ((PtpTetherSessionRelease.Outcome) -> Void)? = nil
   ) {
     guard liveCameraSession === session else { return }
     liveCameraSession = nil
@@ -1363,7 +1365,9 @@ final class WiredCameraPhotoIndex {
     cancelLiveCameraDownload = nil
     cancelDownload?()
     if let camera = session.camera {
-      closeCameraSession(camera)
+      releasePtpCameraSession(camera, sessionID: session.id, completion: releaseCompletion)
+    } else {
+      releaseCompletion?(.success(()))
     }
     startResult?(error)
     emitLiveEvent(session, type: eventType, status: "stopped",
@@ -2981,10 +2985,13 @@ final class WiredCameraPhotoIndex {
     // ImageCaptureCore remains the transport owner. The raw tether driver reads
     // vendor packets through the same token-scoped delegate; never replace this
     // with ptpEventHandler, which would suppress the delegate's events.
-    guard eventData.count >= 8 else { return }
+    // Apple's delegate gives us the event Data. Pass it through unchanged:
+    // the documented callback has no promised minimum event byte length.
+    // The advanced vendor decoder may interpret it; the photo catalog relies
+    // on ImageCaptureCore's media-file callbacks and independent rescan.
     DispatchQueue.main.async {
       if let session = self.ptpTetherSession, session.camera === camera,
-         session.transport?.closed == false, PtpTetherCodec.validEvent(eventData) {
+         session.transport?.closed == false {
         session.ptpEventCount += 1
         self.emitPtpTetherEvent(session, type: "ptpEvent", data: eventData)
       }

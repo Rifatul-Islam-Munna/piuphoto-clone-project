@@ -3,22 +3,44 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
+import 'package:mobileapp/core/platform/adaptive_usb_camera_transport.dart';
 import 'package:mobileapp/core/platform/live_camera_types.dart';
 import 'package:mobileapp/core/platform/ptp_tether_camera.dart';
+import 'package:mobileapp/core/platform/mtp_catalog_camera.dart';
 
 export 'live_camera_types.dart';
 
-/// Live receiving needs a shooting protocol, not merely a readable catalog.
-/// Never fall back to MTP/Mass Storage when tether negotiation fails.
+/// iPhone camera-catalog access is the default on the upload page, matching
+/// the earlier ImageCaptureCore discovery path. Advanced vendor tethering
+/// remains opt-in for cameras with a proprietary PC Remote photo queue.
+/// Neither route selects USB Mass Storage or operates the camera shutter.
 LiveCameraTransport preferredUsbCameraTransport({
   required TargetPlatform platform,
   required LiveCameraUploadMode uploadMode,
+  bool? usePhotoCatalog,
 }) {
-  return PtpTetherCameraTransport(
+  // Preserve the earlier iPhone ImageCaptureCore connection behavior by
+  // default. A deliberate false opts into the advanced vendor PTP driver.
+  if (usePhotoCatalog ?? platform == TargetPlatform.iOS) {
+    if (platform == TargetPlatform.iOS) {
+      return NativeLiveCameraTransport(uploadMode: uploadMode);
+    }
+    if (platform == TargetPlatform.android) {
+      return MtpCatalogCameraTransport(uploadMode: uploadMode);
+    }
+  }
+  final tether = PtpTetherCameraTransport(
     uploadMode: uploadMode,
     eventPollInterval: const Duration(milliseconds: 500),
     cardScanInterval: const Duration(seconds: 1),
   );
+  if (platform == TargetPlatform.iOS) {
+    return AdaptiveUsbCameraTransport(
+      tether: tether,
+      catalog: NativeLiveCameraTransport(uploadMode: uploadMode),
+    );
+  }
+  return tether;
 }
 
 class NativeLiveCameraTransport implements LiveCameraTransport {
@@ -45,7 +67,7 @@ class NativeLiveCameraTransport implements LiveCameraTransport {
       'startLiveCameraSession',
       {'sessionId': sessionId, 'uploadMode': uploadMode.name},
     );
-    return LiveCameraSession.fromMap(data ?? const {});
+    return LiveCameraSession.fromMap(data ?? const {}, usesPhotoCatalog: true);
   }
 
   @override

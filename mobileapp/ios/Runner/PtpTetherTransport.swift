@@ -5,6 +5,19 @@ import Darwin
 struct PtpTetherFailure: Error {
   let code: String
   let message: String
+  let diagnostics: [String: String]
+
+  init(code: String, message: String, diagnostics: [String: String] = [:]) {
+    self.code = code
+    self.message = message
+    self.diagnostics = diagnostics
+  }
+
+  func forOperation(_ opcode: UInt16) -> PtpTetherFailure {
+    var details = diagnostics
+    details["operation"] = String(format: "0x%04X", opcode)
+    return PtpTetherFailure(code: code, message: message, diagnostics: details)
+  }
 }
 
 struct PtpTetherReply {
@@ -234,14 +247,45 @@ enum PtpTetherCodec {
   ) throws -> PtpTetherReply {
     // Apple's block callback is (response, data, error). Never infer success
     // from missing response bytes or interchange the two callback arguments.
-    guard response.count >= 12, response.count <= 32,
-          Int(read32(response, 0)) == response.count,
-          read16(response, 4) == 3,
-          (response.count - 12) % 4 == 0 else {
-      throw PtpTetherFailure(code: "PTP_INVALID_RESPONSE", message: "The camera returned an invalid or mismatched PTP response. Reconnect it before continuing.")
+    func invalid(_ reason: String) -> PtpTetherFailure {
+      var details = [
+        "decoderReason": reason,
+        "responseBytes": String(response.count),
+        "dataBytes": String(data.count),
+      ]
+      if response.count >= 4 { details["declaredLength"] = String(read32(response, 0)) }
+      if response.count >= 6 { details["containerType"] = String(read16(response, 4)) }
+      if response.count >= 8 { details["responseCode"] = String(format: "0x%04X", read16(response, 6)) }
+      // Only PTP control-response bytes, NEVER the photo/data payload. This
+      // makes failures diagnosable from an actual camera instead of guessing.
+      details["responsePrefixHex"] = response.prefix(32)
+        .map { String(format: "%02X", $0) }.joined()
+      return PtpTetherFailure(
+        code: "PTP_INVALID_RESPONSE",
+        message: "Camera detected, but its PTP command reply could not be decoded. The camera USB setting may be correct; this alone does not prove a mode or cable problem.",
+        diagnostics: details
+      )
     }
+    // A PTP response container has at most five 32-bit parameters (32 bytes).
+    // ImageCaptureCore owns the callback buffer and may include padding. Do
+    // not guess how large that buffer must be: bound the declared PTP length
+    // to 12...32 bytes, and read only those declared response bytes.
+    guard response.count >= 12 else {
+      throw invalid("response-buffer-size")
+    }
+    let declaredLength = Int(read32(response, 0))
+    // Apple's PTPPassThrough response parser uses the declared container size,
+    // separately from NSData.length. A fixed/padded buffer is not a bad reply.
+    // Read only declared parameters; never treat trailing padding as parameters.
+    guard declaredLength >= 12, declaredLength <= response.count,
+          declaredLength <= 32, (declaredLength - 12) % 4 == 0 else {
+      throw invalid("declared-length")
+    }
+    guard read16(response, 4) == 3 else { throw invalid("container-type") }
+    // Do not guess a numeric range for proprietary PTP response codes.
+    // Pass the actual code up; only PTP_RC_OK (0x2001) is treated as success.
     var parameters: [UInt32] = []
-    for offset in stride(from: 12, to: response.count, by: 4) {
+    for offset in stride(from: 12, to: declaredLength, by: 4) {
       parameters.append(read32(response, offset))
     }
     // The callback belongs to its exact active Command instance. Comparing
@@ -253,11 +297,6 @@ enum PtpTetherCodec {
       throw PtpTetherFailure(code: "PTP_DATA_LIMIT", message: "The camera returned more data than this operation permits.")
     }
     return PtpTetherReply(responseCode: read16(response, 6), parameters: parameters, data: data)
-  }
-
-  static func validEvent(_ data: Data) -> Bool {
-    data.count >= 12 && data.count <= outgoingLimit &&
-      Int(read32(data, 0)) == data.count && read16(data, 4) == 4
   }
 
   static func validateChunk(_ reply: PtpTetherReply, opcode: UInt16, requested: Int) throws {
@@ -648,7 +687,17 @@ final class PtpTetherTransport {
       DispatchQueue.main.async {
         guard self.active === command, !command.completed else { return }
         if let error {
-          self.failTransaction(command, PtpTetherFailure(code: "PTP_TRANSPORT_FAILED", message: error.localizedDescription))
+          let nativeError = error as NSError
+          self.failTransaction(command, PtpTetherFailure(
+            code: "PTP_TRANSPORT_FAILED", message: error.localizedDescription,
+            diagnostics: [
+              "operation": String(format: "0x%04X", command.opcode),
+              "errorDomain": nativeError.domain,
+              "errorCode": String(nativeError.code),
+              "responseBytes": String(response.count),
+              "dataBytes": String(data.count),
+            ]
+          ))
           return
         }
         do {
@@ -656,7 +705,7 @@ final class PtpTetherTransport {
                                                maximumData: command.maximumData)
           self.complete(command, result: .success(reply))
         } catch let failure as PtpTetherFailure {
-          self.failTransaction(command, failure)
+          self.failTransaction(command, failure.forOperation(command.opcode))
         } catch {
           self.failTransaction(command, PtpTetherFailure(code: "PTP_INVALID_RESPONSE", message: error.localizedDescription))
         }

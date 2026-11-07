@@ -45,6 +45,18 @@ class UsbCameraGuidance {
             'a test photo. Import access alone does not confirm that the camera '
             'allows its shutter to work while connected.',
       ),
+      'ptp_invalid_response' => const UsbCameraGuidance(
+        title: 'Camera reply could not be decoded',
+        details:
+            'AirPix could not decode a camera reply. This error alone does '
+            'not show that the camera USB setting is wrong.',
+        nextSteps:
+            'Retry with the updated app. If the camera shutter still works, '
+            'you can choose Compatibility photo reader in USB / OTG options '
+            'to read its available PTP/MTP photo catalog. Keep the same '
+            'shooting-capable camera setting; do not select Mass Storage. '
+            'Copy the connection details below if the problem continues.',
+      ),
       'ptp_shooting_command_blocked' => const UsbCameraGuidance(
         title: 'Receiving stopped to protect camera controls',
         details:
@@ -318,7 +330,6 @@ class UsbCameraGuidance {
       'ptp_invalid_packet' ||
       'ptp_write_failed' ||
       'ptp_timeout' ||
-      'ptp_invalid_response' ||
       'ptp_protocol_error' ||
       'ptp_command_rejected' ||
       'usb_camera_session_failed' => const UsbCameraGuidance(

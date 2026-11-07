@@ -6,6 +6,90 @@ Received files go through the existing durable local upload queue before native
 transfer acknowledgement. Cloud upload is a separate state and needs internet.
 AirPix must remain open while receiving.
 
+## iPhone response compatibility and optional catalog reader
+
+The iOS decoder previously required the NSData buffer length to exactly equal
+the response container's declared length. A valid padded response could therefore
+produce `PTP_INVALID_RESPONSE`. The decoder now reads only the declared
+12–32-byte PTP response container regardless of ImageCaptureCore buffer size,
+preserving the camera's actual response code and parameters. It still rejects
+truncation, misaligned parameter lengths and non-response containers.
+Those 12–32 bytes are PTP protocol structure (header plus at most five
+32-bit response parameters), **not** an assumed USB transfer packet size.
+Apple's `cameraDevice(_:didReceivePTPEvent:)` callback is now forwarded
+**unchanged, including empty Data**. Swift imposes no minimum event length,
+byte-pattern heuristic or vendor-format check. The optional advanced Dart
+vendor decoder may inspect event bytes, but unrecognized notifications still
+wake card reconciliation. Image payloads are never stripped or interpreted
+as USB headers.
+
+Apple's documented [`requestSendPTPCommand(_:outData:completion:)`](https://developer.apple.com/documentation/imagecapturecore/iccameradevice/requestsendptpcommand(_:outdata:completion:)) callback provides `(response, data, error)` in that order. The optional advanced
+mode decodes the **standard PTP response container** and checks whether its
+mandatory fields are present; this standard protocol layout must not be
+confused with a minimum iPhone USB packet size or a requirement Apple imposes
+on a general camera event. The decoder never treats an incomplete reply as a
+successful command, and never strips a photo dataset. Numeric response-code
+range guesses were removed from native Swift and the Dart channel. The actual
+code is preserved; only `0x2001` counts as command success. Diagnostics record
+operation, buffer length, declared length, type and code without photo bytes.
+The screenshot has no raw reply bytes, so its precise cause remains unverified.
+
+**Commit `48a017955fa46a96c89c2a9f6df783875429786f` audit:** the older
+iOS code already supported a native `ICCameraDevice.mediaFiles` photo reader,
+while `LiveCameraCapture` also defaulted to a separate raw PTP tether driver.
+These paths are not equivalent; previous successful device detection alone
+does not prove that raw PTP handshake or live shutter was verified.
+
+To avoid losing a camera **before it has connected**, the iPhone upload page
+and the default iOS transport now choose **native ImageCaptureCore camera
+catalog access first**. This path does not issue raw `GetDeviceInfo` and
+therefore cannot trigger `PTP_INVALID_RESPONSE` at connection startup. The
+vendor PTP driver is still selectable by turning OFF Camera photo reader in
+USB/OTG options for PC Remote models whose photos require a vendor queue.
+
+In advanced vendor mode, if initial read-only `GetDeviceInfo` (`0x1001`)
+fails to decode (or PTP passthrough is unavailable), the adaptive reader first
+waits for confirmed native release and then tries ImageCaptureCore without
+changing the USB mode. Later vendor-command or photo-transfer failures do
+**not** silently switch readers because this could consume or lose an object.
+An unconfirmed release also blocks recovery.
+
+On iPhone the native reader uses the camera's `mediaFiles` and file-download
+APIs; on Android the explicit alternative uses its MTP/PTP catalog reader
+(Android still defaults to vendor PTP). Neither catalog path selects Mass
+Storage or sends shutter-control commands. Catalog access does **not** certify
+that the physical shutter remains usable: a camera/cable test shot is required.
+
+Catalog mode uses iPhone change notifications and scans at most every three
+seconds; Android also rescans. Initial catalog completion is required before
+establishing the new-shot baseline. It retains New shots only / Existing photos
++ new shots scope and the same durable upload and private-file cleanup pipeline.
+Stop waits for actual iOS session release; a failed close blocks a new session
+until release or disconnection. The UI displays the actually selected reader.
+
+The native iPhone readers no longer guess camera mode from the text inside
+`transportType`. To exclude mounted Mass Storage, they use Apple's documented
+`ICCameraDevice.mountPoint` property, which is set when the camera uses its
+Mass Storage transport. This is **not** an automatic mounted-storage fallback.
+PTP versus MTP naming alone does not establish whether a camera can still shoot.
+The camera's selected mode, firmware and iOS interface determine that behavior.
+
+### Validation of this compatibility change
+
+On 2026-11-07, the full Flutter suite passed **352 tests** with one
+Windows-specific skip; `flutter analyze lib test` reported no issues. Dart tests
+cover native ImageCaptureCore as the default iOS reader, opt-in vendor
+PTP, initial-only handshake recovery, confirmed release before catalog
+takeover, and blocked recovery after later errors,
+catalog polling, event forwarding and exact-session upload acknowledgements.
+Other tests cover the explicit catalog reader, Android's unchanged default,
+upload scope and decode-error guidance. Swift XCTest cases cover variable
+response-buffer sizes, padded command replies, preservation of busy responses,
+truncation rejection and diagnostic metadata. Native PTP events are no longer
+classified by any Swift packet-size helper. **Swift XCTest and native iOS
+builds cannot run on this Windows host**. A fresh native iOS build and
+physical-camera test are required; hot reload cannot install the Swift change.
+
 ## Added adapters
 
 | Family | Connection and protocol requirements | Behavior | Verification status |

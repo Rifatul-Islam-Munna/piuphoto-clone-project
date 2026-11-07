@@ -121,6 +121,22 @@ void main() {
     );
   }
 
+  test('generic file-transfer label is not proof of wrong USB mode', () {
+    for (final transport in [
+      'File Transfer',
+      'USB file-transfer',
+      'MTP File Transfer',
+    ]) {
+      final advice = advise(
+        name: 'Canon EOS',
+        vendor: 0x04a9,
+        transport: transport,
+      );
+      expect(advice.wrongMode, isFalse);
+      expect(advice.status, contains('unverified'));
+    }
+  });
+
   test('Canon MTP label is not sufficient to reject its tether mode', () {
     final advice = advise(
       name: 'Canon EOS R8',

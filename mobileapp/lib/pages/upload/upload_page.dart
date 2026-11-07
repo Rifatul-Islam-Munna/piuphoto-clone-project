@@ -38,6 +38,7 @@ import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/pages/upload/camera_transfer_page.dart';
 import 'package:mobileapp/pages/upload/transfer_list_page.dart';
 import 'package:mobileapp/pages/upload/usb_camera_upload_mode_selector.dart';
+import 'package:mobileapp/pages/upload/usb_camera_reader_selector.dart';
 import 'package:mobileapp/pages/upload/usb_camera_setup_help.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 import 'package:mobileapp/widgets/app_ui.dart';
@@ -116,12 +117,14 @@ class _UsbCaptureTarget {
     required this.uploadMode,
     required this.isEnhanced,
     this.albumId,
+    this.photoCatalog = false,
   });
 
   final EventSummary event;
   final LiveCameraUploadMode uploadMode;
   final bool isEnhanced;
   final String? albumId;
+  final bool photoCatalog;
 }
 
 @RoutePage()
@@ -145,6 +148,13 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   bool _usbStartRequested = false;
   bool _guestQrPreparing = false;
   Future<void> _usbModeSaveQueue = Future<void>.value();
+  // iPhone defaults to ImageCaptureCore's catalog reader, which does not
+  // require a raw PTP GetDeviceInfo command before connecting. This is the
+  // known camera-discovery route from the earlier implementation. The
+  // advanced vendor tether path remains selectable for cameras whose remote
+  // shooting queue does not expose a normal photo catalog.
+  bool _usbPhotoCatalogReader = Platform.isIOS;
+  bool _usbSessionPhotoCatalogReader = false;
   LiveCameraUploadMode _usbUploadMode = LiveCameraUploadMode.newShotsOnly;
   LiveCameraUploadMode _usbSessionUploadMode =
       LiveCameraUploadMode.newShotsOnly;
@@ -865,9 +875,35 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     UsbCameraGuidance advice,
     String code, {
     UsbShootingModeAdvice? modeAdvice,
+    Object? diagnosticDetails,
+    VoidCallback? onTryPhotoCatalog,
   }) async {
     if (!mounted) return;
-    final showSetup = await showDialog<bool>(
+    final diagnostics = <String>[];
+    if (diagnosticDetails is Map) {
+      if (diagnosticDetails['ptpFailure'] != null) {
+        diagnostics.add('Initial PTP: ${diagnosticDetails['ptpFailure']}');
+      }
+      final ptp = diagnosticDetails['ptpDiagnostics'] is Map
+          ? diagnosticDetails['ptpDiagnostics'] as Map
+          : diagnosticDetails;
+      for (final key in const [
+        'operation',
+        'decoderReason',
+        'responseBytes',
+        'declaredLength',
+        'containerType',
+        'responseCode',
+        'dataBytes',
+        'responsePrefixHex',
+        'errorDomain',
+        'errorCode',
+      ]) {
+        final value = ptp[key];
+        if (value is String || value is num) diagnostics.add('$key: $value');
+      }
+    }
+    final action = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(advice.title),
@@ -900,22 +936,38 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
               'Connection code: $code',
               style: Theme.of(dialogContext).textTheme.bodySmall,
             ),
+            if (diagnostics.isNotEmpty)
+              SelectableText(
+                diagnostics.join('\n'),
+                style: Theme.of(dialogContext).textTheme.bodySmall,
+              ),
+            if (onTryPhotoCatalog != null) ...[
+              const SizedBox(height: 12),
+              const Text(UsbCameraReaderSelector.explanation),
+            ],
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Close'),
           ),
-          FilledButton.icon(
-            onPressed: () => Navigator.pop(dialogContext, true),
+          TextButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, 'setup'),
             icon: const Icon(Icons.help_outline),
             label: const Text('Camera setup help'),
           ),
+          if (onTryPhotoCatalog != null)
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, 'catalog'),
+              child: const Text('Try compatibility photo reader'),
+            ),
         ],
       ),
     );
-    if (showSetup == true && mounted) await _showLiveCameraSetup();
+    if (!mounted) return;
+    if (action == 'setup') await _showLiveCameraSetup();
+    if (action == 'catalog') onTryPhotoCatalog?.call();
   }
 
   Future<void> _showLiveCameraSetup() => showDialog<void>(
@@ -1662,6 +1714,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     final event = target.event;
     _beginReceivingSession(event, 'usb');
     _usbSessionUploadMode = target.uploadMode;
+    _usbSessionPhotoCatalogReader = target.photoCatalog;
     _wiredPhotoReceived = false;
     _safeSetState(() {
       _otgStarting = true;
@@ -1670,9 +1723,20 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       _otgStatus = 'Connecting for live shooting...';
     });
     final capture = LiveCameraCapture(
-      transport: transport,
+      transport:
+          transport ??
+          preferredUsbCameraTransport(
+            platform: Platform.isIOS
+                ? TargetPlatform.iOS
+                : TargetPlatform.android,
+            uploadMode: target.uploadMode,
+            usePhotoCatalog: target.photoCatalog,
+          ),
       uploadMode: target.uploadMode,
-      // Use the receiver's fast fallback even if shutter events are lost.
+      // Catalog events wake immediately; rescan gently when an event is absent.
+      pollInterval: target.photoCatalog
+          ? const Duration(seconds: 3)
+          : const Duration(milliseconds: 500),
       onUpdate: (update) {
         if (!_otgActive(generation)) return;
         _safeSetState(() {
@@ -1725,6 +1789,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       _safeSetState(() {
         _usbReleaseIssue = null;
         _otgSourceName = session.name;
+        // Reflect the actual transport when a failed PTP handshake was
+        // recovered by the passive catalog without changing USB modes.
+        _usbSessionPhotoCatalogReader = session.usesPhotoCatalog;
         _otgBusy = false;
       });
       unawaited(_showTransferSessionPage(event));
@@ -1761,6 +1828,25 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
           advice,
           error.code,
           modeAdvice: UsbShootingModeAdvice.fromFailure(error),
+          diagnosticDetails: error.details,
+          onTryPhotoCatalog:
+              !target.photoCatalog &&
+                  (Platform.isIOS || Platform.isAndroid) &&
+                  const {
+                    'PTP_INVALID_RESPONSE',
+                    'PTP_PASSTHROUGH_UNAVAILABLE',
+                    'TETHER_CAMERA_UNSUPPORTED',
+                  }.contains(error.code)
+              ? () {
+                  if (!_otgActive(generation) ||
+                      _usbSessionLocked ||
+                      ActiveEventStorage.activeEvent.value?.id != event.id) {
+                    return;
+                  }
+                  _safeSetState(() => _usbPhotoCatalogReader = true);
+                  unawaited(_toggleOtgAutoUpload(event));
+                }
+              : null,
         ),
       );
     } catch (error) {
@@ -1941,6 +2027,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     final target = _UsbCaptureTarget(
       event: event,
       uploadMode: _usbUploadMode,
+      photoCatalog: _usbPhotoCatalogReader,
       isEnhanced: _isEnhanced,
       albumId: _selectedAlbumId,
     );
@@ -2464,6 +2551,13 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 '${UsbCameraUploadModeSelector.labelFor(_usbSessionUploadMode)}',
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
+              if (_usbSessionPhotoCatalogReader)
+                const Text(
+                  'Compatibility photo reader: checking for new photos every '
+                  '3 seconds. On iPhone, photo notifications can wake receiving '
+                  'sooner. Take a test shot to verify receipt.',
+                  style: TextStyle(fontSize: 12),
+                ),
               const SizedBox(height: 8),
               Text(
                 _wiredPhotoReceived
@@ -2795,7 +2889,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                   final usbCard = _cameraConnectionCard(
                     icon: Icons.usb_rounded,
                     title: 'USB / OTG',
-                    badge: 'PTP live',
+                    badge: _usbPhotoCatalogReader
+                        ? 'PTP / MTP reader'
+                        : 'Tether',
                     subtitle:
                         'Choose the USB shooting mode on your camera first. '
                         'New photos sync automatically. AirPix never switches '
@@ -3246,6 +3342,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   Future<void> _showUsbCameraOptions() async {
     if (!mounted) return;
     var selectedMode = _usbUploadMode;
+    var photoCatalog = _usbPhotoCatalogReader;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -3280,6 +3377,17 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     _changeUsbUploadMode(mode);
                   },
                 ),
+                if (Platform.isIOS || Platform.isAndroid)
+                  UsbCameraReaderSelector(
+                    value: photoCatalog,
+                    onChanged: _usbSessionLocked
+                        ? null
+                        : (value) {
+                            if (_usbSessionLocked) return;
+                            setSheetState(() => photoCatalog = value);
+                            _safeSetState(() => _usbPhotoCatalogReader = value);
+                          },
+                  ),
                 if (_usbSessionLocked) ...[
                   const SizedBox(height: 8),
                   const Text(

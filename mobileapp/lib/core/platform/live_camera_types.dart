@@ -14,6 +14,7 @@ class LiveCameraSession {
     required this.message,
     required this.baselineCount,
     this.uploadMode = LiveCameraUploadMode.newShotsOnly,
+    this.usesPhotoCatalog = false,
   });
 
   final String id;
@@ -24,7 +25,13 @@ class LiveCameraSession {
   final int baselineCount;
   final LiveCameraUploadMode uploadMode;
 
-  factory LiveCameraSession.fromMap(Map<Object?, Object?> data) {
+  /// This describes the actual reader, including automatic recovery after PTP.
+  final bool usesPhotoCatalog;
+
+  factory LiveCameraSession.fromMap(
+    Map<Object?, Object?> data, {
+    bool usesPhotoCatalog = false,
+  }) {
     final id = data['sessionId']?.toString() ?? '';
     if (id.isEmpty) {
       throw PlatformException(code: 'LIVE_CAMERA_INVALID_SESSION');
@@ -39,6 +46,7 @@ class LiveCameraSession {
       message:
           data['message']?.toString() ?? 'Take a test photo on the camera.',
       baselineCount: int.tryParse('${data['baselineCount']}') ?? 0,
+      usesPhotoCatalog: usesPhotoCatalog,
       uploadMode: data['uploadMode'] == LiveCameraUploadMode.existingAndNew.name
           ? LiveCameraUploadMode.existingAndNew
           : LiveCameraUploadMode.newShotsOnly,

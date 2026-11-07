@@ -18,14 +18,14 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
   test(
-    'live defaults use shooting transport and never fall back to file import',
+    'iOS defaults to ImageCaptureCore catalog; Android remains tether-first',
     () {
       expect(
         preferredUsbCameraTransport(
           platform: TargetPlatform.iOS,
           uploadMode: LiveCameraUploadMode.newShotsOnly,
         ),
-        isA<PtpTetherCameraTransport>(),
+        isA<NativeLiveCameraTransport>(),
       );
       expect(
         preferredUsbCameraTransport(
@@ -43,6 +43,29 @@ void main() {
       );
     },
   );
+
+  test('catalog reader is an explicit platform choice and preserves scope', () {
+    final ios = preferredUsbCameraTransport(
+      platform: TargetPlatform.iOS,
+      uploadMode: LiveCameraUploadMode.existingAndNew,
+      usePhotoCatalog: true,
+    );
+    expect(ios, isA<NativeLiveCameraTransport>());
+    expect(
+      (ios as NativeLiveCameraTransport).uploadMode,
+      LiveCameraUploadMode.existingAndNew,
+    );
+    final android = preferredUsbCameraTransport(
+      platform: TargetPlatform.android,
+      uploadMode: LiveCameraUploadMode.newShotsOnly,
+      usePhotoCatalog: true,
+    );
+    expect(android, isA<MtpCatalogCameraTransport>());
+    expect(
+      (android as MtpCatalogCameraTransport).uploadMode,
+      LiveCameraUploadMode.newShotsOnly,
+    );
+  });
 
   test(
     'iOS calls ImageCaptureCore catalog APIs, no vendor PTP commands',

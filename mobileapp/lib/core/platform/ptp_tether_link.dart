@@ -104,7 +104,7 @@ class MethodChannelPtpTetherLink implements PtpTetherLink {
     final data = result?['data'];
     final parameters = result?['parameters'];
     if (code is! int ||
-        code < 0x2000 ||
+        code < 0 ||
         code > 0xffff ||
         (data != null && data is! Uint8List) ||
         (parameters != null &&

@@ -2,6 +2,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobileapp/core/platform/usb_camera_guidance.dart';
 
 void main() {
+  test('decode failure does not diagnose an incorrect camera USB setting', () {
+    final advice = UsbCameraGuidance.forStatus('PTP_INVALID_RESPONSE');
+    expect(advice.title, 'Camera reply could not be decoded');
+    expect(advice.details, contains('does not show'));
+    expect(advice.nextSteps, contains('Compatibility photo reader'));
+    expect(advice.nextSteps, contains('do not select Mass Storage'));
+    final native = UsbCameraGuidance.forStatus(
+      'PTP_INVALID_RESPONSE',
+      message: 'Native decoder details',
+    );
+    expect(native.details, 'Native decoder details');
+    expect(native.nextSteps, advice.nextSteps);
+  });
+
   test('passive USB blocks shutter, deletion and UI-lock actions', () {
     final advice = UsbCameraGuidance.forStatus('PTP_SHOOTING_COMMAND_BLOCKED');
     expect(advice.title, contains('Receiving stopped'));
