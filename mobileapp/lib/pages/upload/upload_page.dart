@@ -38,7 +38,6 @@ import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/pages/upload/camera_transfer_page.dart';
 import 'package:mobileapp/pages/upload/transfer_list_page.dart';
 import 'package:mobileapp/pages/upload/usb_camera_upload_mode_selector.dart';
-import 'package:mobileapp/pages/upload/usb_camera_reader_selector.dart';
 import 'package:mobileapp/pages/upload/usb_camera_setup_help.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 import 'package:mobileapp/widgets/app_ui.dart';
@@ -148,11 +147,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   bool _usbStartRequested = false;
   bool _guestQrPreparing = false;
   Future<void> _usbModeSaveQueue = Future<void>.value();
-  // Keep the camera in its shooting-capable USB mode by using the vendor
-  // tether protocol first. The ImageCaptureCore photo catalog is an explicit
-  // compatibility choice, since opening it can lock the physical shutter.
-  bool _usbPhotoCatalogReader = false;
-  bool _usbSessionPhotoCatalogReader = false;
+  // Native photo receivers are selected once Start receiving is pressed.
+  // No vendor PTP control or automatic fallback is run in this path.
+  final bool _usbPhotoCatalogReader = false;
   LiveCameraUploadMode _usbUploadMode = LiveCameraUploadMode.newShotsOnly;
   LiveCameraUploadMode _usbSessionUploadMode =
       LiveCameraUploadMode.newShotsOnly;
@@ -593,288 +590,11 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     return [...imported, ...retried];
   }
 
-  /// Reports the actual native USB transport, not phone Photos/MediaStore.
-  Future<void> _diagnoseUsbCamera() async {
-    try {
-      final diagnostic = await _withCameraProgress(
-        'Checking USB camera…',
-        OtgFilePicker.cameraConnectionDiagnostics(),
-      );
-      if (!mounted || diagnostic == null) return;
-      final guidance = UsbCameraGuidance.forStatus(diagnostic.status);
-      final modeAdvice = UsbShootingModeAdvice.fromDiagnostics(diagnostic);
-      final cameraFound = diagnostic.cameras.isNotEmpty;
-      final cableFound = diagnostic.usbEnumerationAvailable
-          ? diagnostic.usbHostSupported != false &&
-                diagnostic.usbDevices.isNotEmpty
-          : cameraFound;
-      final shutterSupported = diagnostic.cameras.any(
-        (camera) => camera.physicalShutter == 'supported',
-      );
-      final sessionReady =
-          diagnostic.status == 'live-ready' ||
-          diagnostic.cameras.any((camera) => camera.liveSessionActive);
-
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.usb_rounded),
-              SizedBox(width: 10),
-              Expanded(child: Text('USB camera check')),
-            ],
-          ),
-          scrollable: true,
-          content: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: sessionReady
-                      ? Theme.of(context).colorScheme.primaryContainer
-                      : AppColors.muted,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      modeAdvice.wrongMode ? modeAdvice.title : guidance.title,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      diagnostic.message,
-                      style: const TextStyle(fontSize: 12, height: 1.35),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              _usbCheckRow(
-                icon: Icons.cable_rounded,
-                label: 'Cable / adapter',
-                value: cableFound ? 'Detected' : 'Not detected',
-                ok: cableFound,
-              ),
-              _usbCheckRow(
-                icon: Icons.photo_camera_outlined,
-                label: 'Camera',
-                value: cameraFound
-                    ? diagnostic.cameras.first.name
-                    : 'No compatible camera found',
-                ok: cameraFound,
-              ),
-              _usbCheckRow(
-                icon: Icons.settings_input_component_outlined,
-                label: 'USB shooting mode',
-                value: modeAdvice.status,
-                ok: sessionReady && !modeAdvice.wrongMode,
-              ),
-              _usbCheckRow(
-                icon: Icons.camera_alt_outlined,
-                label: 'Physical shutter',
-                value: shutterSupported
-                    ? 'Supported by this connection'
-                    : 'Not confirmed yet',
-                ok: shutterSupported,
-              ),
-              _usbCheckRow(
-                icon: Icons.cloud_upload_outlined,
-                label: 'Live transfer',
-                value: sessionReady
-                    ? 'Ready for new photos'
-                    : 'Start a USB session after fixing the item above',
-                ok: sessionReady,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Next step',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                cameraFound || diagnostic.usbDevices.isNotEmpty
-                    ? modeAdvice.nextSteps
-                    : guidance.nextSteps,
-                style: const TextStyle(fontSize: 12, height: 1.4),
-              ),
-              const SizedBox(height: 10),
-              ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: const EdgeInsets.only(bottom: 8),
-                title: const Text(
-                  'Technical details',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-                ),
-                subtitle: const Text(
-                  'Only needed for troubleshooting or support',
-                  style: TextStyle(fontSize: 11),
-                ),
-                children: [
-                  if (diagnostic.connectionNote.isNotEmpty)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        diagnostic.connectionNote,
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                    ),
-                  if (Platform.isIOS) ...[
-                    const SizedBox(height: 6),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Photo access: ${diagnostic.contentsAuthorization}',
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Camera control: ${diagnostic.controlAuthorization}',
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                    ),
-                  ],
-                  for (final camera in diagnostic.cameras) ...[
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        '${camera.name} · ${camera.transportType.isEmpty ? "camera transport" : camera.transportType}',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Session ${camera.sessionOpen ? "open" : "closed"} · '
-                        'Live ${camera.liveSessionActive ? "active" : "stopped"} · '
-                        '${camera.imageCount} images listed',
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                    ),
-                    if (camera.sessionError.isNotEmpty)
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          camera.sessionError,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.redAccent,
-                          ),
-                        ),
-                      ),
-                  ],
-                  if (diagnostic.usbDevices.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    for (final device in diagnostic.usbDevices)
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          '${device.name} · ${device.usbIdentifier}',
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                      ),
-                  ],
-                ],
-              ),
-            ],
-          ),
-          actions: [
-            TextButton.icon(
-              onPressed: () async {
-                await Clipboard.setData(
-                  ClipboardData(
-                    text: [
-                      diagnostic.toSupportReport(),
-                      'USB mode advice: ${modeAdvice.status}',
-                      'Next steps: ${modeAdvice.nextSteps}',
-                    ].join(String.fromCharCode(10)),
-                  ),
-                );
-                AppToast.success('USB report copied');
-              },
-              icon: const Icon(Icons.copy_outlined, size: 18),
-              label: const Text('Copy report'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Close'),
-            ),
-          ],
-        ),
-      );
-    } on MissingPluginException {
-      AppToast.error('USB camera check needs a freshly rebuilt app.');
-    } on PlatformException catch (error) {
-      AppToast.error(error.message ?? 'Could not check the USB camera.');
-    } catch (error) {
-      debugPrint('USB diagnostic failed: $error');
-      AppToast.error('Could not check the USB camera.');
-    }
-  }
-
-  Widget _usbCheckRow({
-    required IconData icon,
-    required String label,
-    required String value,
-    required bool ok,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            ok ? Icons.check_circle_rounded : Icons.info_outline_rounded,
-            size: 18,
-            color: ok ? colorScheme.primary : AppColors.mutedForeground,
-          ),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppColors.mutedForeground,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _showUsbLiveFailure(
     UsbCameraGuidance advice,
     String code, {
     UsbShootingModeAdvice? modeAdvice,
     Object? diagnosticDetails,
-    VoidCallback? onTryPhotoCatalog,
   }) async {
     if (!mounted) return;
     final diagnostics = <String>[];
@@ -939,10 +659,6 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 diagnostics.join('\n'),
                 style: Theme.of(dialogContext).textTheme.bodySmall,
               ),
-            if (onTryPhotoCatalog != null) ...[
-              const SizedBox(height: 12),
-              const Text(UsbCameraReaderSelector.explanation),
-            ],
           ],
         ),
         actions: [
@@ -955,17 +671,11 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             icon: const Icon(Icons.help_outline),
             label: const Text('Camera setup help'),
           ),
-          if (onTryPhotoCatalog != null)
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, 'catalog'),
-              child: const Text('Try photo catalog (shutter may lock)'),
-            ),
         ],
       ),
     );
     if (!mounted) return;
     if (action == 'setup') await _showLiveCameraSetup();
-    if (action == 'catalog') onTryPhotoCatalog?.call();
   }
 
   Future<void> _showLiveCameraSetup() => showDialog<void>(
@@ -1712,13 +1422,12 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     final event = target.event;
     _beginReceivingSession(event, 'usb');
     _usbSessionUploadMode = target.uploadMode;
-    _usbSessionPhotoCatalogReader = target.photoCatalog;
     _wiredPhotoReceived = false;
     _safeSetState(() {
       _otgStarting = true;
       _otgImporting = true;
       _otgBusy = true;
-      _otgStatus = 'Connecting for live shooting...';
+      _otgStatus = 'Opening camera photo receiver...';
     });
     final capture = LiveCameraCapture(
       transport:
@@ -1731,10 +1440,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             usePhotoCatalog: target.photoCatalog,
           ),
       uploadMode: target.uploadMode,
-      // Catalog events wake immediately; rescan gently when an event is absent.
-      pollInterval: target.photoCatalog
-          ? const Duration(seconds: 3)
-          : const Duration(milliseconds: 500),
+      // Native file callbacks plus a gentle independent catalog rescan.
+      pollInterval: const Duration(milliseconds: 1500),
       onUpdate: (update) {
         if (!_otgActive(generation)) return;
         _safeSetState(() {
@@ -1787,9 +1494,6 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       _safeSetState(() {
         _usbReleaseIssue = null;
         _otgSourceName = session.name;
-        // Reflect the actual transport. The live shooting path never silently
-        // falls back to a potentially shutter-locking photo catalog.
-        _usbSessionPhotoCatalogReader = session.usesPhotoCatalog;
         _otgBusy = false;
       });
       unawaited(_showTransferSessionPage(event));
@@ -1827,24 +1531,6 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
           error.code,
           modeAdvice: UsbShootingModeAdvice.fromFailure(error),
           diagnosticDetails: error.details,
-          onTryPhotoCatalog:
-              !target.photoCatalog &&
-                  (Platform.isIOS || Platform.isAndroid) &&
-                  const {
-                    'PTP_INVALID_RESPONSE',
-                    'PTP_PASSTHROUGH_UNAVAILABLE',
-                    'TETHER_CAMERA_UNSUPPORTED',
-                  }.contains(error.code)
-              ? () {
-                  if (!_otgActive(generation) ||
-                      _usbSessionLocked ||
-                      ActiveEventStorage.activeEvent.value?.id != event.id) {
-                    return;
-                  }
-                  _safeSetState(() => _usbPhotoCatalogReader = true);
-                  unawaited(_toggleOtgAutoUpload(event));
-                }
-              : null,
         ),
       );
     } catch (error) {
@@ -2549,13 +2235,11 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 '${UsbCameraUploadModeSelector.labelFor(_usbSessionUploadMode)}',
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
-              if (_usbSessionPhotoCatalogReader)
-                const Text(
-                  'Compatibility photo reader: checking for new photos every '
-                  '3 seconds. On iPhone, photo notifications can wake receiving '
-                  'sooner. Take a test shot to verify receipt.',
-                  style: TextStyle(fontSize: 12),
-                ),
+              const Text(
+                'Native USB photo receiver checks for new photos every 1.5 seconds '
+                'while this session is running. Take a test shot to verify receipt.',
+                style: TextStyle(fontSize: 12),
+              ),
               const SizedBox(height: 8),
               Text(
                 _wiredPhotoReceived
@@ -2888,13 +2572,11 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                   final usbCard = _cameraConnectionCard(
                     icon: Icons.usb_rounded,
                     title: 'USB / OTG',
-                    badge: _usbPhotoCatalogReader
-                        ? 'Photo catalog (may lock camera)'
-                        : 'Live shooting PTP',
+                    badge: 'Native USB receiver',
                     subtitle:
-                        'Choose the USB shooting mode on your camera first. '
-                        'New photos sync automatically. AirPix never switches '
-                        'to Mass Storage if connection fails.',
+                        'Camera discovery starts only after Connect & start. '
+                        'Take photos with the physical shutter; new saved photos '
+                        'transfer automatically when your camera supports shooting over USB.',
                     detail: _usbUploadMode == LiveCameraUploadMode.newShotsOnly
                         ? 'New shots upload automatically'
                         : 'Existing + new photos upload',
@@ -3341,7 +3023,6 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   Future<void> _showUsbCameraOptions() async {
     if (!mounted) return;
     var selectedMode = _usbUploadMode;
-    var photoCatalog = _usbPhotoCatalogReader;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -3376,17 +3057,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     _changeUsbUploadMode(mode);
                   },
                 ),
-                if (Platform.isIOS || Platform.isAndroid)
-                  UsbCameraReaderSelector(
-                    value: photoCatalog,
-                    onChanged: _usbSessionLocked
-                        ? null
-                        : (value) {
-                            if (_usbSessionLocked) return;
-                            setSheetState(() => photoCatalog = value);
-                            _safeSetState(() => _usbPhotoCatalogReader = value);
-                          },
-                  ),
+
                 if (_usbSessionLocked) ...[
                   const SizedBox(height: 8),
                   const Text(
@@ -3417,20 +3088,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                             unawaited(_startPcUsbTestBridge());
                           },
                   ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.fact_check_outlined),
-                  title: const Text('Test USB connection'),
-                  subtitle: const Text(
-                    'Check whether AirPix can see and communicate with the camera.',
-                  ),
-                  onTap: _otgBusy || _uploading || _usbStartRequested
-                      ? null
-                      : () {
-                          Navigator.pop(sheetContext);
-                          unawaited(_diagnoseUsbCamera());
-                        },
-                ),
+
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.help_outline_rounded),
@@ -3443,20 +3101,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     unawaited(_showLiveCameraSetup());
                   },
                 ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.photo_library_outlined),
-                  title: const Text('Import camera photos once'),
-                  subtitle: const Text(
-                    'Manually choose stored photos instead of starting a live session.',
-                  ),
-                  onTap: _uploading || _otgBusy || _usbStartRequested
-                      ? null
-                      : () {
-                          Navigator.pop(sheetContext);
-                          unawaited(_pickOtgFiles());
-                        },
-                ),
+
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.sd_storage_outlined),

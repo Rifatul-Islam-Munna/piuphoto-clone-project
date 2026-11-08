@@ -4,36 +4,17 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/platform/live_camera_types.dart';
-import 'package:mobileapp/core/platform/ptp_tether_camera.dart';
-import 'package:mobileapp/core/platform/mtp_catalog_camera.dart';
 
 export 'live_camera_types.dart';
 
-/// Live USB receiving must negotiate a shooting-capable tether protocol first.
-/// The plain iPhone ImageCaptureCore photo catalog can put a camera into
-/// computer/file-transfer mode, leaving its LCD and physical shutter unusable.
-/// Only use that reader when the photographer explicitly selects it for
-/// compatibility; never silently downgrade a failed live tether connection.
-/// Neither reader selects USB Mass Storage or triggers the camera shutter.
+/// A single native photo receiver is used on both iOS and Android.
+/// Nothing browses, claims or opens a camera before [start] is called by the
+/// session button. No vendor control packets, shutter commands or fallback.
 LiveCameraTransport preferredUsbCameraTransport({
   required TargetPlatform platform,
   required LiveCameraUploadMode uploadMode,
   bool? usePhotoCatalog,
-}) {
-  if (usePhotoCatalog == true) {
-    if (platform == TargetPlatform.iOS) {
-      return NativeLiveCameraTransport(uploadMode: uploadMode);
-    }
-    if (platform == TargetPlatform.android) {
-      return MtpCatalogCameraTransport(uploadMode: uploadMode);
-    }
-  }
-  return PtpTetherCameraTransport(
-    uploadMode: uploadMode,
-    eventPollInterval: const Duration(milliseconds: 500),
-    cardScanInterval: const Duration(seconds: 1),
-  );
-}
+}) => NativeLiveCameraTransport(uploadMode: uploadMode);
 
 class NativeLiveCameraTransport implements LiveCameraTransport {
   const NativeLiveCameraTransport({
