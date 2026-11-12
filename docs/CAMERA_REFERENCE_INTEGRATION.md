@@ -59,6 +59,49 @@ the session. V2 retains the parameterless query used by expo-sony-camera.
 | Pentax / Ricoh / other PTP | Existing standard adapter requires the native platform to confirm physical-shutter capability; unverified models fail with setup guidance. This is not universal Pentax tether support. |
 | Camera FTP | Existing foreground FTP auto-send receiver works with models that expose automatic FTP transfer. |
 
+## Second review: physical shutter and iOS ownership
+
+All five GitHub heads were fetched and rechecked on 2026-11-13; their revisions
+in the table above are unchanged. The remote-control demos are not equivalent
+to leaving the photographer in control of the camera. In particular,
+`expo-sony-camera` prepares PC priority with `D25A=1`, and CrCmd's
+`setupCamera` does the same. Those setup writes are not copied into AirPix.
+
+- Sony now returns an advertised, writable PC-priority setting to **Camera**
+  (`D25A=0`) instead of simply refusing the session. The permitted write is
+  exactly `9205 [D25A]` for V2 or `9205 [D25A,1]` for V3, with one zero byte.
+  Six bounded full-property reads must confirm Camera priority. A successful
+  write reply alone is insufficient. Unknown/read-only modes fail and release
+  USB. PC priority is never restored on Stop. Recording destination and exposure
+  settings are not written. Dart, Swift and Kotlin enforce the same exception.
+- The iOS receiver previously emitted `catalogAdded`, while Dart only handled
+  `catalogHint`. It now sends the expected event with file name and size, walks
+  new folder contents and forwards removals and catalog-ready notifications.
+  Dart also accepts the older event name. These are same-session hints, not a
+  fallback to import mode. This restores event-only Fuji delivery and allows
+  reused camera handles to represent subsequent shots.
+- Reattaching a Flutter listener cancels its stale cleanup timer. A new session
+  after hot restart first closes the orphan native owner and waits for confirmed
+  release. Failed close still blocks reopening. Camera access restrictions end
+  and release the current session instead of leaving it polling indefinitely.
+- Native authorization preserves denied, restricted, pending and unavailable
+  states. Obsolete XCTest cases for the deleted native catalog index were
+  removed; authorization tests now target the mapping used by the receiver.
+- ZENCHE's iOS `Connectivity/RemoteCaptureServices.swift` is a PTP/IP client;
+  its `Camera/CameraService.swift` uses AVFoundation. Video streaming is not an
+  original-photo USB tether driver and is not substituted for receiving photos.
+
+On Nikon models with the option, select **Setup → USB connection priority →
+Shooting before connecting USB**. Nikon explicitly documents a blank monitor
+under Upload and an active monitor under Shooting. Returning protocol control
+with `90C2 [0]` cannot by itself certify that camera-side display setting.
+See [Nikon's USB connection priority manual](https://onlinemanual.nikonimglib.com/z9/en/sum_usb_connection_priority_307.html).
+
+The app never opens a remote live-view session, sends a physical-shutter lock
+command or selects Mass Storage. Manufacturer firmware still determines which
+operations can overlap exposure and transfer. Shutter availability and display
+behavior require a real-camera test on each model/firmware/iPhone combination.
+
 No software can make every camera support simultaneous shooting and transfer.
 Mass Storage, camera UVC video and firmware that locks the local display/shutter
 cannot provide this workflow. iPhone hardware, adapter power, iOS visibility,
@@ -71,7 +114,7 @@ completes. Camera originals are retained. Without internet, photos stay queued.
 
 ## Verification
 
-211 focused Flutter tests passed. They cover protocol negotiation, Sony V2/V3 and consumptive
+217 focused Flutter tests passed after the second review. They cover protocol negotiation, Sony V2/V3 and consumptive
 queue identities, all existing USB vendor adapters, burst capture and retries,
 PTP/IP baseline/download/event/ping behavior, address validation, upload-page
 wireless setup/cancellation, and transfer presentation. Native Swift callback

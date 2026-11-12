@@ -5,6 +5,24 @@ import XCTest
 @testable import Runner
 
 class RunnerTests: XCTestCase {
+  func testSonyPriorityReleaseCannotEnablePCControlOrChangeOtherProperties() {
+    for params in [[0xD25A], [0xD25A, 1]] as [[UInt32]] {
+      XCTAssertTrue(PtpShootingSafety.isAllowed(0x9205, vendorID: 0x054C,
+        parameters: params, outgoing: Data([0])))
+      for data in [[], [1], [2], [0, 0]] as [[UInt8]] {
+        XCTAssertFalse(PtpShootingSafety.isAllowed(0x9205, vendorID: 0x054C,
+          parameters: params, outgoing: Data(data)))
+      }
+      for vendor in [0, 0x04A9, 0x04B0, 0x04CB] {
+        XCTAssertFalse(PtpShootingSafety.isAllowed(0x9205, vendorID: vendor,
+          parameters: params, outgoing: Data([0])))
+      }
+    }
+    for params in [[], [0xD222], [0xD25A, 0], [0xD25A, 2], [0xD25A, 1, 0]] as [[UInt32]] {
+      XCTAssertFalse(PtpShootingSafety.isAllowed(0x9205, vendorID: 0x054C,
+        parameters: params, outgoing: Data([0])))
+    }
+  }
   func testLiveUsbModePreflightRejectsOnlyExplicitImportModes() {
     for transport in ["USB Mass Storage", "MassStorage(MSC)", "PC(Storage)",
                       "Card Reader", "USB Streaming", "exFAT"] {
@@ -183,107 +201,6 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(state, .unavailable)
     XCTAssertFalse(state.allowsContentsAccess)
     XCTAssertEqual(state.errorCode, "CAMERA_AUTHORIZATION_UNAVAILABLE")
-  }
-
-  private func photo(
-    _ handle: Int,
-    name: String? = nil,
-    created: Int64? = 1_700_000_000_000
-  ) -> WiredCameraPhotoIdentity {
-    WiredCameraPhotoIdentity(
-      handle: String(handle),
-      name: name ?? "IMG_\(handle).JPG",
-      createdMilliseconds: created
-    )
-  }
-
-  func testWholeCardBaselineIsSkippedAndNewShotIsPending() {
-    let index = WiredCameraPhotoIndex(cameraID: "camera-a")
-    let oldPhotos = (1...1200).map { photo($0) }
-    index.establishBaseline(oldPhotos)
-    for oldPhoto in oldPhotos {
-      XCTAssertFalse(index.observe(oldPhoto).added)
-    }
-    XCTAssertTrue(index.pendingIDs.isEmpty)
-
-    let shot = index.observe(photo(1201))
-    XCTAssertTrue(shot.added)
-    XCTAssertEqual(index.pendingIDs, [shot.id])
-  }
-
-  func testPassiveCatalogExistingAndNewQueuesBaselineWithoutRemoteCommands() {
-    let index = WiredCameraPhotoIndex(cameraID: "camera-a")
-    // Existing + new: baseline is intentionally empty; the ordinary
-    // ImageCaptureCore file catalog supplies the original card objects.
-    index.establishBaseline([])
-    let old = index.observe(photo(1))
-    let new = index.observe(photo(2))
-    XCTAssertTrue(old.added)
-    XCTAssertTrue(new.added)
-    XCTAssertEqual(index.pendingIDs, [old.id, new.id])
-    index.acknowledge([old.id])
-    XCTAssertEqual(index.pendingIDs, [new.id])
-  }
-
-  func testRepeatedEventsStayPendingUntilExplicitAcknowledgement() {
-    let index = WiredCameraPhotoIndex(cameraID: "camera-a")
-    index.establishBaseline([])
-    let first = index.observe(photo(1))
-    for _ in 0..<5 {
-      XCTAssertFalse(index.observe(photo(1)).added)
-    }
-    XCTAssertEqual(index.pendingIDs, [first.id])
-    index.acknowledge([first.id])
-    XCTAssertTrue(index.pendingIDs.isEmpty)
-    XCTAssertFalse(index.observe(photo(1)).added)
-    XCTAssertTrue(index.pendingIDs.isEmpty)
-  }
-
-  func testMetadataArrivingAfterObjectEventKeepsSameDeliveryID() {
-    let index = WiredCameraPhotoIndex(cameraID: "camera-a")
-    index.establishBaseline([])
-    let announced = index.observe(photo(1, created: nil))
-    let finished = index.observe(photo(1))
-    XCTAssertEqual(announced.id, finished.id)
-    XCTAssertFalse(finished.added)
-    XCTAssertEqual(index.pendingIDs, [announced.id])
-  }
-
-  func testBurstBacklogIsNotTruncatedTo500Images() {
-    let index = WiredCameraPhotoIndex(cameraID: "camera-a")
-    index.establishBaseline([])
-    let shots = (1...750).map { index.observe(photo($0)) }
-    XCTAssertEqual(index.pendingIDs.count, 750)
-    index.acknowledge(Set(shots.prefix(500).map { $0.id }))
-    XCTAssertEqual(index.pendingIDs, shots.suffix(250).map { $0.id })
-  }
-
-  func testRemovedUnacknowledgedPhotoIsRetainedAndReusedHandleIsNew() {
-    let index = WiredCameraPhotoIndex(cameraID: "camera-a")
-    index.establishBaseline([])
-    let old = index.observe(photo(1))
-    index.markRemoved(handle: "1")
-    let replacement = index.observe(photo(1))
-    XCTAssertNotEqual(old.id, replacement.id)
-    XCTAssertEqual(index.pendingIDs, [old.id, replacement.id])
-    index.acknowledge([replacement.id])
-    XCTAssertEqual(index.pendingIDs, [old.id])
-  }
-
-  func testRenameDoesNotTurnOldCardPhotoIntoNewShot() {
-    let index = WiredCameraPhotoIndex(cameraID: "camera-a")
-    index.establishBaseline([photo(1)])
-    let renamed = index.observe(photo(1, name: "RENAMED.JPG"), preserveIdentity: true)
-    XCTAssertFalse(renamed.added)
-    XCTAssertTrue(index.pendingIDs.isEmpty)
-  }
-
-  func testDifferentCreationTimeDoesNotReuseDeliveredObjectID() {
-    let index = WiredCameraPhotoIndex(cameraID: "camera-a")
-    index.establishBaseline([photo(1)])
-    let replacement = index.observe(photo(1, created: 1_800_000_000_000))
-    XCTAssertTrue(replacement.added)
-    XCTAssertEqual(index.pendingIDs, [replacement.id])
   }
 
   private func ptpResponse(

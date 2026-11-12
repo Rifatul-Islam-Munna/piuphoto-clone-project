@@ -611,6 +611,72 @@ void main() {
       },
     );
 
+    for (final legacy in [false, true]) {
+      test(
+        'Sony ${legacy ? "V2" : "V3"} releases PC priority to the physical body',
+        () async {
+          final link = _CameraLink(_Brand.sony)..sonyPriority = 1;
+          if (legacy) link.sonyV3Rejection = 0x201d;
+          final camera = _transport(link);
+          addTearDown(() async {
+            await camera.stop('body-priority');
+            await link.dispose();
+          });
+          await camera.start('body-priority');
+          final write = link.calls
+              .where((call) => call.opcode == 0x9205)
+              .single;
+          expect(write.params, legacy ? [0xd25a] : [0xd25a, 1]);
+          expect(write.data, [0]);
+          expect(link.sonyPriority, 0);
+          expect(link.sonyDestination, 17);
+          link.sonyMemory.add(const _Photo('BODY_SHOT.JPG', 8));
+          final shot = (await camera.pending('body-priority')).single;
+          await camera.download('body-priority', shot.id);
+          await camera.acknowledge('body-priority', [shot.id]);
+          await camera.stop('body-priority');
+          expect(
+            link.calls.where((call) => call.opcode == 0x9205),
+            hasLength(1),
+          );
+          expect(link.sonyPriority, 0);
+          _expectNoCaptureOrLock(link);
+        },
+      );
+    }
+
+    test(
+      'Sony release success without priority read-back cannot arm receiving',
+      () async {
+        final link = _CameraLink(_Brand.sony)
+          ..sonyPriority = 1
+          ..acceptPropertyWrites = false;
+        final camera = _transport(link);
+        addTearDown(link.dispose);
+        await expectLater(
+          camera.start('priority-unconfirmed'),
+          _error('TETHER_CAMERA_SETTING_REQUIRED'),
+        );
+        expect(link.calls.where((call) => call.opcode == 0x9205), hasLength(1));
+        expect(link.closed, ['priority-unconfirmed']);
+        expect(link.downloads, isEmpty);
+      },
+    );
+
+    test('Sony read-only priority is never written', () async {
+      final link = _CameraLink(_Brand.sony)
+        ..sonyPriority = 1
+        ..sonyPriorityWritable = false;
+      final camera = _transport(link);
+      addTearDown(link.dispose);
+      await expectLater(
+        camera.start('priority-readonly'),
+        _error('TETHER_CAMERA_SETTING_REQUIRED'),
+      );
+      expect(link.calls.where((call) => call.opcode == 0x9205), isEmpty);
+      expect(link.closed, ['priority-readonly']);
+    });
+
     test(
       'Sony transient buffer state never downloads and fixed handle gets distinct delivery IDs',
       () async {
@@ -1539,34 +1605,36 @@ void main() {
       },
     );
 
-    test(
-      'Fujifilm catalogue hint recovers a missed raw ObjectAdded event',
-      () async {
-        final link = _CameraLink(_Brand.fuji);
-        final camera = _transport(link);
-        addTearDown(() async {
-          await camera.stop('fuji-catalog');
-          await link.dispose();
-        });
-        await camera.start('fuji-catalog');
+    for (final eventType in ['catalogHint', 'catalogAdded']) {
+      test(
+        'Fujifilm $eventType recovers a missed raw ObjectAdded event',
+        () async {
+          final link = _CameraLink(_Brand.fuji);
+          final camera = _transport(link);
+          addTearDown(() async {
+            await camera.stop('fuji-catalog');
+            await link.dispose();
+          });
+          await camera.start('fuji-catalog');
 
-        link.objects[91] = const _Photo('FUJI0091.JPG', 16);
-        link.eventsController.add({
-          'sessionId': 'fuji-catalog',
-          'type': 'catalogHint',
-          'handle': 91,
-          'name': 'FUJI0091.JPG',
-          'size': 16,
-        });
-        await Future<void>.delayed(Duration.zero);
+          link.objects[91] = const _Photo('FUJI0091.JPG', 16);
+          link.eventsController.add({
+            'sessionId': 'fuji-catalog',
+            'type': eventType,
+            'handle': 91,
+            'name': 'FUJI0091.JPG',
+            'size': 16,
+          });
+          await Future<void>.delayed(Duration.zero);
 
-        final shot = (await camera.pending('fuji-catalog')).single;
-        expect(shot.name, 'FUJI0091.JPG');
-        await camera.download('fuji-catalog', shot.id);
-        expect(link.downloads.single.handle, 91);
-        _expectNoCaptureOrLock(link);
-      },
-    );
+          final shot = (await camera.pending('fuji-catalog')).single;
+          expect(shot.name, 'FUJI0091.JPG');
+          await camera.download('fuji-catalog', shot.id);
+          expect(link.downloads.single.handle, 91);
+          _expectNoCaptureOrLock(link);
+        },
+      );
+    }
 
     test(
       'catalog removal hint preserves old pending photo and generations a reused handle',
@@ -2376,6 +2444,7 @@ class _CameraLink implements PtpTetherLink {
   int canonDestination = 2;
   List<int> canonChoices = [1, 2, 4];
   int sonyPriority = 0;
+  bool sonyPriorityWritable = true;
   int sonyDestination = 17;
   int? sonyMemoryOverride;
   int fujiUsbMode = 5;
@@ -2562,7 +2631,10 @@ class _CameraLink implements PtpTetherLink {
         return _ok([
           ..._u32(3),
           ..._u32(0),
-          ..._sonyProperty(0xd25a, 2, sonyPriority, [0, 1]),
+          ..._sonyProperty(0xd25a, 2, sonyPriority, [
+            0,
+            1,
+          ], writable: sonyPriorityWritable),
           ..._sonyProperty(0xd222, 4, sonyDestination, sonyDestinationChoices),
           ..._sonyProperty(0xd215, 4, memory, null, writable: false),
         ]);
@@ -2607,13 +2679,13 @@ class _CameraLink implements PtpTetherLink {
         expect(params, [PtpTetherPropertyCode.fujiUsbMode]);
         return _ok(_u16(fujiUsbMode));
       case 0x9205:
-        if (params.single == 0xd222) {
+        if (params.first == 0xd222) {
           final value = ByteData.sublistView(
             outData!,
           ).getUint16(0, Endian.little);
           expect(sonyDestinationChoices, contains(value));
           if (acceptPropertyWrites) sonyDestination = value;
-        } else if (params.single == 0xd25a) {
+        } else if (params.first == 0xd25a) {
           expect(outData, [0]);
           if (acceptPropertyWrites) sonyPriority = 0;
         } else {

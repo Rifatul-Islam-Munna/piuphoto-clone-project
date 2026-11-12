@@ -35,6 +35,10 @@ internal object PtpShootingSafety {
     fun isAllowed(opcode: Int, vendorId: Int = 0,
         parameters: List<Long> = emptyList(), outgoing: ByteArray? = null): Boolean {
         val olympus = vendorId == 0x07b4 || vendorId == 0x33a2
+        if (vendorId == 0x054c && opcode == 0x9205) {
+            return parameters in listOf(listOf(0xd25aL), listOf(0xd25aL, 1L)) &&
+                outgoing != null && outgoing.contentEquals(byteArrayOf(0))
+        }
         if (olympus && opcode == 0x1016) {
             return parameters == listOf(0xd052L) && outgoing != null &&
                 (outgoing.contentEquals(byteArrayOf(1, 0)) ||

@@ -3,6 +3,53 @@ import Foundation
 import CoreFoundation
 import ImageCaptureCore
 
+/// Permission and camera shooting mode are separate. An unresolved iOS request
+/// must never be reported as an explicit denial or treated as permission granted.
+enum WiredCameraAuthorizationState: String {
+  case authorized
+  case denied
+  case restricted
+  case pending = "not-determined"
+  case unavailable
+
+  @available(iOS 14.0, *)
+  init(_ status: ICAuthorizationStatus) {
+    if status == .authorized { self = .authorized }
+    else if status == .denied { self = .denied }
+    else if status == .restricted { self = .restricted }
+    else if status == .notDetermined { self = .pending }
+    else { self = .unavailable }
+  }
+
+  var allowsContentsAccess: Bool { self == .authorized }
+
+  var errorCode: String? {
+    switch self {
+    case .authorized: return nil
+    case .denied: return "CAMERA_ACCESS_DENIED"
+    case .restricted: return "CAMERA_ACCESS_RESTRICTED"
+    case .pending: return "CAMERA_AUTHORIZATION_PENDING"
+    case .unavailable: return "CAMERA_AUTHORIZATION_UNAVAILABLE"
+    }
+  }
+
+  var message: String {
+    switch self {
+    case .authorized:
+      return "External camera contents access is allowed."
+    case .denied:
+      return "External camera access is denied. Allow camera access for AirPix in iPhone Settings, then retry."
+    case .restricted:
+      return "iOS has restricted external camera access. Check Screen Time or device-management restrictions, then retry."
+    case .pending:
+      return "iOS has not completed external camera authorization. Keep the iPhone unlocked, respond to any access prompt, then retry the connection."
+    case .unavailable:
+      return "iOS could not determine external camera authorization. Reopen AirPix, reconnect the camera and retry."
+    }
+  }
+
+}
+
 /// One opt-in USB owner for either vendor tethering or explicit catalog import.
 /// Vendor negotiation lives in Dart; ImageCaptureCore owns the USB session.
 final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBrowserDelegate, ICCameraDeviceDelegate {
@@ -12,6 +59,10 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
   private var uploadMode = "newShotsOnly"
   private var waitingStart: FlutterResult?
   private var eventSink: FlutterEventSink?
+  private var eventSessionId: String?
+  private let listenerLease = PtpTetherListenerLease(schedule: {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: $0)
+  })
   private var ready = false
   private var stopping = false
   private var deadline: DispatchWorkItem?
@@ -29,6 +80,8 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
   private var release: PtpTetherSessionRelease?
 
   func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    listenerLease.attach()
+    eventSessionId = (arguments as? [String: Any])?["sessionId"] as? String
     eventSink = events
     return nil
   }
@@ -38,8 +91,9 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
     // Flutter cancels its event listener BEFORE calling stop(). Give the
     // explicit stop method time to await the actual camera close. A lost
     // listener is still cleaned up after a short grace period.
-    let token = sessionId
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+    let token = eventSessionId ?? sessionId
+    eventSessionId = nil
+    listenerLease.detach { [weak self] in
       guard let self = self, self.eventSink == nil,
             let token = token, self.sessionId == token else { return }
       self.stop(sessionID: token, result: { _ in })
@@ -60,12 +114,26 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
 
   func start(arguments: [String: Any]?, tether: Bool = false, result: @escaping FlutterResult) {
     assert(Thread.isMainThread)
-    guard sessionId == nil && !stopping else {
-      result(failure("LIVE_CAMERA_BUSY", "A USB camera session is already running or closing."))
-      return
-    }
     guard let id = arguments?["sessionId"] as? String, !id.isEmpty else {
       result(failure("LIVE_CAMERA_INVALID_SESSION", "A camera session ID is required."))
+      return
+    }
+    // A hot restart can install a new event listener before the old listener's
+    // grace timer fires. Release that orphan instead of retaining a camera the
+    // new Dart session cannot stop. Wait for actual native close confirmation.
+    if let previous = sessionId, previous != id, eventSessionId == id {
+      stop(sessionID: previous) { [weak self] outcome in
+        guard let self else { return }
+        if let error = outcome as? FlutterError { result(error); return }
+        guard self.eventSessionId == id, self.eventSink != nil else {
+          result(self.failure("LIVE_CAMERA_CANCELLED", "Camera receiving was cancelled.")); return
+        }
+        self.start(arguments: arguments, tether: tether, result: result)
+      }
+      return
+    }
+    guard sessionId == nil && !stopping else {
+      result(failure("LIVE_CAMERA_BUSY", "A USB camera session is already running or closing."))
       return
     }
     sessionId = id
@@ -88,8 +156,9 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
     newBrowser.requestContentsAuthorization { [weak self, weak newBrowser] status in
       DispatchQueue.main.async {
         guard let self = self, self.sessionId == id, self.browser === newBrowser, !self.stopping else { return }
-        guard status == .authorized else {
-          self.abort("CAMERA_ACCESS_DENIED", "Allow external-camera contents access in iPhone settings.")
+        let access = WiredCameraAuthorizationState(status)
+        guard access.allowsContentsAccess else {
+          self.abort(access.errorCode ?? "CAMERA_AUTHORIZATION_UNAVAILABLE", access.message)
           return
         }
         let begin = { [weak self, weak newBrowser] in
@@ -101,8 +170,10 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
           newBrowser?.requestControlAuthorization { [weak self] controlStatus in
             DispatchQueue.main.async {
               guard let self, self.sessionId == id, !self.stopping else { return }
-              guard controlStatus == .authorized else {
-                self.abort("CAMERA_ACCESS_DENIED", "Allow external-camera control access for USB tethering in iPhone settings.")
+              let control = WiredCameraAuthorizationState(controlStatus)
+              guard control.allowsContentsAccess else {
+                self.abort(control.errorCode ?? "CAMERA_AUTHORIZATION_UNAVAILABLE",
+                           control.message + " USB tethering requires external-camera control access.")
                 return
               }
               begin()
@@ -547,21 +618,43 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
       abort("USB_CAMERA_DISCONNECTED", "USB camera disconnected.")
     }
   }
-  func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) { markReady(device) }
+  func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
+    markReady(device)
+    if tetherMode, camera === device, ready, !stopping {
+      emit("catalogReady")
+    }
+  }
+
+  private func catalogFiles(_ items: [ICCameraItem]) -> [ICCameraFile] {
+    items.flatMap { item -> [ICCameraFile] in
+      if let file = item as? ICCameraFile { return [file] }
+      if let folder = item as? ICCameraFolder { return catalogFiles(folder.contents ?? []) }
+      return []
+    }
+  }
+
+  private func emitCatalogHint(_ file: ICCameraFile, removed: Bool = false) {
+    guard let id = sessionId, file.ptpObjectHandle > 0 else { return }
+    eventSink?(["sessionId": id, "type": removed ? "catalogRemoved" : "catalogHint",
+                "handle": Int64(file.ptpObjectHandle),
+                "name": file.originalFilename ?? file.name ?? "",
+                "size": max(0, file.fileSize)])
+  }
 
   func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {
     guard camera === self.camera, ready, !stopping else { return }
     if tetherMode {
-      for file in items.compactMap({ $0 as? ICCameraFile }) where file.ptpObjectHandle > 0 {
-        eventSink?(["sessionId": sessionId ?? "", "type": "catalogAdded", "handle": Int64(file.ptpObjectHandle)])
-      }
+      catalogFiles(items).forEach { emitCatalogHint($0) }
       return
     }
     items.compactMap { $0 as? ICCameraFile }.forEach(observe)
   }
 
   func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {
-    // Do not ACK missing sources; an undelivered photo remains retryable.
+    guard camera === self.camera, tetherMode, ready, !stopping else { return }
+    // Removal is a discovery hint, never an ACK. Dart retains any undelivered
+    // shot and generations the handle if the camera reuses it for a new photo.
+    catalogFiles(items).forEach { emitCatalogHint($0, removed: true) }
   }
   func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
   func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) { completeTetherOpen(camera) }
@@ -573,7 +666,10 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
     else { scan() }
   }
   func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {
-    emit("status", message: "The camera has restricted photo access. Unlock it or stop receiving.")
+    guard device === camera, !stopping else { return }
+    emit("disconnected", message: "Camera restricted USB access. Releasing the camera; check its shooting mode before reconnecting.",
+         code: "TETHER_ACCESS_RESTRICTED")
+    abort("TETHER_ACCESS_RESTRICTED", "Camera restricted USB access. The current session is being released.")
   }
   func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) { scan() }
 }

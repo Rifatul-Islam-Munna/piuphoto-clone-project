@@ -12,9 +12,9 @@ The recent iOS/Android catalog-default change bypassed the existing Sony PC Remo
 
 - Default polling is 3 seconds without requiring shutter events. Card enumeration backs off for large catalogs (configured interval capped at 5 seconds; busy cameras and in-flight transfers can delay actual checks). Events can wake handling sooner.
 - Sony performs the required connection handshake and reads the new-photo queue. Existing memory-card import is not substituted for live shooting.
-- Sony destination and Camera priority are checked, not written. The required destination is card+SDRAM (0x11); Camera priority is 0. A mismatch stops with setup instructions.
+- Sony destination is checked, not written. The required destination is card+SDRAM (0x11). The current receiver can release an advertised writable PC priority to Camera (D25A=0), with full-property read-back verification; otherwise it stops with setup instructions. See CAMERA_REFERENCE_INTEGRATION.md for the second iOS review.
 - Canon card recording is checked, not changed. Canon session/event negotiation remains; Nikon uses body-control release mode 0. Fujifilm checks its tether mode.
-- Standard, Canon, and Sony property-writing opcodes 0x1016, 0x9110, 0x9205, 0x9206 are blocked in Dart, Swift, and Kotlin in addition to existing shutter/UI-lock/delete guards.
+- Standard, Canon, and Sony property-writing opcodes 0x1016, 0x9110, 0x9205, 0x9206 are denied by default in Dart, Swift and Kotlin. The exact OM connection handshake and Sony D25A=0 local-control release are narrowly allowed; host priority, exposure and recording-destination writes remain blocked.
 - Necessary protocol/session/read commands still exist. This is not a claim that the phone sends no USB commands.
 - No newly invented Panasonic/LUMIX, Olympus/OM SYSTEM, or Pentax/Ricoh vendor protocol. Those bodies remain limited to explicitly supported generic capability checks; unsupported models stop with guidance.
 

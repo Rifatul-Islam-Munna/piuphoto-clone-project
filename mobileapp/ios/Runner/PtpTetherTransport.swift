@@ -450,6 +450,11 @@ enum PtpShootingSafety {
     parameters: [UInt32] = [], outgoing: Data? = nil
   ) -> Bool {
     let olympus = vendorID == 0x07B4 || vendorID == 0x33A2
+    // Exact local-control release only. PC priority, exposure and destinations
+    // cannot be changed through this exception.
+    if vendorID == 0x054C && opcode == 0x9205 {
+      return (parameters == [0xD25A] || parameters == [0xD25A, 1]) && outgoing == Data([0])
+    }
     if olympus && opcode == 0x1016 {
       guard parameters == [0xD052], let outgoing = outgoing else { return false }
       // Only begin/restore the OM connection; no shooting-setting writes.

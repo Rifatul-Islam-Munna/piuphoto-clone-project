@@ -4,6 +4,69 @@ import 'package:mobileapp/core/platform/ptp_shooting_safety.dart';
 
 void main() {
   test(
+    'Sony property exception only returns priority to the physical camera',
+    () {
+      for (final params in [
+        [0xd25a],
+        [0xd25a, 1],
+      ]) {
+        expect(
+          PtpShootingSafety.isAllowed(
+            0x9205,
+            vendorId: 0x054c,
+            params: params,
+            data: Uint8List.fromList([0]),
+          ),
+          isTrue,
+        );
+        for (final bytes in [
+          <int>[],
+          [1],
+          [2],
+          [0, 0],
+        ]) {
+          expect(
+            PtpShootingSafety.isAllowed(
+              0x9205,
+              vendorId: 0x054c,
+              params: params,
+              data: Uint8List.fromList(bytes),
+            ),
+            isFalse,
+          );
+        }
+        for (final vendor in [0, 0x04a9, 0x04b0, 0x04cb]) {
+          expect(
+            PtpShootingSafety.isAllowed(
+              0x9205,
+              vendorId: vendor,
+              params: params,
+              data: Uint8List.fromList([0]),
+            ),
+            isFalse,
+          );
+        }
+      }
+      for (final params in [
+        <int>[],
+        [0xd222],
+        [0xd25a, 0],
+        [0xd25a, 2],
+        [0xd25a, 1, 0],
+      ]) {
+        expect(
+          PtpShootingSafety.isAllowed(
+            0x9205,
+            vendorId: 0x054c,
+            params: params,
+            data: Uint8List.fromList([0]),
+          ),
+          isFalse,
+        );
+      }
+    },
+  );
+  test(
     'vendor commands require the matching USB identity and safe parameters',
     () {
       final approved = <(int, int, List<int>)>[

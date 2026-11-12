@@ -53,8 +53,16 @@ class PtpShootingSafety {
     Uint8List? data,
   }) {
     final olympus = vendorId == 0x07b4 || vendorId == 0x33a2;
-    // The only writable property exception is the reversible OM connection
-    // handshake. Capture destination, settings and control buttons stay blocked.
+    // Release PC ownership back to the physical Sony body. The inverse value,
+    // recording destinations and all other property writes stay blocked.
+    if (vendorId == 0x054c && opcode == 0x9205) {
+      return (params.length == 1 || (params.length == 2 && params[1] == 1)) &&
+          params.first == 0xd25a &&
+          data != null &&
+          data.length == 1 &&
+          data[0] == 0;
+    }
+    // The other writable exception is the reversible OM connection handshake.
     if (olympus && opcode == 0x1016) {
       return params.length == 1 &&
           params.single == 0xd052 &&

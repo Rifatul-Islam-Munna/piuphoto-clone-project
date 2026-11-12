@@ -790,8 +790,8 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     _requireOperations(run, [0x9209, 0x1008, 0x1009]);
     await _readSonyProperties(run);
     await _ensureSonyBaselineIdle(run);
-    // Validate the photographer's settings; never change priority, destination,
-    // USB mode, screen, or shutter settings to make a connection succeed.
+    // Card recording is a prerequisite. The only property change permitted
+    // here releases PC control back to the physical camera (D25A=0).
     await _requireSonyProperty(
       run,
       0xd222,
@@ -802,13 +802,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
           'models, select PC Remote > PC+Camera. Use Remote Shooting over '
           'USB, not Mass Storage.',
     );
-    await _requireSonyProperty(
-      run,
-      0xd25a,
-      0,
-      help:
-          'Set Sony PC Remote control priority to Camera so its physical controls remain available.',
-    );
+    await _releaseSonyBodyPriority(run);
     await _readSonyProperties(run);
     if (run.sonyProperties[0xd222]?.intValue != 17 ||
         run.sonyProperties[0xd25a]?.intValue != 0) {
@@ -893,9 +887,12 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     );
   }
 
-  Future<void> _readSonyProperties(_TetherRun run) async {
+  Future<void> _readSonyProperties(
+    _TetherRun run, {
+    bool forceFull = false,
+  }) async {
     final version3 = run.sonyProtocol == 3 || run.sonyProtocol == 0x12c;
-    final full = run.sonyProperties.isEmpty;
+    final full = forceFull || run.sonyProperties.isEmpty;
     final response = await _command(
       run,
       0x9209,
@@ -912,6 +909,48 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         : properties;
   }
 
+  Future<void> _releaseSonyBodyPriority(_TetherRun run) async {
+    final priority = run.sonyProperties[0xd25a];
+    if (priority?.intValue == 0) return;
+    if (priority?.intValue == 1 &&
+        priority!.writable &&
+        const {1, 2}.contains(priority.type) &&
+        priority.form == 2 &&
+        priority.values.contains(0) &&
+        run.operations.contains(0x9205)) {
+      final version3 = run.sonyProtocol == 3 || run.sonyProtocol == 0x12c;
+      try {
+        await _command(
+          run,
+          0x9205,
+          params: version3 ? [0xd25a, 1] : [0xd25a],
+          data: Uint8List.fromList([0]),
+        );
+      } on PtpTetherCommandException {
+        // A well-framed rejection leaves manual camera setup available.
+        // Transport/framing errors must propagate and close the native owner.
+        throw PlatformException(
+          code: 'TETHER_CAMERA_SETTING_REQUIRED',
+          message:
+              'Sony could not return control to Camera priority. Disconnect USB, '
+              'select Camera priority on the camera, then reconnect.',
+        );
+      }
+      for (var attempt = 0; attempt < 6; attempt++) {
+        await _readSonyProperties(run, forceFull: true);
+        if (run.sonyProperties[0xd25a]?.intValue == 0) return;
+        if (attempt < 5) await _delay(const Duration(milliseconds: 100));
+      }
+    }
+    // Never restore PC priority on Stop: returning local control is intentional.
+    throw PlatformException(
+      code: 'TETHER_CAMERA_SETTING_REQUIRED',
+      message:
+          'Sony Camera priority could not be confirmed. Disconnect USB and set '
+          'control priority to Camera before reconnecting.',
+    );
+  }
+
   Future<void> _requireSonyProperty(
     _TetherRun run,
     int code,
@@ -922,7 +961,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     throw PlatformException(
       code: 'TETHER_CAMERA_SETTING_REQUIRED',
       message:
-          '$help AirPix leaves camera settings unchanged. '
+          '$help AirPix leaves camera recording settings unchanged. '
           'Disconnect USB, set this on the camera, then reconnect.',
     );
   }
@@ -1137,6 +1176,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         );
       }
     } else if (type == 'catalogHint' ||
+        type == 'catalogAdded' ||
         type == 'catalogRemoved' ||
         type == 'catalogReady') {
       // ImageCaptureCore is an iOS-only backup signal. Raw/vendor PTP remains
