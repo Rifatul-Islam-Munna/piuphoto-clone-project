@@ -21,6 +21,7 @@ import 'package:mobileapp/core/platform/device_settings.dart';
 import 'package:mobileapp/core/platform/gallery_auto_import.dart';
 import 'package:mobileapp/core/platform/live_camera_capture.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
+import 'package:mobileapp/core/platform/ptp_ip_camera.dart';
 import 'package:mobileapp/core/platform/usb_camera_guidance.dart';
 import 'package:mobileapp/core/platform/usb_camera_mode_advisor.dart';
 import 'package:mobileapp/core/router/app_router.dart';
@@ -48,6 +49,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobileapp/pages/upload/canon_wireless_setup_dialog.dart';
+import 'package:mobileapp/pages/upload/ptp_ip_setup_dialog.dart';
 
 // Keep simulator UI out of production unless an explicit test build enables it.
 const bool _pcSimulatorEnabled =
@@ -95,7 +97,7 @@ const _cameraDeniedCodes = {
   'USB_PERMISSION_REQUIRED',
 };
 
-enum _WirelessImportMode { ftp, sharedNetwork, cameraHotspot }
+enum _WirelessImportMode { ftp, sharedNetwork, cameraHotspot, ptpIp }
 
 class _WirelessCaptureTarget {
   const _WirelessCaptureTarget({
@@ -147,8 +149,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   bool _usbStartRequested = false;
   bool _guestQrPreparing = false;
   Future<void> _usbModeSaveQueue = Future<void>.value();
-  // Native photo receivers are selected once Start receiving is pressed.
-  // No vendor PTP control or automatic fallback is run in this path.
+  // Live vendor negotiation starts only when the photographer presses Start.
   final bool _usbPhotoCatalogReader = false;
   LiveCameraUploadMode _usbUploadMode = LiveCameraUploadMode.newShotsOnly;
   LiveCameraUploadMode _usbSessionUploadMode =
@@ -199,6 +200,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   String? _wirelessStatus;
   String? _otgSourceName;
   CanonCcapiCamera? _canonCcapiCamera;
+  PtpIpCamera? _ptpIpCamera;
+  StreamSubscription<int>? _ptpIpEvents;
   CancelToken? _wirelessConnectCancellation;
   DateTime? _wirelessRetryAfter;
   String? _loadedAlbumEventId;
@@ -385,6 +388,12 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     final canonCamera = _canonCcapiCamera;
     _canonCcapiCamera = null;
     if (canonCamera != null) unawaited(canonCamera.close());
+    final ptpCamera = _ptpIpCamera;
+    _ptpIpCamera = null;
+    if (ptpCamera != null) unawaited(ptpCamera.close());
+    final ptpEvents = _ptpIpEvents;
+    _ptpIpEvents = null;
+    if (ptpEvents != null) unawaited(ptpEvents.cancel());
     _wirelessConnectCancellation?.cancel('Page closed');
     super.dispose();
   }
@@ -1257,26 +1266,166 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     return true;
   }
 
+  Future<void> _findAndStartPtpIpImport(EventSummary event) async {
+    if (_wirelessShutdown != null) await _wirelessShutdown;
+    if (!mounted ||
+        _disposed ||
+        _wirelessImporting ||
+        ActiveEventStorage.activeEvent.value?.id != event.id)
+      return;
+    _beginReceivingSession(event, 'wireless');
+    final target = _WirelessCaptureTarget(
+      event: event,
+      mode: _WirelessImportMode.ptpIp,
+      isEnhanced: _isEnhanced,
+      albumId: _selectedAlbumId,
+    );
+    final generation = ++_wirelessGeneration;
+    _safeSetState(() {
+      _wirelessScanning = true;
+      _wirelessStatus = 'Set up Nikon Wi-Fi photo receiving.';
+    });
+    PtpIpCamera? opening;
+    try {
+      SharedPreferences? preferences;
+      try {
+        preferences = await SharedPreferences.getInstance();
+      } catch (_) {}
+      if (!_wirelessActive(generation)) return;
+      final address = await showDialog<String>(
+        context: context,
+        builder: (_) => PtpIpSetupDialog(
+          initialAddress:
+              preferences?.getString('nikon_ptpip_address_v1') ?? '192.168.1.1',
+        ),
+      );
+      if (!_wirelessActive(generation)) return;
+      if (address == null) {
+        _safeSetState(() => _wirelessStatus = 'Wireless setup cancelled.');
+        return;
+      }
+      final endpoint = PtpIpCameraAddress.parse(address)!;
+      _safeSetState(
+        () => _wirelessStatus =
+            'Connecting to camera. Allow Local Network access if asked.',
+      );
+      opening = await PtpIpCamera.connect(
+        endpoint.host,
+        port: endpoint.port,
+        timeout: const Duration(seconds: 5),
+      );
+      if (!_wirelessActive(generation)) return;
+      if (opening == null)
+        throw const SocketException('Camera PTP/IP connection failed');
+      await opening.establishLiveBaseline();
+      if (!_wirelessActive(generation)) return;
+      final connected = opening;
+      _ptpIpCamera = connected;
+      opening = null;
+      _safeSetState(() {
+        _wirelessScanning = false;
+        _wirelessFailureCount = 0;
+        _wirelessRetryAfter = null;
+        _autoImporting = true;
+        _wirelessStatus =
+            'Camera connected. Take a test photo with its physical shutter. Only new shots upload.';
+      });
+      _wirelessAwakeOwner = 'wireless-$_receiverOwnerId-$generation';
+      await TransferScreenAwake.setEnabled(_wirelessAwakeOwner!, true);
+      if (!_wirelessActive(generation)) return;
+      _ptpIpEvents = connected.addedObjects.listen((_) {
+        unawaited(_pollWirelessCamera(target, generation));
+      });
+      _wirelessTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!_wirelessActive(generation)) {
+          timer.cancel();
+          return;
+        }
+        unawaited(_pollWirelessCamera(target, generation));
+      });
+      unawaited(_pollWirelessCamera(target, generation));
+      unawaited(_showTransferSessionPage(event));
+      try {
+        await preferences?.setString('nikon_ptpip_address_v1', address);
+      } catch (_) {}
+    } catch (_) {
+      if (_wirelessActive(generation)) {
+        await _stopWirelessImport();
+        _safeSetState(
+          () => _wirelessStatus =
+              'Nikon Wi-Fi did not connect. Check camera Wi-Fi, '
+              'address and Local Network permission. This model must expose PTP/IP while shooting.',
+        );
+        AppToast.error('Camera Wi-Fi connection failed. Check setup.');
+      }
+    } finally {
+      await opening?.close();
+      if (_wirelessActive(generation))
+        _safeSetState(() => _wirelessScanning = false);
+    }
+  }
+
+  Future<void> _pollPtpIpCamera(
+    _WirelessCaptureTarget target,
+    int generation,
+  ) async {
+    final camera = _ptpIpCamera;
+    if (camera == null) return;
+    final pending = await camera.pendingImages();
+    var incomplete = false;
+    for (final image in pending) {
+      if (!_wirelessActive(generation)) return;
+      final bytes = await camera.downloadImage(
+        image.handle,
+        expectedSize: image.size,
+      );
+      if (bytes == null) {
+        incomplete = true;
+        continue;
+      }
+      // A complete in-flight shot still belongs to the session's frozen event
+      // when Stop or event selection races the read. Persist it before ACK.
+      await _saveWirelessBytes(
+        target: target,
+        generation: generation,
+        bytes: bytes,
+        filename: image.name,
+        imageKey: '${camera.host}:${camera.port}|${image.handle}',
+        signature: image.fingerprint,
+        source: 'wireless-nikon-ptpip',
+        cameraId: camera.host,
+      );
+      // Queue persistence resolves before ACK; network upload runs separately.
+      camera.acknowledgeImages([image.handle]);
+    }
+    if (incomplete)
+      throw const SocketException('Camera is still writing a pending photo');
+  }
+
   Future<void> _pollWirelessCamera(
     _WirelessCaptureTarget target,
     int generation,
   ) async {
     if (!_wirelessActive(generation) ||
         _wirelessBusy ||
-        _canonCcapiCamera == null) {
+        (_canonCcapiCamera == null && _ptpIpCamera == null)) {
       return;
     }
     if (_wirelessRetryAfter?.isAfter(DateTime.now()) == true) return;
     _wirelessBusy = true;
     try {
-      await _pollCanonCcapiCamera(target, generation);
+      if (_ptpIpCamera != null) {
+        await _pollPtpIpCamera(target, generation);
+      } else {
+        await _pollCanonCcapiCamera(target, generation);
+      }
       if (_wirelessActive(generation)) {
         _wirelessFailureCount = 0;
         _wirelessRetryAfter = null;
       }
     } catch (_) {
       if (!_wirelessActive(generation)) return;
-      if (_canonCcapiCamera?.isClosed != false) {
+      if ((_ptpIpCamera?.isClosed ?? _canonCcapiCamera?.isClosed) != false) {
         await _stopWirelessImport();
         _safeSetState(
           () => _wirelessStatus =
@@ -1289,7 +1438,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       _wirelessRetryAfter = DateTime.now().add(Duration(milliseconds: delay));
       _safeSetState(
         () => _wirelessStatus =
-            'Camera not responding. Retrying the same CCAPI connection; '
+            'Camera not responding. Retrying the same connection; '
             'received photos remain queued. Check Wi-Fi and Local Network access.',
       );
     } finally {
@@ -1440,8 +1589,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             usePhotoCatalog: target.photoCatalog,
           ),
       uploadMode: target.uploadMode,
-      // Native file callbacks plus a gentle independent catalog rescan.
-      pollInterval: const Duration(milliseconds: 1500),
+      // Queue persistence and camera events remain independent of cloud speed.
+      pollInterval: const Duration(milliseconds: 500),
       onUpdate: (update) {
         if (!_otgActive(generation)) return;
         _safeSetState(() {
@@ -1661,6 +1810,10 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     _wirelessRetryAfter = null;
     final canonCamera = _canonCcapiCamera;
     _canonCcapiCamera = null;
+    final ptpCamera = _ptpIpCamera;
+    final ptpEvents = _ptpIpEvents;
+    _ptpIpCamera = null;
+    _ptpIpEvents = null;
     _safeSetState(() {
       _autoImporting = false;
       _wirelessScanning = false;
@@ -1672,6 +1825,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     try {
       if (ftp != null) await ftp.stop();
       if (canonCamera != null) await canonCamera.close();
+      await ptpEvents?.cancel();
+      if (ptpCamera != null) await ptpCamera.close();
     } finally {
       if (awakeOwner != null) {
         await TransferScreenAwake.setEnabled(awakeOwner, false);
@@ -1888,7 +2043,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 const Padding(
                   padding: EdgeInsets.all(16),
                   child: Text(
-                    'Wireless live shooting: use camera FTP auto-send or Canon CCAPI on supported models. '
+                    'Wireless live shooting: camera FTP, Canon CCAPI or Nikon Wi-Fi on supported models. '
                     'Keep the camera in shooting mode and AirPix open. No file-transfer or live-view fallback is used.',
                   ),
                 ),
@@ -1900,6 +2055,15 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                   ),
                   onTap: () =>
                       Navigator.of(context).pop(_WirelessImportMode.ftp),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.camera_alt_outlined),
+                  title: const Text('Nikon Wi-Fi (PTP/IP)'),
+                  subtitle: const Text(
+                    'Join the camera network. New shots import automatically on models that allow shooting while connected.',
+                  ),
+                  onTap: () =>
+                      Navigator.of(context).pop(_WirelessImportMode.ptpIp),
                 ),
                 ListTile(
                   leading: const Icon(Icons.router_outlined),
@@ -1936,6 +2100,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     }
     if (choice == _WirelessImportMode.ftp) {
       await _startFtpCameraSession(event);
+    } else if (choice == _WirelessImportMode.ptpIp) {
+      await _findAndStartPtpIpImport(event);
     } else {
       await _findAndStartWirelessImport(event, choice);
     }
@@ -2236,7 +2402,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
               const Text(
-                'Native USB photo receiver checks for new photos every 1.5 seconds '
+                'Live tethering monitors camera events and checks for new photos '
                 'while this session is running. Take a test shot to verify receipt.',
                 style: TextStyle(fontSize: 12),
               ),
@@ -2594,7 +2760,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     icon: Icons.wifi_tethering_rounded,
                     title: 'Wireless',
                     subtitle:
-                        'Use camera FTP auto-send or Canon CCAPI on supported models. Keep AirPix open while shooting.',
+                        'Use camera FTP, Canon CCAPI or Nikon Wi-Fi on supported models. Keep AirPix open while shooting.',
                     detail: 'New shots upload automatically',
                     active: _wirelessImporting,
                     busy: _wirelessBusy || _wirelessScanning,
@@ -3142,7 +3308,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 4),
               const Text(
-                'Use camera FTP auto-send or Canon CCAPI. Keep both devices on the same Wi-Fi and AirPix open. '
+                'Use camera FTP, Canon CCAPI or Nikon Wi-Fi. Keep both devices on the same Wi-Fi and AirPix open. '
                 'On iPhone, check Settings > Privacy & Security > Local Network > AirPix. '
                 'Bluetooth pairing alone cannot deliver full photos. Location access is not needed for these connections.',
                 style: TextStyle(

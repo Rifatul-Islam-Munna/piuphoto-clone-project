@@ -37,14 +37,11 @@ class UsbCameraSetupHelpDialog extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           const Text(
-            'If the tether driver fails while the camera is still shootable, '
-            'open USB / OTG options and enable Compatibility photo reader. '
-            'This reads the available PTP/MTP catalog in the same USB mode, '
-            'without vendor-control commands. It listens for new-photo events '
-            'on iPhone and checks the catalog every 3 seconds. Some shooting '
-            'modes expose only a vendor queue and will need the tether driver. '
-            'Wait for ready, then take a test shot; no photo catalog can '
-            'guarantee the camera controls remain usable.',
+            'Live shooting uses the camera\'s tether protocol. If connection '
+            'fails, check the model\'s shooting mode below and reconnect. '
+            'AirPix does not automatically open a file-transfer catalog after '
+            'a tether failure. Wait for ready, then take a test shot and confirm '
+            'the physical shutter and camera display remain usable.',
           ),
           const SizedBox(height: 16),
           const Text(

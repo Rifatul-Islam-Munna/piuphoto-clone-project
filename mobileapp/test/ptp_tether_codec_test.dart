@@ -364,6 +364,20 @@ void main() {
     );
 
     test(
+      'Canon long-filename card event wakes authoritative object lookup',
+      () {
+        final event = PtpTetherCodec.decodeCanonEvents(
+          _hex('0c 00 00 00 b6 c1 00 00 2a 00 00 00'),
+        ).single;
+        expect(event.kind, PtpTetherEventKind.objectAdded);
+        expect(event.handle, 42);
+        expect(event.requiresObjectInfo, isTrue);
+        expect(event.name, isNull);
+        expect(event.size, isNull);
+      },
+    );
+
+    test(
       'card destination comes from its value and supported-choice events',
       () {
         final events = PtpTetherCodec.decodeCanonEvents(

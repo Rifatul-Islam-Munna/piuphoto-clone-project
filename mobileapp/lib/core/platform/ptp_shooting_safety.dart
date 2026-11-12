@@ -95,8 +95,8 @@ class PtpShootingSafety {
       case 0x054c: // Sony: connect handshake and read-only queue inspection.
         return (opcode == 0x9201 &&
                 (exact([1, 0, 0]) || exact([2, 0, 0]) || exact([3, 0, 0]))) ||
-            (opcode == 0x9202 && exact([0x12c, 1])) ||
-            (opcode == 0x9209 && params.isEmpty);
+            (opcode == 0x9202 && (exact([0x12c, 1]) || exact([0xc8]))) ||
+            (opcode == 0x9209 && (params.isEmpty || exact([0]) || exact([1])));
       case 0x04da:
         return opcode == 0x940a && exact([0x08000090]);
       default:

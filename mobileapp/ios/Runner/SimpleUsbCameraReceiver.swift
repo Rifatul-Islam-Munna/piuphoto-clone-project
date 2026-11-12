@@ -1,9 +1,10 @@
 import Flutter
 import Foundation
+import CoreFoundation
 import ImageCaptureCore
 
-/// USB camera file receiver only. No shutter, remote-mode, or vendor PTP commands.
-/// Constructed by AppDelegate; ICDeviceBrowser is started ONLY by start().
+/// One opt-in USB owner for either vendor tethering or explicit catalog import.
+/// Vendor negotiation lives in Dart; ImageCaptureCore owns the USB session.
 final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBrowserDelegate, ICCameraDeviceDelegate {
   private var browser: ICDeviceBrowser?
   private var camera: ICCameraDevice?
@@ -13,7 +14,6 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
   private var eventSink: FlutterEventSink?
   private var ready = false
   private var stopping = false
-  private var stopCallbacks: [FlutterResult] = []
   private var deadline: DispatchWorkItem?
   private var scanTimer: Timer?
   private var seen: Set<String> = []
@@ -21,6 +21,12 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
   private var queue: [String] = []
   private var staged: [String: URL] = [:]
   private var downloading: [String: FlutterResult] = [:]
+  private var tetherMode = false
+  private var tether: PtpTetherTransport?
+  private let tetherStaging = PtpTetherStagingStore()
+  private var cameraOpening = false
+  private var cameraConnected = false
+  private var release: PtpTetherSessionRelease?
 
   func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
     eventSink = events
@@ -52,7 +58,7 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
     FlutterError(code: code, message: message, details: nil)
   }
 
-  func start(arguments: [String: Any]?, result: @escaping FlutterResult) {
+  func start(arguments: [String: Any]?, tether: Bool = false, result: @escaping FlutterResult) {
     assert(Thread.isMainThread)
     guard sessionId == nil && !stopping else {
       result(failure("LIVE_CAMERA_BUSY", "A USB camera session is already running or closing."))
@@ -63,6 +69,7 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
       return
     }
     sessionId = id
+    tetherMode = tether
     uploadMode = arguments?["uploadMode"] as? String == "existingAndNew" ? "existingAndNew" : "newShotsOnly"
     waitingStart = result
     ready = false
@@ -78,8 +85,6 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
       newBrowser.browsedDeviceTypeMask = .camera
     }
     emit("status", message: "Checking permission and looking for a USB camera.")
-    // Contents access is sufficient. Never request Control authorization,
-    // use requestSendPTPCommand, or trigger the camera's shutter.
     newBrowser.requestContentsAuthorization { [weak self, weak newBrowser] status in
       DispatchQueue.main.async {
         guard let self = self, self.sessionId == id, self.browser === newBrowser, !self.stopping else { return }
@@ -87,8 +92,23 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
           self.abort("CAMERA_ACCESS_DENIED", "Allow external-camera contents access in iPhone settings.")
           return
         }
-        newBrowser?.start()
-        self.scheduleTimeout(for: id, seconds: 20, message: "No supported USB camera was detected. Check cable, adapter, and camera connection mode.")
+        let begin = { [weak self, weak newBrowser] in
+          guard let self, self.sessionId == id, !self.stopping else { return }
+          newBrowser?.start()
+          self.scheduleTimeout(for: id, seconds: 20, message: "No supported USB camera was detected. Check cable, adapter, and camera connection mode.")
+        }
+        if tether {
+          newBrowser?.requestControlAuthorization { [weak self] controlStatus in
+            DispatchQueue.main.async {
+              guard let self, self.sessionId == id, !self.stopping else { return }
+              guard controlStatus == .authorized else {
+                self.abort("CAMERA_ACCESS_DENIED", "Allow external-camera control access for USB tethering in iPhone settings.")
+                return
+              }
+              begin()
+            }
+          }
+        } else { begin() }
       }
     }
   }
@@ -112,6 +132,7 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
 
   // The catalog must be complete before determining which images are old.
   private func markReady(_ device: ICCameraDevice) {
+    if tetherMode { completeTetherOpen(device); return }
     guard camera === device, sessionId != nil, !stopping, !ready else { return }
     let originals = images(on: device)
     seen.formUnion(originals.map(identity))
@@ -181,7 +202,7 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
   }
 
   private func scan() {
-    guard ready, let camera = camera, !stopping else { return }
+    guard !tetherMode, ready, let camera = camera, !stopping else { return }
     images(on: camera).forEach(observe)
   }
 
@@ -277,13 +298,17 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
       result(failure("LIVE_CAMERA_SESSION_MISMATCH", "A different USB session is active."))
       return
     }
-    if stopping {
-      stopCallbacks.append(result)
+    if let release {
+      release.wait { outcome in
+        switch outcome {
+        case .success: result(nil)
+        case .failure(let error): result(self.ptpError(error))
+        }
+      }
       return
     }
     guard sessionId != nil else { result(nil); return }
     stopping = true
-    stopCallbacks.append(result)
     waitingStart?(failure("LIVE_CAMERA_CANCELLED", "Camera receiving was stopped."))
     waitingStart = nil
     deadline?.cancel()
@@ -294,36 +319,168 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
       callback(failure("LIVE_CAMERA_CANCELLED", "Camera receiving was stopped."))
     }
     downloading.removeAll()
-    let previousCamera = camera
-    let finish: (Error?) -> Void = { [weak self] closeError in
-      DispatchQueue.main.async {
-        guard let self = self else { result(nil); return }
-        self.browser?.stop()
-        self.browser?.delegate = nil
-        self.browser = nil
-        self.camera?.delegate = nil
-        self.camera = nil
-        self.sessionId = nil
-        self.ready = false
-        self.seen.removeAll()
-        self.pending.removeAll()
-        self.queue.removeAll()
-        self.staged.removeAll()
-        self.stopping = false
-        let callbacks = self.stopCallbacks
-        self.stopCallbacks.removeAll()
-        if let closeError = closeError {
-          callbacks.forEach { $0(self.failure("CAMERA_CLOSE_FAILED", closeError.localizedDescription)) }
-        } else {
-          callbacks.forEach { $0(nil) }
+    tether?.close()
+    let old = camera
+    let lease = PtpTetherSessionRelease(
+      sessionID: sessionId!,
+      state: { [weak self] in
+        .init(connected: self?.cameraConnected == true,
+              opening: self?.cameraOpening == true, open: old?.hasOpenSession == true)
+      },
+      requestClose: { completion in
+        old?.requestCloseSession(options: nil) { error in
+          DispatchQueue.main.async { completion(error) }
         }
+      },
+      onReleased: { [weak self] _ in self?.finishStop() }
+    )
+    release = lease
+    lease.wait { [weak self] outcome in
+      switch outcome {
+      case .success: result(nil)
+      case .failure(let error): result(self?.ptpError(error))
       }
     }
-    guard let old = previousCamera, old.hasOpenSession else {
-      finish(nil)
+    lease.begin()
+  }
+
+  private func finishStop() {
+    browser?.stop()
+    browser?.delegate = nil
+    browser = nil
+    camera?.delegate = nil
+    camera = nil
+    sessionId = nil
+    ready = false
+    cameraOpening = false
+    cameraConnected = false
+    tether = nil
+    tetherMode = false
+    seen.removeAll()
+    pending.removeAll()
+    queue.removeAll()
+    staged.removeAll()
+    release = nil
+    stopping = false
+  }
+
+  private func ptpError(_ error: PtpTetherFailure) -> FlutterError {
+    FlutterError(code: error.code, message: error.message, details: error.diagnostics)
+  }
+
+  private func completeTetherOpen(_ device: ICCameraDevice) {
+    guard tetherMode, camera === device, device.hasOpenSession,
+          !stopping, !ready else { return }
+    guard device.capabilities.contains(ICDeviceCapability.cameraDeviceCanAcceptPTPCommands.rawValue) else {
+      // Capabilities can arrive after didOpenSession. The startup deadline
+      // remains armed until capability/catalog callbacks confirm readiness.
       return
     }
-    old.requestCloseSession(options: nil) { error in finish(error) }
+    guard let id = sessionId else { return }
+    tether = PtpTetherTransport(sessionID: id, camera: device, staging: tetherStaging) { [weak self] error in
+      guard let self, self.sessionId == id, !self.stopping else { return }
+      self.emit("disconnected", message: error.message, code: error.code)
+      self.abort(error.code, error.message)
+    }
+    ready = true
+    deadline?.cancel()
+    deadline = nil
+    let callback = waitingStart
+    waitingStart = nil
+    callback?([
+      "sessionId": id, "cameraId": device.uuidString ?? device.name ?? "USB camera",
+      "name": device.name ?? "USB camera", "vendorId": Int(device.usbVendorID),
+      "productId": Int(device.usbProductID),
+      "physicalShutter": device.capabilities.contains(
+        ICDeviceCapability.cameraDeviceCanTakePictureUsingShutterReleaseOnCamera.rawValue
+      ) ? "supported" : "unknown"
+    ])
+  }
+
+  private func unsigned(_ value: Any?) -> UInt32? {
+    guard let number = value as? NSNumber,
+          CFGetTypeID(number) != CFBooleanGetTypeID(),
+          number.doubleValue >= 0, number.doubleValue <= Double(UInt32.max),
+          number.doubleValue == Double(number.uint32Value) else { return nil }
+    return number.uint32Value
+  }
+
+  func handlePtp(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any]
+    let id = args?["sessionId"] as? String
+    if call.method == "openPtpTetherSession" {
+      start(arguments: args, tether: true, result: result)
+      return
+    }
+    if call.method == "closePtpTetherSession" {
+      stop(sessionID: id, result: result)
+      return
+    }
+    guard let id, !id.isEmpty else {
+      result(failure("PTP_INVALID_ARGUMENT", "A camera session ID is required.")); return
+    }
+    if call.method == "acknowledgePtpTetherFiles" {
+      let ids = args?["ids"] as? [String] ?? []
+      if id == sessionId, let tether { tether.acknowledge(ids) }
+      else { tetherStaging.acknowledge(sessionID: id, transferIDs: ids) }
+      result(nil)
+      return
+    }
+    if call.method == "downloadPtpTetherObject" {
+      guard let transferID = args?["transferId"] as? String, !transferID.isEmpty,
+            transferID.utf8.count <= 2048,
+            let handle = unsigned(args?["handle"]), handle > 0,
+            let size = unsigned(args?["expectedSize"]), size > 0,
+            size <= UInt32(PtpTetherCodec.fileLimit), let name = args?["name"] as? String else {
+        result(failure("PTP_INVALID_ARGUMENT", "Invalid photo transfer arguments.")); return
+      }
+      var partial: UInt16?
+      if let value = args?["partialOpcode"] {
+        guard let opcode = unsigned(value), opcode == 0x101B || opcode == 0x9107 else {
+          result(failure("PTP_INVALID_ARGUMENT", "Invalid partial photo operation.")); return
+        }
+        partial = UInt16(opcode)
+      }
+      do {
+        if let cached = try tetherStaging.lookup(sessionID: id, transferID: transferID,
+             handle: handle, name: PtpTetherTransport.safeName(name), expectedSize: Int(size)) {
+          result(["id": transferID, "path": cached.path, "name": cached.name, "size": cached.size]); return
+        }
+      } catch let error as PtpTetherFailure { result(ptpError(error)); return }
+        catch { result(failure("PTP_STAGING_FAILED", error.localizedDescription)); return }
+      guard id == sessionId, ready, !stopping, let tether else {
+        result(failure("PTP_SESSION_CLOSED", "The camera session has ended.")); return
+      }
+      tether.downloadObject(handle: handle, name: name, expectedSize: Int(size),
+        transferID: transferID, partialOpcode: partial) { [weak self] outcome in
+          switch outcome {
+          case .success(let file): result(["id": transferID, "path": file.path, "name": file.name, "size": file.size])
+          case .failure(let error): result(self?.ptpError(error))
+          }
+        }
+      return
+    }
+    guard id == sessionId, ready, !stopping, let tether else {
+      result(failure("PTP_SESSION_CLOSED", "The camera session has ended.")); return
+    }
+    guard let opcode = unsigned(args?["opcode"]), opcode > 0, opcode <= UInt32(UInt16.max) else {
+      result(failure("PTP_INVALID_ARGUMENT", "Invalid camera operation.")); return
+    }
+    let raw = args?["params"] as? [Any] ?? []
+    let params = raw.compactMap(unsigned)
+    guard raw.count <= 5, params.count == raw.count,
+          args?["outData"] == nil || args?["outData"] is FlutterStandardTypedData else {
+      result(failure("PTP_INVALID_ARGUMENT", "Invalid camera command data.")); return
+    }
+    tether.send(opcode: UInt16(opcode), parameters: params,
+      outgoing: (args?["outData"] as? FlutterStandardTypedData)?.data) { [weak self] outcome in
+        switch outcome {
+        case .success(let reply):
+          result(["responseCode": Int(reply.responseCode), "parameters": reply.parameters.map { Int64($0) },
+                  "data": FlutterStandardTypedData(bytes: reply.data)])
+        case .failure(let error): result(self?.ptpError(error))
+        }
+      }
   }
 
   // MARK: Camera discovery (runs only after the session start button)
@@ -333,20 +490,27 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
     let transport = (found.transportType ?? "").lowercased()
     if transport.contains("network") || transport.contains("wifi") ||
        transport.contains("wireless") || transport.contains("tcp") { return }
-    if transport.contains("mass") && transport.contains("storage") {
+    if WiredCameraLiveTransportPolicy.isKnownImportOnly(found.transportType) {
       abort("CAMERA_STORAGE_ONLY", "Camera is exposing only USB storage. Disconnect and choose a shooting-compatible USB mode.")
       return
     }
     camera = found
+    cameraConnected = true
+    cameraOpening = true
     found.delegate = self
     if let id = sessionId {
-      scheduleTimeout(for: id, seconds: 30, message: "Camera file catalog did not become ready. Stop and check the camera's USB shooting mode.")
+      scheduleTimeout(for: id, seconds: 30, message: "Camera did not expose the required USB protocol. Check its tether / PC Remote mode and iPhone camera permissions.")
     }
     emit("status", message: "Found \(found.name ?? "USB camera"). Opening photo access.")
     found.requestOpenSession()
   }
 
   func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
+    if device === camera {
+      cameraConnected = false
+      cameraOpening = false
+      release?.cameraStateChanged()
+    }
     if device === camera && !stopping {
       emit("disconnected", message: "Camera unplugged. Stop and restart receiving.", code: "USB_CAMERA_DISCONNECTED")
       abort("USB_CAMERA_DISCONNECTED", "The USB camera was disconnected.")
@@ -354,20 +518,45 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
   }
 
   func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {
-    guard device === camera, !stopping else { return }
+    guard device === camera else { return }
+    cameraOpening = false
+    if stopping { release?.cameraStateChanged(); return }
     if let error = error {
       abort("CAMERA_SESSION_FAILED", error.localizedDescription)
     } else {
-      emit("status", message: "Reading camera photo catalog. Keep the camera powered on.")
+      if tetherMode, let device = device as? ICCameraDevice { completeTetherOpen(device) }
+      else { emit("status", message: "Reading camera photo catalog. Keep the camera powered on.") }
     }
   }
 
-  func device(_ device: ICDevice, didCloseSessionWithError error: Error?) {}
-  func didRemove(_ device: ICDevice) {}
+  func device(_ device: ICDevice, didCloseSessionWithError error: Error?) {
+    guard device === camera else { return }
+    if stopping { release?.nativeCloseCompleted(error) }
+    else {
+      emit("disconnected", message: "Camera closed its USB session.", code: "USB_CAMERA_DISCONNECTED")
+      abort("USB_CAMERA_DISCONNECTED", "Camera closed its USB session.")
+    }
+  }
+  func didRemove(_ device: ICDevice) {
+    guard device === camera else { return }
+    cameraConnected = false
+    cameraOpening = false
+    if stopping { release?.cameraStateChanged() }
+    else {
+      emit("disconnected", message: "USB camera disconnected.", code: "USB_CAMERA_DISCONNECTED")
+      abort("USB_CAMERA_DISCONNECTED", "USB camera disconnected.")
+    }
+  }
   func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) { markReady(device) }
 
   func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {
     guard camera === self.camera, ready, !stopping else { return }
+    if tetherMode {
+      for file in items.compactMap({ $0 as? ICCameraFile }) where file.ptpObjectHandle > 0 {
+        eventSink?(["sessionId": sessionId ?? "", "type": "catalogAdded", "handle": Int64(file.ptpObjectHandle)])
+      }
+      return
+    }
     items.compactMap { $0 as? ICCameraFile }.forEach(observe)
   }
 
@@ -375,12 +564,13 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
     // Do not ACK missing sources; an undelivered photo remains retryable.
   }
   func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
-  func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}
+  func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) { completeTetherOpen(camera) }
   func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: Error?) {}
   func cameraDevice(_ camera: ICCameraDevice, didReceiveMetadata metadata: [AnyHashable: Any]?, for item: ICCameraItem, error: Error?) {}
   func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {
-    // No raw command processing. Scan when the camera reports a new file.
-    scan()
+    guard camera === self.camera, !stopping, let id = sessionId else { return }
+    if tetherMode { eventSink?(["sessionId": id, "type": "ptpEvent", "data": FlutterStandardTypedData(bytes: eventData)]) }
+    else { scan() }
   }
   func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {
     emit("status", message: "The camera has restricted photo access. Unlock it or stop receiving.")

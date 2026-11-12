@@ -7,6 +7,28 @@ import 'package:mobileapp/core/platform/ptp_ip_camera.dart';
 
 void main() {
   test(
+    'PTP/IP ObjectAdded wakes receiving and event ping keeps link alive',
+    () async {
+      final server = await _PtpServer.start();
+      server.probeCommands = true;
+      final camera = await _connect(server);
+      addTearDown(() async {
+        await camera.close();
+        await server.close();
+      });
+      await camera.establishLiveBaseline();
+      await server.commandPong.future.timeout(const Duration(seconds: 2));
+      final added = camera.addedObjects.first;
+      server.emitAdded(42);
+      expect(await added.timeout(const Duration(seconds: 2)), 42);
+      // Events are hints, not ACKs or a replacement for the complete card scan.
+      expect(await camera.pendingImages(), isEmpty);
+      await server.ping().timeout(const Duration(seconds: 2));
+      expect(camera.isClosed, isFalse);
+    },
+  );
+
+  test(
     'full multi-card baseline skips old photos and retains a burst larger than 50',
     () async {
       final server = await _PtpServer.start();
@@ -256,6 +278,23 @@ class _PtpServer {
 
   final ServerSocket _server;
   final List<Socket> _sockets = [];
+  Socket? _eventSocket;
+  final _pong = Completer<void>();
+  final commandPong = Completer<void>();
+  bool probeCommands = false;
+
+  void emitAdded(int handle) {
+    final body = ByteData(10)
+      ..setUint16(0, 0x4002, Endian.little)
+      ..setUint32(6, handle, Endian.little);
+    _eventSocket!.add(_packet(8, body.buffer.asUint8List()));
+  }
+
+  Future<void> ping() {
+    _eventSocket!.add(_packet(13, Uint8List(0)));
+    return _pong.future;
+  }
+
   final stores = <int, List<int>>{1: []};
   final objects = <int, _Object>{};
   final busyInfo = <int>{};
@@ -291,6 +330,8 @@ class _PtpServer {
         await socket.flush();
         while (true) {
           final packet = await reader.read();
+          if (packet.$1 == 14 && !commandPong.isCompleted)
+            commandPong.complete();
           if (packet.$1 != 6) continue;
           final data = ByteData.sublistView(packet.$2);
           final opcode = data.getUint16(4, Endian.little);
@@ -307,10 +348,12 @@ class _PtpServer {
           );
         }
       } else if (first.$1 == 3) {
+        _eventSocket = socket;
         socket.add(_packet(4, Uint8List(0)));
         await socket.flush();
         while (true) {
-          await reader.read();
+          final packet = await reader.read();
+          if (packet.$1 == 14 && !_pong.isCompleted) _pong.complete();
         }
       }
     } catch (_) {
@@ -360,6 +403,7 @@ class _PtpServer {
           announcedLength = body.length + 3;
         }
     }
+    if (probeCommands) socket.add(_packet(13, Uint8List(0)));
     if (body != null) {
       final start = ByteData(12)
         ..setUint32(0, tx, Endian.little)

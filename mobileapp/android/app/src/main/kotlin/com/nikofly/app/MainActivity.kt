@@ -76,10 +76,11 @@ class MainActivity : FlutterFragmentActivity() {
                         cameraReceiver.acknowledge(call.argument<String>("sessionId"),
                             call.argument<List<String>>("ids") ?: emptyList(), result)
                     "connectedCameraDevices" -> result.success(cameraReceiver.activeDevices())
-                    "cameraConnectionDiagnostics", "connectedCameraImages",
-                    "importConnectedCameraImages", "releaseCameraImportSession", "useUsbDeviceAsCamera",
                     "openPtpTetherSession", "sendPtpTetherCommand", "downloadPtpTetherObject",
                     "acknowledgePtpTetherFiles", "closePtpTetherSession" ->
+                        cameraReceiver.handlePtp(call, result)
+                    "cameraConnectionDiagnostics", "connectedCameraImages",
+                    "importConnectedCameraImages", "releaseCameraImportSession", "useUsbDeviceAsCamera" ->
                         result.error("USE_START_RECEIVING", "Camera discovery starts only with Connect & start.", null)
                     else -> result.notImplemented()
                 }
@@ -120,7 +121,7 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
     }
-    private fun setScreenAwake(owner: String, enabled: Boolean) {
+    internal fun setScreenAwake(owner: String, enabled: Boolean) {
         if (enabled) {
             if (screenAwakeOwners.isEmpty()) {
                 previousScreenOnFlag = (window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0

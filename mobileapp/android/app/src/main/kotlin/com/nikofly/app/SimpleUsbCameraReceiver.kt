@@ -14,15 +14,15 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import io.flutter.plugin.common.EventChannel
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
 
 /**
- * USB enumeration and MTP/PTP file access ONLY after the user starts receiving.
- * Never sends capture commands, proprietary remote commands, or Mass Storage.
- * A camera may still enter import mode when its firmware exposes MTP/PTP.
+ * Single opt-in owner for shooting-mode PTP or explicit MTP catalog import.
+ * Raw PTP and MtpDevice can never claim the camera at the same time.
  */
 internal class SimpleUsbCameraReceiver(private val activity: MainActivity) : EventChannel.StreamHandler {
     private val manager = activity.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -31,6 +31,14 @@ internal class SimpleUsbCameraReceiver(private val activity: MainActivity) : Eve
         Thread(task, "airpix-usb-mtp-reader").apply { isDaemon = true }
     }
     private val permissionAction = "${activity.packageName}.SIMPLE_CAMERA_PERMISSION"
+    private val tetherPermissionAction = "${activity.packageName}.TETHER_CAMERA_PERMISSION"
+    private var destroyed = false
+    private val tether by lazy {
+        PtpTetherController(activity, io, tetherPermissionAction,
+            destroyed = { destroyed },
+            setAwake = { owner, enabled -> activity.setScreenAwake(owner, enabled) },
+            emit = { payload -> main.post { sink?.success(payload) } })
+    }
     private var receiverRegistered = false
     private var sink: EventChannel.EventSink? = null
     private var sessionId: String? = null
@@ -75,6 +83,21 @@ internal class SimpleUsbCameraReceiver(private val activity: MainActivity) : Eve
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            @Suppress("DEPRECATION")
+            val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+            if (intent.action == tetherPermissionAction) {
+                tether.permissionResult(intent.getStringExtra("ptpSessionId"), device,
+                    intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false))
+                return
+            }
+            if (intent.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
+                if (device != null) tether.detached(device)
+                if (device?.deviceId == selected?.deviceId && sessionId != null) {
+                    emit("disconnected", "USB camera disconnected.", "USB_CAMERA_DISCONNECTED")
+                    stop(sessionId) { }
+                }
+                return
+            }
             if (intent.action != permissionAction) return
             val target = selected ?: return
             val token = sessionId ?: return
@@ -92,9 +115,13 @@ internal class SimpleUsbCameraReceiver(private val activity: MainActivity) : Eve
         // Flutter cancels its listener before invoking explicit stop().
         // Defer lost-listener cleanup so the method call can await close.
         val token = sessionId
+        val tetherToken = tether.activeSessionId
         main.postDelayed({
             if (sink == null && token != null && sessionId == token) {
                 stop(token) { }
+            }
+            if (sink == null && tetherToken != null && tether.activeSessionId == tetherToken) {
+                tether.listenerClosed(tetherToken)
             }
         }, 1200L)
     }
@@ -110,10 +137,59 @@ internal class SimpleUsbCameraReceiver(private val activity: MainActivity) : Eve
         device.deviceClass == UsbConstants.USB_CLASS_STILL_IMAGE ||
             (0 until device.interfaceCount).any {
                 device.getInterface(it).interfaceClass == UsbConstants.USB_CLASS_STILL_IMAGE
+            } || (device.vendorId in setOf(0x04a9, 0x04b0, 0x054c, 0x04cb,
+                0x04da, 0x07b4, 0x33a2, 0x0a17, 0x25fb) &&
+                (0 until device.interfaceCount).any { index ->
+                    val face = device.getInterface(index)
+                    face.interfaceClass == UsbConstants.USB_CLASS_VENDOR_SPEC &&
+                        (0 until face.endpointCount).any { endpoint ->
+                            val ep = face.getEndpoint(endpoint)
+                            ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK && ep.direction == UsbConstants.USB_DIR_IN
+                        } && (0 until face.endpointCount).any { endpoint ->
+                            val ep = face.getEndpoint(endpoint)
+                            ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK && ep.direction == UsbConstants.USB_DIR_OUT
+                        }
+                })
+
+    private fun ensureReceiver() {
+        if (receiverRegistered) return
+        val filter = IntentFilter(permissionAction).apply {
+            addAction(tetherPermissionAction)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            activity.registerReceiver(permissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            activity.registerReceiver(permissionReceiver, filter)
+        }
+        receiverRegistered = true
+    }
+
+    fun handlePtp(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method == "openPtpTetherSession") {
+            val id = call.argument<String>("sessionId")
+            if (id.isNullOrBlank()) {
+                result.error("LIVE_CAMERA_INVALID_SESSION", "A camera session ID is required.", null)
+                return
             }
+            if (sessionId != null || closing || destroyed || tether.isBusy) {
+                result.error("LIVE_CAMERA_BUSY", "A USB session is already active or closing.", null)
+                return
+            }
+            val cameras = manager.deviceList.values.filter(::isCamera)
+            if (cameras.size != 1) {
+                result.error(if (cameras.isEmpty()) "NO_CAMERA_CONNECTED" else "MULTIPLE_CAMERAS",
+                    "Connect one camera in USB tether / PC Remote mode using a data cable.", null)
+                return
+            }
+            ensureReceiver()
+            tether.open(id, cameras.single(), result)
+        } else if (!tether.handleMethod(call, result)) { result.notImplemented() }
+    }
 
     fun start(args: Map<*, *>?, result: MethodChannel.Result) {
-        if (sessionId != null || closing) {
+        if (sessionId != null || closing || tether.isBusy || destroyed) {
             result.error("LIVE_CAMERA_BUSY", "A USB camera session is already running or closing.", null)
             return
         }
@@ -137,20 +213,14 @@ internal class SimpleUsbCameraReceiver(private val activity: MainActivity) : Eve
         uploadMode = if (args["uploadMode"] == "existingAndNew") "existingAndNew" else "newShotsOnly"
         emit("status", "Checking camera USB permission.")
         if (!manager.hasPermission(device)) {
-            val filter = IntentFilter(permissionAction)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                activity.registerReceiver(permissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                @Suppress("DEPRECATION")
-                activity.registerReceiver(permissionReceiver, filter)
-            }
-            receiverRegistered = true
+            ensureReceiver()
             val intent = Intent(permissionAction).setPackage(activity.packageName)
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
             val permission = PendingIntent.getBroadcast(activity, 0, intent, flags)
             manager.requestPermission(device, permission)
         } else {
+            ensureReceiver()
             openOnWorker(device, token)
         }
     }
@@ -361,6 +431,12 @@ internal class SimpleUsbCameraReceiver(private val activity: MainActivity) : Eve
     }
 
     fun destroy() {
+        destroyed = true
+        tether.destroy()
+        if (receiverRegistered) {
+            try { activity.unregisterReceiver(permissionReceiver) } catch (_: Exception) {}
+            receiverRegistered = false
+        }
         main.removeCallbacks(poll)
         stop(sessionId) { io.shutdown() }
         if (sessionId == null) io.shutdown()

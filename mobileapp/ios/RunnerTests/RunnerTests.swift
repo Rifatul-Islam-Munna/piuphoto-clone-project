@@ -34,7 +34,10 @@ class RunnerTests: XCTestCase {
       (0x54c, 0x9201, [0x2, 0x0, 0x0]),
       (0x54c, 0x9201, [0x3, 0x0, 0x0]),
       (0x54c, 0x9202, [0x12c, 0x1]),
+      (0x54c, 0x9202, [0xc8]),
       (0x54c, 0x9209, []),
+      (0x54c, 0x9209, [0]),
+      (0x54c, 0x9209, [1]),
       (0x4da, 0x940a, [0x8000090]),
     ]
     let vendors = [0, 0x1234, 0x04a9, 0x04b0, 0x054c, 0x04cb, 0x04da, 0x33a2, 0x0a17]
@@ -55,7 +58,7 @@ class RunnerTests: XCTestCase {
       (0x54c, 0x9201, [0x1, 0x1, 0x0]),
       (0x54c, 0x9201, [0x4, 0x0, 0x0]),
       (0x54c, 0x9202, []),
-      (0x54c, 0x9209, [0x1]),
+      (0x54c, 0x9209, [0x2]),
     ]
     for (vendor, opcode, parameters) in unsafe {
       XCTAssertFalse(PtpShootingSafety.isAllowed(opcode, vendorID: vendor, parameters: parameters))
@@ -97,6 +100,17 @@ class RunnerTests: XCTestCase {
     }
     XCTAssertFalse(PtpShootingSafety.isAllowed(0x1016, vendorID: 0x04DA,
       parameters: [0xD052], outgoing: Data([1, 0])))
+  }
+
+  func testPtpCallbackAcceptsBothReferenceOrderingsWithoutLosingPhotoBytes() throws {
+    let response = ptpResponse()
+    let image = Data([0xff, 0xd8, 0xff, 0, 1, 2, 3, 4])
+    for (first, second) in [(response, image), (image, response)] {
+      let reply = try PtpTetherCodec.decodeCallback(first: first, second: second, maximumData: 16)
+      XCTAssertEqual(reply.responseCode, 0x2001)
+      XCTAssertEqual(reply.data, image)
+    }
+    XCTAssertThrowsError(try PtpTetherCodec.decodeCallback(first: image, second: Data(), maximumData: 16))
   }
 
   func testPassivePtpAllowsReadingButBlocksRemoteShutterAndUiLock() {

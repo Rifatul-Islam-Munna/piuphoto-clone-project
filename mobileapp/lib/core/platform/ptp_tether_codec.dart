@@ -495,6 +495,17 @@ abstract final class PtpTetherCodec {
               requiresObjectInfo: true,
             ),
           );
+        case 0xc1b6: // ObjectAddedEx64LFN: common handle, authoritative ObjectInfo.
+          final handle = block.u32();
+          events.add(
+            PtpTetherEvent(
+              code: code,
+              kind: PtpTetherEventKind.objectAdded,
+              handle: handle,
+              params: [handle],
+              requiresObjectInfo: true,
+            ),
+          );
         case 0xc182:
           final handle = block.u32();
           events.add(

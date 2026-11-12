@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobileapp/core/platform/adaptive_usb_camera_transport.dart';
 import 'package:mobileapp/core/platform/live_camera_capture.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
+import 'package:mobileapp/core/platform/ptp_tether_camera.dart';
 
 class _ReaderFake implements LiveCameraTransport {
   _ReaderFake({
@@ -92,13 +93,13 @@ PlatformException _badGetDeviceInfo() => PlatformException(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('USB receiving uses one opt-in native transport on iOS and Android', () {
+  test('USB live shooting selects vendor tethering on iOS and Android', () {
     expect(
       preferredUsbCameraTransport(
         platform: TargetPlatform.iOS,
         uploadMode: LiveCameraUploadMode.newShotsOnly,
       ),
-      isA<NativeLiveCameraTransport>(),
+      isA<PtpTetherCameraTransport>(),
     );
     expect(
       preferredUsbCameraTransport(
@@ -106,12 +107,20 @@ void main() {
         uploadMode: LiveCameraUploadMode.newShotsOnly,
         usePhotoCatalog: false,
       ),
-      isA<NativeLiveCameraTransport>(),
+      isA<PtpTetherCameraTransport>(),
     );
     expect(
       preferredUsbCameraTransport(
         platform: TargetPlatform.android,
         uploadMode: LiveCameraUploadMode.newShotsOnly,
+      ),
+      isA<PtpTetherCameraTransport>(),
+    );
+    expect(
+      preferredUsbCameraTransport(
+        platform: TargetPlatform.iOS,
+        uploadMode: LiveCameraUploadMode.newShotsOnly,
+        usePhotoCatalog: true,
       ),
       isA<NativeLiveCameraTransport>(),
     );

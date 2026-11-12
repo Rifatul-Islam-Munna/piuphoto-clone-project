@@ -3,8 +3,7 @@ import Photos
 import UIKit
 import UniformTypeIdentifiers
 
-// Direct USB camera receiving is deliberately opt-in and isolated in
-// SimpleUsbCameraReceiver. App launch never browses or opens cameras.
+// USB discovery and tether negotiation begin only after an explicit Start.
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate {
   private enum PhotoAccessMode {
@@ -68,12 +67,13 @@ import UniformTypeIdentifiers
         let arguments = call.arguments as? [String: Any]
         self.cameraReceiver.acknowledge(sessionID: arguments?["sessionId"] as? String,
                                         ids: arguments?["ids"] as? [String] ?? [], result: result)
+      case "openPtpTetherSession", "sendPtpTetherCommand", "downloadPtpTetherObject",
+           "acknowledgePtpTetherFiles", "closePtpTetherSession":
+        self.cameraReceiver.handlePtp(call, result: result)
       case "connectedCameraDevices":
         result([])
       case "cameraConnectionDiagnostics", "connectedCameraImages", "importConnectedCameraImages",
-           "releaseCameraImportSession", "useUsbDeviceAsCamera", "openPtpTetherSession",
-           "sendPtpTetherCommand", "downloadPtpTetherObject", "acknowledgePtpTetherFiles",
-           "closePtpTetherSession":
+           "releaseCameraImportSession", "useUsbDeviceAsCamera":
         result(FlutterError(code: "USE_START_RECEIVING",
                             message: "Camera discovery starts only with Connect & start.",
                             details: nil))

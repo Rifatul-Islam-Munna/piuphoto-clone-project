@@ -4,17 +4,20 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/platform/live_camera_types.dart';
+import 'package:mobileapp/core/platform/ptp_tether_camera.dart';
 
 export 'live_camera_types.dart';
 
-/// A single native photo receiver is used on both iOS and Android.
-/// Nothing browses, claims or opens a camera before [start] is called by the
-/// session button. No vendor control packets, shutter commands or fallback.
+/// Negotiate the camera's shooting protocol only after Start is pressed.
+/// A catalog reader is an explicit opt-in: opening an import session can lock
+/// the physical shutter on bodies which do not support concurrent shooting.
 LiveCameraTransport preferredUsbCameraTransport({
   required TargetPlatform platform,
   required LiveCameraUploadMode uploadMode,
   bool? usePhotoCatalog,
-}) => NativeLiveCameraTransport(uploadMode: uploadMode);
+}) => usePhotoCatalog == true
+    ? NativeLiveCameraTransport(uploadMode: uploadMode)
+    : PtpTetherCameraTransport(uploadMode: uploadMode);
 
 class NativeLiveCameraTransport implements LiveCameraTransport {
   const NativeLiveCameraTransport({

@@ -45,6 +45,7 @@ class PtpIpCamera {
   Future<int>? _baselineFuture;
   Future<List<PtpIpImage>>? _scanFuture;
   final Set<int> _knownHandles = {};
+  final _objectAdded = StreamController<int>.broadcast();
   final Map<int, PtpIpImage> _pending = {};
   final Map<int, int> _imageSizes = {};
   Set<int>? _baselineStores;
@@ -54,6 +55,10 @@ class PtpIpCamera {
   bool _closed = false;
 
   bool get isClosed => _closed || _closing;
+
+  /// Events wake the receiver; card reconciliation still decides which files
+  /// are new and ACK happens only after durable local persistence.
+  Stream<int> get addedObjects => _objectAdded.stream;
 
   static Future<PtpIpCamera?> connect(
     String host, {
@@ -336,7 +341,15 @@ class PtpIpCamera {
       while (!_closed) {
         // Object reconciliation is authoritative. Vendor-specific events may
         // be hints, but no shot is acknowledged merely because an event arrived.
-        await _eventReader.readPacket();
+        final packet = await _eventReader.readPacket();
+        if (packet.type == 13) {
+          _eventSocket.add(_packet(14, Uint8List(0)));
+          await _eventSocket.flush();
+        } else if (packet.type == 8 &&
+            packet.payload.length >= 10 &&
+            _readU16(packet.payload, 0) == 0x4002) {
+          _objectAdded.add(_readU32(packet.payload, 6));
+        }
       }
     } catch (_) {
       if (!_closing) _abort();
@@ -350,6 +363,7 @@ class PtpIpCamera {
     _eventSocket.destroy();
     unawaited(_commandReader.close());
     unawaited(_eventReader.close());
+    unawaited(_objectAdded.close());
   }
 
   Future<_PtpOperationResult> _operation(
@@ -405,6 +419,11 @@ class PtpIpCamera {
 
       while (true) {
         final packet = await _commandReader.readPacket().timeout(timeout);
+        if (packet.type == 13) {
+          _commandSocket.add(_packet(14, Uint8List(0)));
+          await _commandSocket.flush().timeout(timeout);
+          continue;
+        }
         if (packet.type == 9) {
           if (dataStarted ||
               !expectsData ||

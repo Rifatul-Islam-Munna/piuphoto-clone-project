@@ -580,6 +580,38 @@ void main() {
     );
 
     test(
+      'Sony V3 property deltas keep camera priority and destination confirmation',
+      () async {
+        final link = _CameraLink(_Brand.sony);
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('sony-delta');
+          await link.dispose();
+        });
+        await camera.start('sony-delta');
+        final queries = link.calls
+            .where((call) => call.opcode == 0x9209)
+            .toList();
+        expect(queries.first.params, [0]);
+        expect(queries.skip(1).map((call) => call.params), everyElement([1]));
+        link.sonyMemory.add(const _Photo('DELTA.JPG', 8));
+        link.sonyPropertyReplies.add(
+          Uint8List.fromList([
+            ..._u32(1),
+            ..._u32(0),
+            ..._sonyProperty(0xd215, 4, 0x8001, null, writable: false),
+          ]),
+        );
+        final photo = (await camera.pending('sony-delta')).single;
+        expect(photo.name, 'DELTA.JPG');
+        await camera.download('sony-delta', photo.id);
+        await camera.acknowledge('sony-delta', [photo.id]);
+        expect(await camera.pending('sony-delta'), isEmpty);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
       'Sony transient buffer state never downloads and fixed handle gets distinct delivery IDs',
       () async {
         final link = _CameraLink(_Brand.sony);
@@ -645,6 +677,41 @@ void main() {
           0,
           0,
         ]);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Sony V2 body receives physical shots after explicit V3 rejection',
+      () async {
+        final link = _CameraLink(_Brand.sony)..sonyV3Rejection = 0x201d;
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('sony-v2');
+          await link.dispose();
+        });
+        await camera.start('sony-v2');
+        expect(
+          link.calls
+              .where((call) => call.opcode == 0x9209)
+              .map((call) => call.params),
+          everyElement(isEmpty),
+        );
+        expect(
+          link.calls
+              .where((call) => call.opcode == 0x9202)
+              .map((call) => call.params),
+          [
+            [0x12c, 1],
+            [0xc8],
+          ],
+        );
+        link.sonyMemory.add(const _Photo('V2_SHOT.JPG', 8));
+        final shot = (await camera.pending('sony-v2')).single;
+        await camera.download('sony-v2', shot.id);
+        await camera.acknowledge('sony-v2', [shot.id]);
+        expect(await camera.pending('sony-v2'), isEmpty);
+        expect(link.downloads.single.handle, 0xffffc001);
         _expectNoCaptureOrLock(link);
       },
     );
@@ -2304,6 +2371,8 @@ class _CameraLink implements PtpTetherLink {
   final nikonEvents = <(int, List<int>)>[];
   final sonyMemory = Queue<_Photo>();
   final sonyExtensionReplies = Queue<Uint8List>();
+  final sonyPropertyReplies = Queue<Uint8List>();
+  int? sonyV3Rejection;
   int canonDestination = 2;
   List<int> canonChoices = [1, 2, 4];
   int sonyPriority = 0;
@@ -2473,15 +2542,20 @@ class _CameraLink implements PtpTetherLink {
         nikonEvents.clear();
         return _ok(data);
       case 0x9202:
+        if (params.length == 2 && sonyV3Rejection != null) {
+          return PtpTetherResponse(responseCode: sonyV3Rejection!);
+        }
         if (sonyExtensionReplies.isNotEmpty) {
           return _ok(sonyExtensionReplies.removeFirst());
         }
         return _ok([
-          ..._u16(0x12c),
+          ..._u16(params.length == 1 ? 0xc8 : 0x12c),
           ..._array16([0x9205, 0x9209]),
           ..._array16([0xd215, 0xd222, 0xd25a]),
         ]);
       case 0x9209:
+        if (sonyPropertyReplies.isNotEmpty)
+          return _ok(sonyPropertyReplies.removeFirst());
         final memory =
             sonyMemoryOverride ??
             (sonyMemory.isEmpty ? 0 : 0x8000 + sonyMemory.length);

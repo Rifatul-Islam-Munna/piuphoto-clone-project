@@ -825,12 +825,32 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     // Some Sony bodies initially return a successful but empty dataset while
     // the remote connection initializes. libgphoto2 retries only this condition.
     // A nonempty malformed payload remains a protocol error, never success.
+    var params = <int>[0x12c, 1];
     for (var attempt = 0; attempt < 20; attempt++) {
-      final response = await _command(run, 0x9202, params: [0x12c, 1]);
+      final PtpTetherResponse response;
+      try {
+        response = await _command(run, 0x9202, params: params);
+      } on PtpTetherCommandException catch (error) {
+        // CrCmd uses V3; expo-sony-camera uses the older V2 query. Retry
+        // only an explicit unsupported/invalid-parameter reply, never a
+        // timeout or malformed dataset on a possibly desynchronised stream.
+        if (params.length == 2 &&
+            const {0x2005, 0x2006, 0x201d}.contains(error.responseCode)) {
+          params = [0xc8];
+          continue;
+        }
+        rethrow;
+      }
       if (response.data.isNotEmpty) {
         final capabilities = PtpTetherCodec.decodeSonyExtensionInfo(
           response.data,
         );
+        if (!const {2, 3, 0xc8, 0x12c}.contains(capabilities.version)) {
+          throw PlatformException(
+            code: 'TETHER_MODE_UNSUPPORTED',
+            message: 'This Sony protocol version is not supported.',
+          );
+        }
         if (capabilities.codes.isNotEmpty) return capabilities;
       }
       if (attempt < 19) await _delay(const Duration(milliseconds: 100));
@@ -874,11 +894,22 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
   }
 
   Future<void> _readSonyProperties(_TetherRun run) async {
-    final response = await _command(run, 0x9209);
-    run.sonyProperties = PtpTetherCodec.decodeSonyProperties(
+    final version3 = run.sonyProtocol == 3 || run.sonyProtocol == 0x12c;
+    final full = run.sonyProperties.isEmpty;
+    final response = await _command(
+      run,
+      0x9209,
+      params: version3 ? [full ? 0 : 1] : const [],
+    );
+    final properties = PtpTetherCodec.decodeSonyProperties(
       response.data,
       protocolVersion: run.sonyProtocol,
     );
+    // V3's onlyDiff=1 query omits unchanged properties. Retain destination and
+    // body-priority confirmation while applying queue/readiness changes.
+    run.sonyProperties = version3 && !full
+        ? {...run.sonyProperties, ...properties}
+        : properties;
   }
 
   Future<void> _requireSonyProperty(

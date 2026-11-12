@@ -1,5 +1,11 @@
 # USB physical-shutter receiving
 
+> Current integration: [CAMERA_REFERENCE_INTEGRATION.md](CAMERA_REFERENCE_INTEGRATION.md).
+> Live USB now defaults to vendor PTP on both platforms, with no automatic
+> catalog fallback. Native method handlers are enabled again. The catalog-first
+> and callback-order notes below describe earlier investigations and are
+> superseded by the current integration document.
+
 The intended workflow is: choose a shooting-capable USB mode, connect the
 camera to the phone, start Live shooting, and press the camera's own shutter.
 Received files go through the existing durable local upload queue before native
