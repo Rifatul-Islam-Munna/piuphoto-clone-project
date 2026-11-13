@@ -9,7 +9,7 @@ workflows:
       app_version:
         description: "TestFlight version (major.minor.patch); version tags override this"
         type: string
-        default: "1.0.0" # Change here or enter a version in Start new build.
+        default: "1.0.1" # Change here or enter a version in Start new build.
       build_number:
         description: "Optional build number; leave empty to use Codemagic's project counter"
         type: string
@@ -24,7 +24,7 @@ workflows:
           include: true
           source: true
       tag_patterns:
-        - pattern: 'v+([0-9]).+([0-9]).+([0-9])'
+        - pattern: "v+([0-9]).+([0-9]).+([0-9])"
           include: true
 
     integrations:
