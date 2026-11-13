@@ -11,9 +11,9 @@ workflows:
         type: string
         default: "1.0.1" # Change here or enter a version in Start new build.
       build_number:
-        description: "Optional build number; leave empty to use Codemagic's project counter"
+        description: "Build number: auto uses Codemagic's project counter; or enter a positive integer"
         type: string
-        default: ""
+        default: "auto"
 
     triggering:
       events:
@@ -56,7 +56,10 @@ workflows:
           if [ -n "${CM_TAG:-}" ]; then
             release_version="${CM_TAG#v}"
           fi
-          release_build_number="${APP_BUILD_NUMBER:-${PROJECT_BUILD_NUMBER:?Missing Codemagic project build number}}"
+          release_build_number="${APP_BUILD_NUMBER:-auto}"
+          if [ "$release_build_number" = "auto" ]; then
+            release_build_number="${PROJECT_BUILD_NUMBER:?Missing Codemagic project build number}"
+          fi
           if ! [[ "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid app version: $release_version. Use major.minor.patch (e.g. 1.0.1)."
             exit 1
