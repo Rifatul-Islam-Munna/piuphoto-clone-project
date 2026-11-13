@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobileapp/core/platform/live_camera_capture.dart';
 import 'package:mobileapp/core/platform/mtp_catalog_camera.dart';
+import 'package:mobileapp/core/platform/ptp_tether_camera.dart';
 
 Matcher _error(String code) => throwsA(
   isA<PlatformException>().having((error) => error.code, 'code', code),
@@ -16,29 +17,32 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
-  test('iOS and Android use the new native camera receiver by default', () {
-    expect(
-      preferredUsbCameraTransport(
-        platform: TargetPlatform.iOS,
-        uploadMode: LiveCameraUploadMode.newShotsOnly,
-      ),
-      isA<NativeLiveCameraTransport>(),
-    );
-    expect(
-      preferredUsbCameraTransport(
-        platform: TargetPlatform.android,
-        uploadMode: LiveCameraUploadMode.newShotsOnly,
-      ),
-      isA<NativeLiveCameraTransport>(),
-    );
-    expect(
-      preferredUsbCameraTransport(
-        platform: TargetPlatform.windows,
-        uploadMode: LiveCameraUploadMode.newShotsOnly,
-      ),
-      isA<NativeLiveCameraTransport>(),
-    );
-  });
+  test(
+    'live USB defaults to shooting-mode tethering; catalogs stay opt-in',
+    () {
+      expect(
+        preferredUsbCameraTransport(
+          platform: TargetPlatform.iOS,
+          uploadMode: LiveCameraUploadMode.newShotsOnly,
+        ),
+        isA<PtpTetherCameraTransport>(),
+      );
+      expect(
+        preferredUsbCameraTransport(
+          platform: TargetPlatform.android,
+          uploadMode: LiveCameraUploadMode.newShotsOnly,
+        ),
+        isA<PtpTetherCameraTransport>(),
+      );
+      expect(
+        preferredUsbCameraTransport(
+          platform: TargetPlatform.windows,
+          uploadMode: LiveCameraUploadMode.newShotsOnly,
+        ),
+        isA<PtpTetherCameraTransport>(),
+      );
+    },
+  );
 
   test('catalog reader is an explicit platform choice and preserves scope', () {
     final ios = preferredUsbCameraTransport(

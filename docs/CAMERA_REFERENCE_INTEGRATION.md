@@ -114,12 +114,80 @@ completes. Camera originals are retained. Without internet, photos stay queued.
 
 ## Verification
 
-217 focused Flutter tests passed after the second review. They cover protocol negotiation, Sony V2/V3 and consumptive
-queue identities, all existing USB vendor adapters, burst capture and retries,
-PTP/IP baseline/download/event/ping behavior, address validation, upload-page
-wireless setup/cancellation, and transfer presentation. Native Swift callback
-and command-policy regression tests were updated for Xcode.
+The third review fetched all five GitHub heads again; the referenced revisions
+remain unchanged. It found the same stale-listener ownership gap on Android
+that the previous review fixed on iOS. Android now waits for the old native
+owner's close before opening the replacement session. A generation-scoped
+listener lease prevents an old timer from closing a reattached receiver and
+gives each detach its own grace period.
 
-No app build or lint was run, as requested. Native iOS/Android compilation and
-physical-camera checks still need the user's device builds; host-side tests do
-not certify model compatibility or prove the display stays enabled.
+The full Flutter suite also exposed one stale test still requiring catalog
+import by default. Its expectation now matches shooting-mode tethering, while
+the existing explicit-catalog tests continue to verify that separate path.
+
+Validation after the third review:
+
+- `flutter test --no-pub --machine`: **367 passed, 1 skipped, 0 failures**.
+  The skip is the symbolic-link cleanup test because this Windows account
+  cannot create symlinks. Other cleanup ownership tests ran.
+- `gradlew.bat :app:testReleaseUnitTest`: **31 passed, 0 failures**. Restored
+  native PTP wire, transfer-store and shooting-policy regression suites and
+  added listener ownership/timer tests. These exercise the actual Kotlin
+  protocol and staging code, including fragmented replies and consumptive
+  Sony transfer retries.
+- `flutter build apk --release --no-pub`: release compilation succeeds on
+  Windows. APK: `mobileapp/build/app/outputs/flutter-apk/app-release.apk`.
+  Existing Gradle/AGP/Kotlin compatibility and deprecation warnings remain;
+  they did not fail the build. No toolchain upgrades were needed for this fix.
+
+The latest request authorizes builds, superseding the earlier no-build request.
+No separate lint command was run. Native iOS compilation and XCTest execution
+remain unverified because this host is Windows without macOS/Xcode. Existing
+Codemagic TestFlight publication was not triggered. Physical-camera tests are
+still required; host-side tests and a successful APK build do not certify
+camera-side shutter or display behavior.
+
+## Fourth review: iOS receiving lifecycle
+
+The iOS USB receiver now owns an iPhone screen-awake lease for the complete
+receiving session. Previously only wireless and explicit catalog receiving
+requested this. Stop, failed start, disconnect and close timeout release that
+lease exactly once; an old session cannot release a newer session's wake owner.
+The shared AppDelegate still restores the previous idle-timer setting after
+the last transfer owner ends.
+
+Native application and scene lifecycle notifications now release USB on an
+actual background transition, independently of Dart lifecycle delivery. A
+short, balanced UIKit background task gives the asynchronous USB close time
+to finish. Permission sheets and other inactive interruptions do not stop
+receiving. Foreground callbacks recheck an unfinished close, and new starts
+are rejected while the application is backgrounded. This is a close-time
+allowance, not background camera receiving. See Apple's
+[background-task documentation](https://developer.apple.com/documentation/uikit/uiapplication/beginbackgroundtask(withname:expirationhandler:)).
+
+PTP notifications now use ImageCaptureCore's
+[`ptpEventHandler`](https://developer.apple.com/documentation/imagecapturecore/iccameradevice/ptpeventhandler),
+which replaces the delegate PTP callback. Raw packets, including empty packets,
+are forwarded to Dart on the main queue. A captured generation discards late
+events after Stop or a replacement session, even when its string ID is reused.
+Late control-authorization callbacks must also match the exact current browser
+before starting discovery. Camera modes, recording destinations and physical
+shutter settings remain governed by the shooting policy above.
+
+Six native regression tests were added for wake ownership, deferred/empty
+events, background-thread delivery, stale events and background start rejection.
+They have **not run on this Windows host**. The separate Codemagic workflow
+`ios_camera_validation` resolves dependencies, runs Flutter tests, compiles an
+unsigned iOS simulator app and executes `RunnerTests` with `xcodebuild test`.
+Its native test result bundle is packaged even when XCTest fails. It has no
+signing or publishing configuration; the existing TestFlight workflow is
+unchanged and neither workflow was triggered during this review.
+
+Local verification after these iOS changes:
+
+- Full Flutter suite: **367 passed, 1 skipped, 0 failures**; the same
+  Windows symbolic-link restriction accounts for the skip.
+- Codemagic YAML parsed, native-test shell syntax checked, simulator selection
+  checked for available, unavailable and missing iPhone runtimes.
+- `git diff --check` passed. Native iOS build, native XCTest execution and
+  camera/iPhone hardware checks remain pending a Mac or Codemagic run.

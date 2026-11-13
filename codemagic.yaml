@@ -1,4 +1,67 @@
 workflows:
+  ios_camera_validation:
+    name: iOS Camera Build and Native Tests
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+    working_directory: mobileapp
+
+    environment:
+      flutter: stable
+      xcode: 26.5
+
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+
+    scripts:
+      - name: Resolve Flutter dependencies
+        script: flutter pub get
+
+      - name: Install iOS pods
+        script: |
+          cd ios
+          pod install
+
+      - name: Flutter regression tests
+        script: flutter test --no-pub
+
+      - name: Compile unsigned iOS simulator app
+        script: flutter build ios --simulator --debug --no-codesign --no-pub
+
+      - name: Native camera lifecycle and protocol tests
+        script: |
+          set -euo pipefail
+          package_results() {
+            if [ -d build/ios-camera-tests.xcresult ]; then
+              ditto -c -k --sequesterRsrc --keepParent \
+                build/ios-camera-tests.xcresult build/ios-camera-tests.xcresult.zip || true
+            fi
+          }
+          trap package_results EXIT
+          SIMULATOR_ID="$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          ids = [device["udid"] for runtime, entries in devices.items()
+                 if ".iOS-" in runtime for device in entries
+                 if device.get("isAvailable") and device["name"].startswith("iPhone")]
+          if not ids:
+              raise SystemExit("No available iPhone simulator runtime")
+          print(ids[0])
+          ')"
+          xcodebuild test \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -derivedDataPath build/ios-native-tests \
+            -resultBundlePath build/ios-camera-tests.xcresult \
+            CODE_SIGNING_ALLOWED=NO
+
+    artifacts:
+      - build/ios/iphonesimulator/*.app
+      - build/ios-camera-tests.xcresult.zip
+
   ios_testflight:
     name: iOS TestFlight Upload
     max_build_duration: 120

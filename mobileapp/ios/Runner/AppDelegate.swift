@@ -21,7 +21,15 @@ import UniformTypeIdentifiers
   private var otgSourceBookmark: Data?
   private var screenAwakeOwners: Set<String> = []
   private var previousScreenIdleTimerDisabled: Bool?
-  private let cameraReceiver = SimpleUsbCameraReceiver()
+  private lazy var cameraReceiver = SimpleUsbCameraReceiver(
+    canStartSession: { UIApplication.shared.applicationState != .background },
+    setSessionAwake: { [weak self] id, enabled in
+      self?.setScreenAwake(owner: "usb-camera:\(id)", enabled: enabled)
+    }
+  )
+  private var cameraLifecycleInstalled = false
+  private var cameraCloseTask: UIBackgroundTaskIdentifier = .invalid
+  private var cameraCloseToken: UUID?
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
@@ -29,6 +37,7 @@ import UniformTypeIdentifiers
   }
 
   private func registerNativeChannels(messenger: FlutterBinaryMessenger) {
+    installCameraLifecycle()
     FlutterEventChannel(name: "airpix/otg_live", binaryMessenger: messenger)
       .setStreamHandler(cameraReceiver)
     let otgChannel = FlutterMethodChannel(name: otgChannelName, binaryMessenger: messenger)
@@ -161,6 +170,67 @@ import UniformTypeIdentifiers
     let filename = arguments?["filename"] as? String ?? "event-image.jpg"
     saveImageToLibrary(bytes: typedBytes.data, filename: filename, result: result)
   }
+  private func installCameraLifecycle() {
+    guard !cameraLifecycleInstalled else { return }
+    cameraLifecycleInstalled = true
+    let center = NotificationCenter.default
+    // Inactive permission sheets do not stop receiving. Prepare close time,
+    // then stop only on the actual background transition.
+    for name in [UIApplication.willResignActiveNotification, UIScene.willDeactivateNotification] {
+      center.addObserver(self, selector: #selector(prepareCameraBackgroundClose(_:)), name: name, object: nil)
+    }
+    for name in [UIApplication.didEnterBackgroundNotification, UIScene.didEnterBackgroundNotification] {
+      center.addObserver(self, selector: #selector(stopCameraForBackground(_:)), name: name, object: nil)
+    }
+    for name in [UIApplication.didBecomeActiveNotification, UIScene.didActivateNotification] {
+      center.addObserver(self, selector: #selector(refreshCameraAfterForeground(_:)), name: name, object: nil)
+    }
+  }
+
+  @objc private func prepareCameraBackgroundClose(_ notification: Notification) {
+    guard cameraReceiver.hasCameraOwner else { return }
+    beginCameraCloseTaskIfNeeded()
+  }
+
+  private func beginCameraCloseTaskIfNeeded() {
+    guard cameraCloseToken == nil else { return }
+    let token = UUID()
+    cameraCloseToken = token
+    cameraCloseTask = UIApplication.shared.beginBackgroundTask(withName: "Release USB camera") { [weak self] in
+      guard let self, self.cameraCloseToken == token else { return }
+      if UIApplication.shared.applicationState == .background {
+        self.cameraReceiver.stopForBackground(result: { _ in })
+      }
+      self.endCameraCloseTask(token: token)
+    }
+    if cameraCloseTask == .invalid { cameraCloseToken = nil }
+  }
+
+  @objc private func stopCameraForBackground(_ notification: Notification) {
+    guard cameraReceiver.hasSession else {
+      if let token = cameraCloseToken { endCameraCloseTask(token: token) }
+      return
+    }
+    beginCameraCloseTaskIfNeeded()
+    let token = cameraCloseToken
+    cameraReceiver.stopForBackground { [weak self] _ in
+      if let token { self?.endCameraCloseTask(token: token) }
+    }
+  }
+
+  @objc private func refreshCameraAfterForeground(_ notification: Notification) {
+    cameraReceiver.refreshReleaseState()
+    if let token = cameraCloseToken { endCameraCloseTask(token: token) }
+  }
+
+  private func endCameraCloseTask(token: UUID) {
+    guard cameraCloseToken == token else { return }
+    let task = cameraCloseTask
+    cameraCloseToken = nil
+    cameraCloseTask = .invalid
+    if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+  }
+
   private func setScreenAwake(owner: String, enabled: Bool) {
     if enabled {
       if screenAwakeOwners.isEmpty {

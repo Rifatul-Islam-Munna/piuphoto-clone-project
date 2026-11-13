@@ -41,6 +41,9 @@ internal class SimpleUsbCameraReceiver(private val activity: MainActivity) : Eve
     }
     private var receiverRegistered = false
     private var sink: EventChannel.EventSink? = null
+    private val listenerLease = CameraReceiverListenerLease { task ->
+        main.postDelayed({ task() }, 1200L)
+    }
     private var sessionId: String? = null
     private var selected: UsbDevice? = null
     private var uploadMode = "newShotsOnly"
@@ -109,21 +112,24 @@ internal class SimpleUsbCameraReceiver(private val activity: MainActivity) : Eve
         }
     }
 
-    override fun onListen(arguments: Any?, events: EventChannel.EventSink) { sink = events }
+    override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+        listenerLease.attach((arguments as? Map<*, *>)?.get("sessionId") as? String)
+        sink = events
+    }
     override fun onCancel(arguments: Any?) {
         sink = null
         // Flutter cancels its listener before invoking explicit stop().
         // Defer lost-listener cleanup so the method call can await close.
         val token = sessionId
         val tetherToken = tether.activeSessionId
-        main.postDelayed({
+        listenerLease.detach {
             if (sink == null && token != null && sessionId == token) {
                 stop(token) { }
             }
             if (sink == null && tetherToken != null && tether.activeSessionId == tetherToken) {
                 tether.listenerClosed(tetherToken)
             }
-        }, 1200L)
+        }
     }
 
     private fun emit(type: String, message: String = "", code: String? = null) {
@@ -171,6 +177,36 @@ internal class SimpleUsbCameraReceiver(private val activity: MainActivity) : Eve
             val id = call.argument<String>("sessionId")
             if (id.isNullOrBlank()) {
                 result.error("LIVE_CAMERA_INVALID_SESSION", "A camera session ID is required.", null)
+                return
+            }
+            val previous = tether.activeSessionId ?: sessionId
+            if (listenerLease.shouldReleaseOrphan(previous, id)) {
+                val resume = {
+                    if (destroyed || !listenerLease.attached || listenerLease.sessionId != id) {
+                        result.error("LIVE_CAMERA_CANCELLED", "Camera receiving was cancelled.", null)
+                    } else {
+                        handlePtp(call, result)
+                    }
+                }
+                if (sessionId == previous) {
+                    stop(previous) { error ->
+                        if (error == null) resume()
+                        else result.error(error, "The previous USB session could not be released.", null)
+                    }
+                } else {
+                    // A hot restart can attach the new listener before the old
+                    // grace timer expires. Confirm close before claiming USB.
+                    tether.handleMethod(MethodCall("closePtpTetherSession",
+                        mapOf("sessionId" to previous)), object : MethodChannel.Result {
+                        override fun success(value: Any?) { resume() }
+                        override fun error(code: String, message: String?, details: Any?) {
+                            result.error(code, message, details)
+                        }
+                        override fun notImplemented() {
+                            result.error("PTP_CLOSE_FAILED", "USB close is unavailable.", null)
+                        }
+                    })
+                }
                 return
             }
             if (sessionId != null || closing || destroyed || tether.isBusy) {

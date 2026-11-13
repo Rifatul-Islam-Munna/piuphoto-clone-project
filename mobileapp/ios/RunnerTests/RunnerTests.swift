@@ -5,6 +5,85 @@ import XCTest
 @testable import Runner
 
 class RunnerTests: XCTestCase {
+  func testUSBWakeOwnershipRestoresOnceAndIgnoresAnOlderStop() {
+    var changes: [String] = []
+    let lease = PtpTetherWakeLease { id, enabled in changes.append("\(id):\(enabled)") }
+    lease.hold(sessionID: "old")
+    lease.hold(sessionID: "old")
+    lease.release(sessionID: "old")
+    lease.release(sessionID: "old")
+    lease.hold(sessionID: "new")
+    lease.release(sessionID: "old")
+    XCTAssertEqual(changes, ["old:true", "old:false", "new:true"])
+    lease.release(sessionID: "new")
+    XCTAssertEqual(changes.last, "new:false")
+  }
+
+  func testPTPEventsAreScheduledAndPreserveEmptyPackets() {
+    var scheduled: [DispatchWorkItem] = []
+    var received: [Data] = []
+    let events = PtpTetherEventForwarder(schedule: { scheduled.append($0) })
+    let handler = events.handler(sessionID: "session") { received.append($0) }
+    handler(Data())
+    XCTAssertTrue(received.isEmpty)
+    scheduled[0].perform()
+    XCTAssertEqual(received, [Data()])
+  }
+
+  func testPTPCallbackFromBackgroundQueueArrivesOnMainQueue() {
+    let delivered = expectation(description: "PTP event forwarded on main queue")
+    let events = PtpTetherEventForwarder()
+    let handler = events.handler(sessionID: "session") { data in
+      XCTAssertTrue(Thread.isMainThread)
+      XCTAssertEqual(data, Data([1, 2, 3]))
+      delivered.fulfill()
+    }
+    DispatchQueue.global().async { handler(Data([1, 2, 3])) }
+    wait(for: [delivered], timeout: 3)
+    withExtendedLifetime(events) {}
+  }
+
+  func testLatePTPEventsCannotEnterReopenedSessionWithSameID() {
+    var scheduled: [DispatchWorkItem] = []
+    var received: [Data] = []
+    let events = PtpTetherEventForwarder(schedule: { scheduled.append($0) })
+    let old = events.handler(sessionID: "reused") { received.append($0) }
+    old(Data([1]))
+    events.close(sessionID: "reused")
+    let current = events.handler(sessionID: "reused") { received.append($0) }
+    old(Data([2]))
+    current(Data([3]))
+    scheduled.forEach { $0.perform() }
+    XCTAssertEqual(received, [Data([3])])
+  }
+
+  func testOldPTPCloseDoesNotInvalidateNewOwner() {
+    var scheduled: [DispatchWorkItem] = []
+    var received: [Data] = []
+    let events = PtpTetherEventForwarder(schedule: { scheduled.append($0) })
+    _ = events.handler(sessionID: "old") { _ in XCTFail("Old owner must not receive") }
+    let current = events.handler(sessionID: "new") { received.append($0) }
+    events.close(sessionID: "old")
+    current(Data([7]))
+    scheduled.forEach { $0.perform() }
+    XCTAssertEqual(received, [Data([7])])
+  }
+
+  func testBackgroundStartIsRejectedBeforeUSBDiscoveryOrWakeAcquisition() {
+    let verify = {
+      var wakes: [String] = []
+      let receiver = SimpleUsbCameraReceiver(canStartSession: { false },
+        setSessionAwake: { id, _ in wakes.append(id) })
+      var error: FlutterError?
+      receiver.start(arguments: ["sessionId": "background"], tether: true) { error = $0 as? FlutterError }
+      XCTAssertEqual(error?.code, "CAMERA_APP_BACKGROUNDED")
+      XCTAssertFalse(receiver.hasSession)
+      XCTAssertTrue(wakes.isEmpty)
+    }
+    if Thread.isMainThread { verify() }
+    else { DispatchQueue.main.sync(execute: verify) }
+  }
+
   func testSonyPriorityReleaseCannotEnablePCControlOrChangeOtherProperties() {
     for params in [[0xD25A], [0xD25A, 1]] as [[UInt32]] {
       XCTAssertTrue(PtpShootingSafety.isAllowed(0x9205, vendorID: 0x054C,

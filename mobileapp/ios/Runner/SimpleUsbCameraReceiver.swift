@@ -53,6 +53,9 @@ enum WiredCameraAuthorizationState: String {
 /// One opt-in USB owner for either vendor tethering or explicit catalog import.
 /// Vendor negotiation lives in Dart; ImageCaptureCore owns the USB session.
 final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBrowserDelegate, ICCameraDeviceDelegate {
+  private let canStartSession: () -> Bool
+  private let wakeLease: PtpTetherWakeLease
+  private let ptpEvents = PtpTetherEventForwarder()
   private var browser: ICDeviceBrowser?
   private var camera: ICCameraDevice?
   private var sessionId: String?
@@ -78,6 +81,27 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
   private var cameraOpening = false
   private var cameraConnected = false
   private var release: PtpTetherSessionRelease?
+
+  init(canStartSession: @escaping () -> Bool = { true },
+       setSessionAwake: @escaping (String, Bool) -> Void = { _, _ in }) {
+    self.canStartSession = canStartSession
+    self.wakeLease = PtpTetherWakeLease(change: setSessionAwake)
+    super.init()
+  }
+
+  var hasSession: Bool { sessionId != nil }
+  var hasCameraOwner: Bool { cameraConnected || cameraOpening }
+
+  func stopForBackground(result: @escaping FlutterResult) {
+    guard let id = sessionId else { result(nil); return }
+    if !stopping {
+      emit("disconnected", message: "USB receiving paused while AirPix is in the background. Keep AirPix open and start again before shooting.",
+           code: "CAMERA_APP_BACKGROUNDED")
+    }
+    stop(sessionID: id, result: result)
+  }
+
+  func refreshReleaseState() { release?.cameraStateChanged() }
 
   func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
     listenerLease.attach()
@@ -118,6 +142,12 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
       result(failure("LIVE_CAMERA_INVALID_SESSION", "A camera session ID is required."))
       return
     }
+    // Also checked on orphan recovery, so a delayed close cannot reopen USB
+    // after the app has already entered the background.
+    guard canStartSession() else {
+      result(failure("CAMERA_APP_BACKGROUNDED", "Keep AirPix open before starting USB camera receiving."))
+      return
+    }
     // A hot restart can install a new event listener before the old listener's
     // grace timer fires. Release that orphan instead of retaining a camera the
     // new Dart session cannot stop. Wait for actual native close confirmation.
@@ -137,6 +167,7 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
       return
     }
     sessionId = id
+    wakeLease.hold(sessionID: id)
     tetherMode = tether
     uploadMode = arguments?["uploadMode"] as? String == "existingAndNew" ? "existingAndNew" : "newShotsOnly"
     waitingStart = result
@@ -162,14 +193,16 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
           return
         }
         let begin = { [weak self, weak newBrowser] in
-          guard let self, self.sessionId == id, !self.stopping else { return }
+          guard let self, self.sessionId == id, self.browser === newBrowser,
+                !self.stopping else { return }
           newBrowser?.start()
           self.scheduleTimeout(for: id, seconds: 20, message: "No supported USB camera was detected. Check cable, adapter, and camera connection mode.")
         }
         if tether {
-          newBrowser?.requestControlAuthorization { [weak self] controlStatus in
+          newBrowser?.requestControlAuthorization { [weak self, weak newBrowser] controlStatus in
             DispatchQueue.main.async {
-              guard let self, self.sessionId == id, !self.stopping else { return }
+              guard let self, self.sessionId == id, self.browser === newBrowser,
+                    !self.stopping else { return }
               let control = WiredCameraAuthorizationState(controlStatus)
               guard control.allowsContentsAccess else {
                 self.abort(control.errorCode ?? "CAMERA_AUTHORIZATION_UNAVAILABLE",
@@ -390,6 +423,7 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
       callback(failure("LIVE_CAMERA_CANCELLED", "Camera receiving was stopped."))
     }
     downloading.removeAll()
+    if let id = sessionId { ptpEvents.close(sessionID: id) }
     tether?.close()
     let old = camera
     let lease = PtpTetherSessionRelease(
@@ -406,7 +440,11 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
       onReleased: { [weak self] _ in self?.finishStop() }
     )
     release = lease
+    let closingId = sessionId!
     lease.wait { [weak self] outcome in
+      // Release wake ownership even when native close times out. A failed USB
+      // release must not leave the iPhone's idle timer disabled indefinitely.
+      self?.wakeLease.release(sessionID: closingId)
       switch outcome {
       case .success: result(nil)
       case .failure(let error): result(self?.ptpError(error))
@@ -416,9 +454,13 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
   }
 
   private func finishStop() {
+    if let id = sessionId { wakeLease.release(sessionID: id) }
     browser?.stop()
     browser?.delegate = nil
     browser = nil
+    // Discard late SDK packets instead of restoring delegate event delivery.
+    // Each subsequent owner installs its own handler, including catalog mode.
+    camera?.ptpEventHandler = { _ in }
     camera?.delegate = nil
     camera = nil
     sessionId = nil
@@ -570,6 +612,18 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
     cameraOpening = true
     found.delegate = self
     if let id = sessionId {
+      // ImageCaptureCore calls this instead of its delegate PTP callback.
+      // Capture the owner token and marshal notifications onto our main queue.
+      found.ptpEventHandler = ptpEvents.handler(sessionID: id) { [weak self, weak found] data in
+        guard let self, let found, self.sessionId == id,
+              self.camera === found, !self.stopping else { return }
+        if self.tetherMode {
+          self.eventSink?(["sessionId": id, "type": "ptpEvent",
+                           "data": FlutterStandardTypedData(bytes: data)])
+        } else { self.scan() }
+      }
+    }
+    if let id = sessionId {
       scheduleTimeout(for: id, seconds: 30, message: "Camera did not expose the required USB protocol. Check its tether / PC Remote mode and iPhone camera permissions.")
     }
     emit("status", message: "Found \(found.name ?? "USB camera"). Opening photo access.")
@@ -661,9 +715,10 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
   func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: Error?) {}
   func cameraDevice(_ camera: ICCameraDevice, didReceiveMetadata metadata: [AnyHashable: Any]?, for item: ICCameraItem, error: Error?) {}
   func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {
-    guard camera === self.camera, !stopping, let id = sessionId else { return }
-    if tetherMode { eventSink?(["sessionId": id, "type": "ptpEvent", "data": FlutterStandardTypedData(bytes: eventData)]) }
-    else { scan() }
+    guard camera === self.camera, !stopping, sessionId != nil else { return }
+    // Events use the per-session handler above, including empty and
+    // vendor-shaped packets. Never deliver the same event via two paths.
+    if !tetherMode { scan() }
   }
   func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {
     guard device === camera, !stopping else { return }

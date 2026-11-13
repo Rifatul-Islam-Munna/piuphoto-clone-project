@@ -88,6 +88,59 @@ final class PtpTetherListenerLease {
   func invalidate() { attach() }
 }
 
+/// Late cleanup for an older USB session must not restore the idle timer of a
+/// newer owner. The AppDelegate applies the actual UIApplication wake setting.
+final class PtpTetherWakeLease {
+  private let change: (String, Bool) -> Void
+  private var owner: String?
+
+  init(change: @escaping (String, Bool) -> Void) { self.change = change }
+
+  func hold(sessionID: String) {
+    guard owner != sessionID else { return }
+    if let previous = owner { change(previous, false) }
+    owner = sessionID
+    change(sessionID, true)
+  }
+
+  func release(sessionID: String) {
+    guard owner == sessionID else { return }
+    owner = nil
+    change(sessionID, false)
+  }
+}
+
+/// ImageCaptureCore may deliver events off the main queue and after a close.
+/// A generation protects even a later session that reuses the same string ID.
+final class PtpTetherEventForwarder {
+  private let schedule: (DispatchWorkItem) -> Void
+  private var generation: UInt64 = 0
+  private var owner: String?
+
+  init(schedule: @escaping (DispatchWorkItem) -> Void = {
+    DispatchQueue.main.async(execute: $0)
+  }) { self.schedule = schedule }
+
+  func handler(sessionID: String, forward: @escaping (Data) -> Void) -> (Data) -> Void {
+    generation &+= 1
+    let token = generation
+    owner = sessionID
+    let enqueue = schedule
+    return { [weak self] data in
+      enqueue(DispatchWorkItem { [weak self] in
+        guard let self, self.generation == token, self.owner == sessionID else { return }
+        forward(data)
+      })
+    }
+  }
+
+  func close(sessionID: String) {
+    guard owner == sessionID else { return }
+    generation &+= 1
+    owner = nil
+  }
+}
+
 /// A close request is not a release confirmation. Keep the exact camera owner
 /// blocked after a failure/timeout until its session is actually closed or the
 /// device is detached. All callbacks and state reads run on the main queue.
