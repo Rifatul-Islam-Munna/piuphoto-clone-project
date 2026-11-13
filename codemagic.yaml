@@ -24,7 +24,12 @@ workflows:
           pod install
 
       - name: Flutter regression tests
-        script: flutter test --no-pub
+        script: |
+          set -euo pipefail
+          # The FTP peer-address test uses a second loopback source address.
+          # macOS requires this address to be explicitly assigned to lo0.
+          sudo -n /sbin/ifconfig lo0 alias 127.0.0.2 up
+          flutter test --no-pub
 
       - name: Compile unsigned iOS simulator app
         script: flutter build ios --simulator --debug --no-codesign --no-pub
