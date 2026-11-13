@@ -1,6 +1,165 @@
 workflows:
+  ios_testflight:
+    name: iOS TestFlight Upload
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: mobileapp
+
+    inputs:
+      app_version:
+        description: "TestFlight version (major.minor.patch); version tags override this"
+        type: string
+        default: "1.0.0" # Change here or enter a version in Start new build.
+      build_number:
+        description: "Optional build number; leave empty to use Codemagic's project counter"
+        type: string
+        default: ""
+
+    triggering:
+      events:
+        - push
+        - tag
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+      tag_patterns:
+        - pattern: 'v+([0-9]).+([0-9]).+([0-9])'
+          include: true
+
+    integrations:
+      app_store_connect: nikofly
+
+    environment:
+      flutter: stable
+      xcode: 26.5 # pinned: `latest` now points to Xcode 27.x
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.nikofly.app
+      vars:
+        APP_NAME: Runner
+        APP_VERSION: ${{ inputs.app_version }}
+        APP_BUILD_NUMBER: ${{ inputs.build_number }}
+
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+        - $HOME/Library/Caches/org.swift.swiftpm
+        - $HOME/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
+
+    scripts:
+      - name: Set TestFlight version and build number
+        script: |
+          set -euo pipefail
+          release_version="$APP_VERSION"
+          if [ -n "${CM_TAG:-}" ]; then
+            release_version="${CM_TAG#v}"
+          fi
+          release_build_number="${APP_BUILD_NUMBER:-${PROJECT_BUILD_NUMBER:?Missing Codemagic project build number}}"
+          if ! [[ "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid app version: $release_version. Use major.minor.patch (e.g. 1.0.1)."
+            exit 1
+          fi
+          if ! [[ "$release_build_number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Invalid build number: $release_build_number. Use a positive integer."
+            exit 1
+          fi
+          printf 'RELEASE_VERSION=%s\nRELEASE_BUILD_NUMBER=%s\n' \
+            "$release_version" "$release_build_number" >> "$CM_ENV"
+          echo "TestFlight version: $release_version ($release_build_number)"
+
+      - name: Flutter pub get
+        script: |
+          flutter pub get
+
+      - name: Verify iOS permission descriptions
+        script: |
+          plutil -lint ios/Runner/Info.plist
+          for key in NSCameraUsageDescription NSPhotoLibraryUsageDescription NSPhotoLibraryAddUsageDescription NSLocalNetworkUsageDescription; do
+            purpose=$(/usr/libexec/PlistBuddy -c "Print :$key" ios/Runner/Info.plist) || exit 1
+            if [ -z "$(echo "$purpose" | tr -d '[:space:]')" ]; then
+              echo "Missing iOS purpose string: $key"
+              exit 1
+            fi
+          done
+
+      - name: Install pods
+        script: |
+          find . -name "Podfile" -execdir pod install \;
+
+      - name: Set up iOS code signing
+        script: |
+          xcode-project use-profiles
+
+      - name: Build signed IPA
+        script: |
+          set -euo pipefail
+          flutter build ipa --release \
+            --build-name="$RELEASE_VERSION" \
+            --build-number="$RELEASE_BUILD_NUMBER" \
+            --export-options-plist=/Users/builder/export_options.plist
+
+      - name: Diagnose App Store identity
+        script: |
+          set +e
+
+          IPA_PATH="$(find build/ios/ipa -name '*.ipa' -print -quit)"
+          echo "IPA: ${IPA_PATH:-NOT_FOUND}"
+          echo "Expected bundle ID: com.nikofly.app"
+          echo "Codemagic integration: nikofly"
+          echo "Version: $RELEASE_VERSION"
+          echo "Build number: $RELEASE_BUILD_NUMBER"
+
+          echo "Available signing identities:"
+          security find-identity -v -p codesigning
+
+          if [ -z "$IPA_PATH" ]; then
+            echo "ERROR: IPA not found"
+            exit 1
+          fi
+
+          DIAG_DIR="$PWD/ipa_diagnostics"
+          rm -rf "$DIAG_DIR"
+          mkdir -p "$DIAG_DIR"
+          unzip -q "$IPA_PATH" -d "$DIAG_DIR"
+          APP_PATH="$(find "$DIAG_DIR/Payload" -maxdepth 1 -name '*.app' -print -quit)"
+
+          echo "App bundle: $APP_PATH"
+          echo "Bundle ID: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")"
+          echo "Display name: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")"
+          echo "Version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")"
+          echo "Build: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")"
+
+          PROFILE_PLIST="$DIAG_DIR/profile.plist"
+          security cms -D -i "$APP_PATH/embedded.mobileprovision" > "$PROFILE_PLIST"
+          echo "Profile name: $(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST")"
+          echo "Profile team ID: $(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$PROFILE_PLIST")"
+          echo "Profile app ID: $(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST")"
+          echo "Profile expires: $(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "$PROFILE_PLIST")"
+
+          echo "Code signature:"
+          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E 'Identifier=|TeamIdentifier=|Authority='
+
+          echo "NOTE: If bundle ID is com.nikofly.app but publishing still says Apple ID cannot be determined,"
+          echo "the App Store Connect API key behind integration 'nikofly' belongs to another team"
+          echo "or lacks App Manager/access to this app."
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/iphoneos/*.app
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false
+
+  # Optional manual diagnostics. Select ios_testflight to upload an IPA.
   ios_camera_validation:
-    name: iOS Camera Build and Native Tests
+    name: iOS Camera Tests (manual, no TestFlight upload)
     max_build_duration: 90
     instance_type: mac_mini_m2
     working_directory: mobileapp
@@ -66,114 +225,3 @@ workflows:
     artifacts:
       - build/ios/iphonesimulator/*.app
       - build/ios-camera-tests.xcresult.zip
-
-  ios_testflight:
-    name: iOS TestFlight Upload
-    max_build_duration: 120
-    instance_type: mac_mini_m2
-    working_directory: mobileapp
-
-    integrations:
-      app_store_connect: nikofly
-
-    environment:
-      flutter: stable
-      xcode: 26.5 # pinned: `latest` now points to Xcode 27.x
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.nikofly.app
-      vars:
-        APP_NAME: Runner
-
-    cache:
-      cache_paths:
-        - $HOME/.pub-cache
-        - $HOME/Library/Caches/CocoaPods
-        - $HOME/Library/Caches/org.swift.swiftpm
-        - $HOME/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
-
-    scripts:
-      - name: Flutter pub get
-        script: |
-          flutter pub get
-
-      - name: Verify iOS permission descriptions
-        script: |
-          plutil -lint ios/Runner/Info.plist
-          for key in NSCameraUsageDescription NSPhotoLibraryUsageDescription NSPhotoLibraryAddUsageDescription NSLocalNetworkUsageDescription; do
-            purpose=$(/usr/libexec/PlistBuddy -c "Print :$key" ios/Runner/Info.plist) || exit 1
-            if [ -z "$(echo "$purpose" | tr -d '[:space:]')" ]; then
-              echo "Missing iOS purpose string: $key"
-              exit 1
-            fi
-          done
-
-      - name: Install pods
-        script: |
-          find . -name "Podfile" -execdir pod install \;
-
-      - name: Set up iOS code signing
-        script: |
-          xcode-project use-profiles
-
-      - name: Build signed IPA
-        script: |
-          flutter build ipa --release \
-            --build-number=$BUILD_NUMBER \
-            --export-options-plist=/Users/builder/export_options.plist
-
-      - name: Diagnose App Store identity
-        script: |
-          set +e
-
-          IPA_PATH="$(find build/ios/ipa -name '*.ipa' -print -quit)"
-          echo "IPA: ${IPA_PATH:-NOT_FOUND}"
-          echo "Expected bundle ID: com.nikofly.app"
-          echo "Codemagic integration: nikofly"
-          echo "Build number: $BUILD_NUMBER"
-
-          echo "Available signing identities:"
-          security find-identity -v -p codesigning
-
-          if [ -z "$IPA_PATH" ]; then
-            echo "ERROR: IPA not found"
-            exit 1
-          fi
-
-          DIAG_DIR="$PWD/ipa_diagnostics"
-          rm -rf "$DIAG_DIR"
-          mkdir -p "$DIAG_DIR"
-          unzip -q "$IPA_PATH" -d "$DIAG_DIR"
-          APP_PATH="$(find "$DIAG_DIR/Payload" -maxdepth 1 -name '*.app' -print -quit)"
-
-          echo "App bundle: $APP_PATH"
-          echo "Bundle ID: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")"
-          echo "Display name: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")"
-          echo "Version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")"
-          echo "Build: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")"
-
-          PROFILE_PLIST="$DIAG_DIR/profile.plist"
-          security cms -D -i "$APP_PATH/embedded.mobileprovision" > "$PROFILE_PLIST"
-          echo "Profile name: $(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST")"
-          echo "Profile team ID: $(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$PROFILE_PLIST")"
-          echo "Profile app ID: $(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST")"
-          echo "Profile expires: $(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "$PROFILE_PLIST")"
-
-          echo "Code signature:"
-          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E 'Identifier=|TeamIdentifier=|Authority='
-
-          echo "NOTE: If bundle ID is com.nikofly.app but publishing still says Apple ID cannot be determined,"
-          echo "the App Store Connect API key behind integration 'nikofly' belongs to another team"
-          echo "or lacks App Manager/access to this app."
-
-    artifacts:
-      - build/ios/ipa/*.ipa
-      - build/ios/iphoneos/*.app
-      - /tmp/xcodebuild_logs/*.log
-      - flutter_drive.log
-
-    publishing:
-      app_store_connect:
-        auth: integration
-        submit_to_testflight: true
-        submit_to_app_store: false
