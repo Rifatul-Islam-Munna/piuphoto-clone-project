@@ -1,6 +1,7 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { unlink } from 'fs/promises';
 import { MinioService } from '../lib/minio.service';
+import { PresignUploadDto } from './dto/presign-upload.dto';
 
 @Injectable()
 export class ImageService {
@@ -8,17 +9,25 @@ export class ImageService {
 
   constructor(private readonly minioService: MinioService) {}
 
-  async uploadImage(file: any) {
+  presignUpload(file: PresignUploadDto, requestOrigin?: string) {
+    return this.minioService.presignUpload(file, requestOrigin);
+  }
+
+  async presignUploads(files: PresignUploadDto[], requestOrigin?: string) {
+    return { uploads: await Promise.all(files.map((file) => this.presignUpload(file, requestOrigin))) };
+  }
+
+  async uploadImage(file: any, requestOrigin?: string) {
     if (!file) {
       throw new HttpException('File is required', HttpStatus.BAD_REQUEST);
     }
 
-    const fileUrl = await this.uploadAndCleanTemporaryFile(file);
+    const fileUrl = await this.uploadAndCleanTemporaryFile(file, requestOrigin);
 
     return { message: 'File uploaded successfully', url: fileUrl };
   }
 
-  async uploadImages(files: any[]) {
+  async uploadImages(files: any[], requestOrigin?: string) {
     if (!Array.isArray(files) || files.length === 0) {
       throw new HttpException('At least one file is required', HttpStatus.BAD_REQUEST);
     }
@@ -26,7 +35,7 @@ export class ImageService {
     // Each file owns its cleanup. A failed batch member must not delete another
     // member's temporary file while its cloud upload is still reading it.
     const urls = await Promise.all(
-      files.map((file) => this.uploadAndCleanTemporaryFile(file)),
+      files.map((file) => this.uploadAndCleanTemporaryFile(file, requestOrigin)),
     );
 
     return {
@@ -35,9 +44,9 @@ export class ImageService {
     };
   }
 
-  private async uploadAndCleanTemporaryFile(file: any): Promise<string> {
+  private async uploadAndCleanTemporaryFile(file: any, requestOrigin?: string): Promise<string> {
     try {
-      return await this.minioService.uploadFile(file);
+      return await this.minioService.uploadFile(file, requestOrigin);
     } finally {
       if (typeof file?.path === 'string' && file.path.length > 0) {
         try {
@@ -54,6 +63,10 @@ export class ImageService {
         }
       }
     }
+  }
+
+  readImage(fileName: string, token: string) {
+    return this.minioService.readFile(fileName, token);
   }
 
   async deleteImage(fileName: string) {

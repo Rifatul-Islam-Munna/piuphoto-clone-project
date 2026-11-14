@@ -11,6 +11,7 @@ import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
+import 'package:mobileapp/core/upload/presigned_upload_service.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -41,6 +42,7 @@ void main() {
     DioHelper.dio.interceptors.clear();
     adapter = _UploadAdapter();
     DioHelper.dio.httpClientAdapter = adapter;
+    PresignedUploadService.storageDio.httpClientAdapter = adapter;
   });
 
   tearDown(() async {
@@ -125,7 +127,7 @@ void main() {
           expect(details['albumId'], 'album-at-shutter-time');
           expect(details['isEnhanced'], isTrue);
           expect(details['clientTransferId'], accepted.id);
-          expect(details['imageUrl'], 'https://images.invalid/instant.jpg');
+          expect(details['imageUrl'], 'https://images.invalid/photo.jpg');
           final confirming = TransferLedgerStorage.find(accepted.id)!;
           expect(confirming.isUploaded, isFalse);
           expect(confirming.registrationStarted, isTrue);
@@ -956,7 +958,15 @@ class _UploadAdapter implements HttpClientAdapter {
       await body;
     }
     Future<ResponseBody> response;
-    if (options.path == '/image/upload') {
+    if (options.path == '/image/presign') {
+      response = Future.value(_json({
+        'uploadUrl': 'https://r2.invalid/photo.jpg?signature=test',
+        'method': 'PUT',
+        'headers': {'Content-Type': 'image/jpeg'},
+        'url': 'https://images.invalid/photo.jpg',
+        'key': 'photo.jpg',
+      }));
+    } else if (options.method == 'PUT' && options.uri.host == 'r2.invalid') {
       imageUploads.add(options);
       response =
           onUpload?.call(options) ??

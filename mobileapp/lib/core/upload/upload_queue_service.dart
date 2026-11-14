@@ -10,6 +10,7 @@ import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/camera_staging_cleanup.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
+import 'package:mobileapp/core/upload/presigned_upload_service.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -838,9 +839,12 @@ class UploadQueueService {
     isEnhanced: isEnhanced,
     transferId: transferId,
     albumId: albumId,
-    buildForm: () async => FormData.fromMap({
-      'file': await MultipartFile.fromFile(path, filename: filename),
-    }),
+    upload: (cancelToken, onSendProgress) => PresignedUploadService.uploadFile(
+      path: path,
+      filename: filename,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+    ),
   );
 
   static Future<void> _uploadSingleBytes({
@@ -856,9 +860,12 @@ class UploadQueueService {
     isEnhanced: isEnhanced,
     transferId: transferId,
     albumId: albumId,
-    buildForm: () async => FormData.fromMap({
-      'file': MultipartFile.fromBytes(bytes, filename: filename),
-    }),
+    upload: (cancelToken, onSendProgress) => PresignedUploadService.uploadBytes(
+      bytes: bytes,
+      filename: filename,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+    ),
   );
 
   static Future<void> _runUpload({
@@ -866,7 +873,7 @@ class UploadQueueService {
     required EventSummary event,
     required bool isEnhanced,
     required String transferId,
-    required Future<FormData> Function() buildForm,
+    required Future<String> Function(CancelToken, ProgressCallback) upload,
     String? albumId,
   }) async {
     _throwIfCancelled(transferId);
@@ -891,16 +898,11 @@ class UploadQueueService {
           progress: 15,
         );
         _throwIfCancelled(transferId);
-        final formData = await buildForm();
-        _throwIfCancelled(transferId);
-        final response = await DioHelper.post(
-          '/image/upload',
-          data: formData,
-          cancelToken: active.cancelToken,
-          onSendProgress: _uploadProgressReporter(transferId),
+        imageUrl = await upload(
+          active.cancelToken,
+          _uploadProgressReporter(transferId),
         );
         _throwIfCancelled(transferId);
-        imageUrl = response.data['url']?.toString() ?? '';
         if (imageUrl.isEmpty) throw Exception('Image upload returned no URL');
       }
 

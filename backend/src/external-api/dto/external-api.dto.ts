@@ -1,4 +1,5 @@
-import { OmitType } from '@nestjs/swagger';
+import { IntersectionType, OmitType } from '@nestjs/swagger';
+import { PresignUploadDto } from '../../image/dto/presign-upload.dto';
 import {
   ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsMongoId,
   IsOptional, IsString, IsUrl, MaxLength,
@@ -45,6 +46,7 @@ export class ApiUploadDto {
   @IsOptional() @IsIn(['photo','video']) mediaType?:'photo'|'video';
 }
 export class ApiUploadFileDto extends OmitType(ApiUploadDto, ['imageUrl'] as const) {}
+export class ApiPresignUploadDto extends IntersectionType(PresignUploadDto, ApiUploadFileDto) {}
 export class ApiAnalyzeDto {
   @IsMongoId() eventId:string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(500) @IsMongoId({each:true}) ids:string[];

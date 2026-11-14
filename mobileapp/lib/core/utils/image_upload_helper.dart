@@ -1,6 +1,5 @@
-import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/upload/presigned_upload_service.dart';
 
 class PickedAppImage {
   const PickedAppImage({
@@ -33,14 +32,5 @@ class ImageUploadHelper {
   static Future<String> uploadFile({
     required String path,
     required String filename,
-  }) async {
-    final formData = FormData.fromMap({
-      'file': await MultipartFile.fromFile(
-        path,
-        filename: filename,
-      ),
-    });
-    final response = await DioHelper.post('/image/upload', data: formData);
-    return response.data['url']?.toString() ?? '';
-  }
+  }) => PresignedUploadService.uploadFile(path: path, filename: filename);
 }

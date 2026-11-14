@@ -1,3 +1,4 @@
+import { UploadFileAxios } from "@/lib/direct-upload";
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Calendar, Eye, Loader2, MoreHorizontal, Plus, Trash2, Upload, X } from "lucide-react";
@@ -89,11 +90,6 @@ type EventFormData = {
   image?: { url?: string };
 };
 
-type ImageUploadResponse = {
-  message: string;
-  url: string;
-};
-
 const defaultFormData: EventFormData = {
   title: "",
   description: "",
@@ -127,18 +123,7 @@ export default function Events() {
   };
 
   const uploadImage = async (file: File) => {
-    const body = new FormData();
-    body.append("file", file);
-
-    const [response, error] = await PostRequestAxios<ImageUploadResponse>(
-      "/image/upload-admin",
-      body,
-      {
-        withToken: true,
-        withCredentials: true,
-        headers: { "Content-Type": "multipart/form-data" },
-      },
-    );
+    const [response, error] = await UploadFileAxios(file, true);
 
     if (error || !response) {
       throw new Error(error?.message || "Image upload failed");

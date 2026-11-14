@@ -1,3 +1,4 @@
+import { UploadFileAxios } from "@/lib/direct-upload";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -295,17 +296,7 @@ export default function Phase2Settings() {
   ) => {
     setUploadingAsset(key);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const [response, error] = await PostRequestAxios<{ url?: string }>(
-        "/image/upload",
-        formData,
-        {
-          withToken: true,
-          withCredentials: true,
-          headers: { "Content-Type": "multipart/form-data" },
-        },
-      );
+      const [response, error] = await UploadFileAxios(file);
       if (error || !response?.url)
         throw new Error(error?.message || "Upload failed");
       setBranding((current) => ({ ...current, [key]: response.url }));

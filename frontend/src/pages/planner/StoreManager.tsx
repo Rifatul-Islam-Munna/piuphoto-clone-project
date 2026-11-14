@@ -1,3 +1,4 @@
+import { UploadFileAxios } from "@/lib/direct-upload";
 import { type ReactNode, useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -179,17 +180,7 @@ export default function StoreManager() {
   const uploadCover = async (file: File) => {
     setCoverUploading(true);
     try {
-      const payload = new FormData();
-      payload.append("file", file);
-      const [response, error] = await PostRequestAxios<{ url?: string }>(
-        "/image/upload",
-        payload,
-        {
-          withToken: true,
-          withCredentials: true,
-          headers: { "Content-Type": "multipart/form-data" },
-        },
-      );
+      const [response, error] = await UploadFileAxios(file);
       if (error || !response?.url) {
         throw new Error(error?.message || "Cover upload failed");
       }

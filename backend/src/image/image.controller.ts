@@ -8,8 +8,15 @@ import {
   UploadedFile,
   UploadedFiles,
   BadRequestException,
+  Get,
+  Param,
+  Query,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
+import { storageRequestOrigin } from '../lib/storage-request-origin';
 import { ImageService } from './image.service';
+import { PresignUploadDto, PresignUploadsDto } from './dto/presign-upload.dto';
 import { AuthGuard } from '../lib/auth.guard';
 import { RolesGuard } from '../lib/roles.guard';
 import { Roles } from '../lib/roles.decorator';
@@ -103,20 +110,39 @@ const batchUploadOptions = {
 export class ImageController {
   constructor(private readonly imageService: ImageService) {}
 
+  @Post('presign')
+  @UseGuards(AuthGuard)
+  presignUpload(@Body() body: PresignUploadDto, @Req() request: Request) {
+    return this.imageService.presignUpload(body, storageRequestOrigin(request));
+  }
+
+  @Post('presign/batch')
+  @UseGuards(AuthGuard)
+  presignUploads(@Body() body: PresignUploadsDto, @Req() request: Request) {
+    return this.imageService.presignUploads(body.files, storageRequestOrigin(request));
+  }
+
+  @Post('presign-admin')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserType.ADMIN)
+  presignUploadAdmin(@Body() body: PresignUploadDto, @Req() request: Request) {
+    return this.imageService.presignUpload(body, storageRequestOrigin(request));
+  }
+
   @Post('upload')
   @UseGuards(AuthGuard)
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(FileInterceptor('file', singleUploadOptions))
-  uploadImage(@UploadedFile() file: any) {
-    return this.imageService.uploadImage(file);
+  uploadImage(@UploadedFile() file: any, @Req() request: Request) {
+    return this.imageService.uploadImage(file, storageRequestOrigin(request));
   }
 
   @Post('upload/batch')
   @UseGuards(AuthGuard)
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(FilesInterceptor('files', 100, batchUploadOptions))
-  uploadImages(@UploadedFiles() files: any[]) {
-    return this.imageService.uploadImages(files);
+  uploadImages(@UploadedFiles() files: any[], @Req() request: Request) {
+    return this.imageService.uploadImages(files, storageRequestOrigin(request));
   }
 
   @Post('upload-admin')
@@ -124,8 +150,13 @@ export class ImageController {
   @Roles(UserType.ADMIN)
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(FileInterceptor('file', adminUploadOptions))
-  uploadImageAdmin(@UploadedFile() file: any) {
-    return this.imageService.uploadImage(file);
+  uploadImageAdmin(@UploadedFile() file: any, @Req() request: Request) {
+    return this.imageService.uploadImage(file, storageRequestOrigin(request));
+  }
+
+  @Get('file/:fileName')
+  readImage(@Param('fileName') fileName: string, @Query('token') token: string) {
+    return this.imageService.readImage(fileName, token);
   }
 
   @Delete('delete')

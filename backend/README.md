@@ -27,6 +27,59 @@
 
 ## Project setup
 
+### Cloudflare R2 image storage
+
+Set `STORAGE_S3_URL`, `STORAGE_ACCESS_KEY`, and `STORAGE_SECRET_KEY` in `.env`.
+The URL may include the bucket, for example
+`https://<account-id>.eu.r2.cloudflarestorage.com/gallarista`, or use
+`STORAGE_BUCKET_NAME` with an account-level endpoint. Keep the jurisdiction
+hostname shown in Cloudflare for your bucket. R2 takes priority over `MINIO_*`.
+Startup checks the bucket and creates it if missing; creation requires bucket
+admin permission. Existing buckets only need object read/write access.
+
+Single, batch, admin, and external API file uploads keep their existing response
+formats. Without `STORAGE_PUBLIC_URL`, returned URLs stream from R2 through
+`GET /image/file/:fileName?token=...`. Each permanent URL contains a signature
+restricted to its object; missing or invalid signatures return 404. Keep
+`STORAGE_URL_SECRET` stable (it defaults to `STORAGE_SECRET_KEY`) to preserve
+these URLs across credential changes. Set `PUBLIC_API_URL` to your reachable
+backend origin in production; otherwise the upload request origin is used.
+
+For direct CDN image delivery, optionally set `STORAGE_PUBLIC_URL` to an enabled
+R2 public bucket domain, such as `https://images.example.com`, without appending
+the bucket name. The S3 API URL is not a public image URL. Public domains must be
+configured in Cloudflare; R2 does not support S3 bucket policies. See
+[Cloudflare public bucket docs](https://developers.cloudflare.com/r2/buckets/public-buckets/).
+Existing MinIO files are not migrated automatically.
+
+### Direct uploads with presigned URLs
+
+The frontend and mobile app upload file bytes directly to R2. The backend only
+handles upload authorization and event/profile metadata:
+
+1. Send authenticated JSON to `POST /image/presign`:
+   `{ "fileName": "photo.jpg", "contentType": "image/jpeg", "size": 12345 }`.
+2. Send the raw file with `PUT` to the returned `uploadUrl`, using the returned
+   `headers`. Do not use multipart encoding, app auth headers, or cookies on R2.
+   The actual file length must match `size`; the signature binds both length and
+   content type. URLs expire after 15 minutes; files are limited to 256 MiB.
+3. After PUT succeeds, save the returned permanent `url` using the existing
+   event/profile/branding/retouch endpoint. Never store the expiring `uploadUrl`.
+
+`POST /image/presign/batch` accepts `{ "files": [ ... ] }` (up to 100 metadata
+objects) and returns ordered `uploads`. `POST /image/presign-admin` requires the
+admin role. Mobile batch transfers use three concurrent streams; camera queue
+progress, cancellation, durable retries, and event registration are preserved.
+
+External API clients can request `POST /v1/upload/presign` using `x-api-key`,
+including `eventId` and `idempotencyKey` alongside the file metadata, upload to
+R2, then register the permanent URL through `POST /v1/upload`.
+
+The R2 bucket must allow browser CORS for your frontend origin, method `PUT`,
+and header `Content-Type`. The current `gallarista` bucket already allows these.
+See [Cloudflare presigned URL docs](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
+and [R2 CORS docs](https://developers.cloudflare.com/r2/buckets/cors/).
+
 ```bash
 $ npm install
 ```

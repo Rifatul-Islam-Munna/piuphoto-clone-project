@@ -34,6 +34,7 @@ import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
 import 'package:mobileapp/core/upload/camera_staging_cleanup.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
+import 'package:mobileapp/core/upload/presigned_upload_service.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/pages/upload/camera_transfer_page.dart';
@@ -967,23 +968,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
 
   Future<List<String>> _uploadFilesBatch(
     List<_SelectedUploadFile> files,
-  ) async {
-    final formData = FormData.fromMap({
-      'files': [
-        for (final file in files)
-          await MultipartFile.fromFile(file.path, filename: file.name),
-      ],
-    });
-    final response = await DioHelper.post(
-      '/image/upload/batch',
-      data: formData,
-    );
-    final urls = response.data['urls'] as List? ?? [];
-    return urls
-        .map((url) => url.toString())
-        .where((url) => url.isNotEmpty)
-        .toList();
-  }
+  ) => PresignedUploadService.uploadFiles([
+    for (final file in files) (path: file.path, filename: file.name),
+  ]);
 
   Future<bool> _uploadOrQueueFile({
     required EventSummary event,

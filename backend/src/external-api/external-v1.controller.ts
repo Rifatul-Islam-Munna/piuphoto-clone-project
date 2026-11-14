@@ -1,4 +1,6 @@
-import { BadRequestException, Body, Controller, Get, Headers, Param, Patch, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Param, Patch, Post, Query, Req, UploadedFile, UseInterceptors } from '@nestjs/common';
+import type { Request } from 'express';
+import { storageRequestOrigin } from '../lib/storage-request-origin';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiConsumes, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { diskStorage, memoryStorage } from 'multer';
@@ -16,7 +18,7 @@ import { ImageService } from '../image/image.service';
 import {
   ApiAnalyzeDto, ApiCreateCategoryDto, ApiCreateEventDto, ApiEnhanceDto, ApiFaceSearchDto, ApiMobileSearchDto,
   ApiGallerySettingsDto, ApiUpdateCategoryDto, ApiUpdateEventDto,
-  ApiUploadDto, ApiUploadFileDto, CreateApiWebhookDto,
+  ApiUploadDto, ApiUploadFileDto, ApiPresignUploadDto, CreateApiWebhookDto,
 } from './dto/external-api.dto';
 import { ExternalApiService } from './external-api.service';
 
@@ -148,11 +150,11 @@ export class ExternalV1Controller {
 
   @Post('upload/file')
   @UseInterceptors(FileInterceptor('file', externalUploadOptions))
-  async uploadFile(@Headers('x-api-key') key:string,@Body() body:ApiUploadFileDto,@UploadedFile() file:any){
+  async uploadFile(@Headers('x-api-key') key:string,@Body() body:ApiUploadFileDto,@UploadedFile() file:any,@Req() request:Request){
     if(!file) throw new BadRequestException('File is required');
     try{
       const actor=await this.api.authenticate(key,'upload:write',body.eventId);
-      const uploaded=await this.imageService.uploadImage(file);
+      const uploaded=await this.imageService.uploadImage(file,storageRequestOrigin(request));
       const result:any=await this.eventImages.create({eventId:body.eventId,albumId:body.albumId,imageUrl:uploaded.url,isEnhanced:false,mediaType:body.mediaType,clientTransferId:body.idempotencyKey} as any,actor.userId);
       const row=result?.data;
       return {...result,eventImageId:row?._id?String(row._id):undefined,idempotencyKey:body.idempotencyKey,status:row?.isPublished!==false?'published':'processing'};
@@ -161,6 +163,13 @@ export class ExternalV1Controller {
       throw error;
     }
   }
+
+  @Post('upload/presign')
+  async presignUpload(@Headers('x-api-key') key:string,@Body() body:ApiPresignUploadDto,@Req() request:Request){
+    await this.api.authenticate(key,'upload:write',body.eventId);
+    return this.imageService.presignUpload(body,storageRequestOrigin(request));
+  }
+
   @Get('upload/status/:imageId')
   async uploadStatus(@Headers('x-api-key') key:string,@Param('imageId') imageId:string,@Query('eventId') eventId:string){
     await this.api.authenticate(key,'upload:write',eventId);

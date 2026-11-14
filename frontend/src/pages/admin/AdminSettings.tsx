@@ -1,3 +1,4 @@
+import { UploadFileAxios } from "@/lib/direct-upload";
 import { ChangeEvent, Dispatch, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import { ImagePlus, Loader2, Save, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -22,11 +23,6 @@ import {
   SiteSettings,
   SiteSettingsResponse,
 } from "@/lib/site-settings";
-
-type UploadResponse = {
-  url?: string;
-  message?: string;
-};
 
 type ImageFieldProps = {
   label: string;
@@ -166,19 +162,9 @@ const ImageField = ({ label, value, onChange, onUpload }: ImageFieldProps) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const formData = new FormData();
-    formData.append("file", file);
     setUploading(true);
 
-    const [response, error] = await PostRequestAxios<UploadResponse>(
-      "/image/upload",
-      formData,
-      {
-        withToken: true,
-        withCredentials: true,
-        headers: { "Content-Type": "multipart/form-data" },
-      },
-    );
+    const [response, error] = await UploadFileAxios(file);
 
     setUploading(false);
     if (error || !response?.url) {
@@ -265,19 +251,9 @@ export default function AdminSettings() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const formData = new FormData();
-    formData.append("file", file);
     setUploadingLogo(true);
 
-    const [response, error] = await PostRequestAxios<UploadResponse>(
-      "/image/upload",
-      formData,
-      {
-        withToken: true,
-        withCredentials: true,
-        headers: { "Content-Type": "multipart/form-data" },
-      },
-    );
+    const [response, error] = await UploadFileAxios(file);
 
     setUploadingLogo(false);
     if (error || !response?.url) {

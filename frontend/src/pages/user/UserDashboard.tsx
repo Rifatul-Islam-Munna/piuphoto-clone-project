@@ -1,3 +1,4 @@
+import { UploadFileAxios } from "@/lib/direct-upload";
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -152,11 +153,6 @@ type EventFormData = {
   requireReview: boolean;
 };
 
-type ImageUploadResponse = {
-  message: string;
-  url: string;
-};
-
 type UserListResponse = {
   data: PhotographerOption[];
 };
@@ -211,17 +207,7 @@ export default function UserDashboard() {
   );
 
   const uploadImage = async (file: File): Promise<{ url: string }> => {
-    const uploadFormData = new FormData();
-    uploadFormData.append("file", file);
-    const [response, error] = await PostRequestAxios<ImageUploadResponse>(
-      "/image/upload",
-      uploadFormData,
-      {
-        withToken: true,
-        withCredentials: true,
-        headers: { "Content-Type": "multipart/form-data" },
-      },
-    );
+    const [response, error] = await UploadFileAxios(file);
 
     if (error || !response) {
       throw new Error(error?.message || "Failed to upload image");

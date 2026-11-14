@@ -16,6 +16,7 @@ import 'package:mobileapp/core/platform/ptp_tether_link.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
+import 'package:mobileapp/core/upload/presigned_upload_service.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -56,6 +57,7 @@ void main() {
     native = _NativeNikon(directory);
     cloud = _CloudServer();
     DioHelper.dio.httpClientAdapter = cloud;
+    PresignedUploadService.storageDio.httpClientAdapter = cloud;
     captures.clear();
     accepted.clear();
     updates.clear();
@@ -310,7 +312,7 @@ Future<void> _until(bool Function() condition) async {
 }
 
 String _uploadFilename(RequestOptions request) =>
-    (request.data as FormData).files.single.value.filename!;
+    request.uri.pathSegments.last;
 
 Map<String, dynamic> _requestData(RequestOptions request) {
   final data = request.data;
@@ -359,7 +361,16 @@ class _CloudServer implements HttpClientAdapter {
     }
     Future<ResponseBody> response;
     switch (options.path) {
-      case '/image/upload':
+      case '/image/presign':
+        final filename = _requestData(options)['fileName'] as String;
+        return _json({
+          'uploadUrl': 'https://r2.invalid/${Uri.encodeComponent(filename)}',
+          'method': 'PUT',
+          'headers': {'Content-Type': 'image/jpeg'},
+          'url': 'https://photos.invalid/${Uri.encodeComponent(filename)}',
+          'key': filename,
+        });
+      case _ when options.method == 'PUT' && options.uri.host == 'r2.invalid':
         uploads.add(options);
         response = holdFirstUpload && uploads.length == 1
             ? _firstUpload.future

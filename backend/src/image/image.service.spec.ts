@@ -30,7 +30,7 @@ describe('ImageService cloud upload completion', () => {
     await expect(service.uploadImage(file)).resolves.toMatchObject({
       url: uploadedUrl,
     });
-    expect(storage.uploadFile).toHaveBeenCalledWith(file);
+    expect(storage.uploadFile).toHaveBeenCalledWith(file, undefined);
     expect(remove).toHaveBeenCalledWith(file.path);
   });
 

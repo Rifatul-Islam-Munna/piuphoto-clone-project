@@ -1,5 +1,7 @@
 "use client";
 
+import { UploadFileAxios } from "@/lib/direct-upload";
+
 import { useState, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Upload, X, Loader2, Save } from "lucide-react";
@@ -26,7 +28,6 @@ import WorkspaceLayout from "@/components/WorkspaceLayout";
 import {
   GetRequestAxios,
   PatchRequestAxios,
-  PostRequestAxios,
 } from "@/api-hooks/api-hooks";
 import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
 
@@ -46,10 +47,6 @@ type UserProfile = {
   isActive: boolean;
   isPublished: boolean;
   credits?: number;
-};
-
-type ImageUploadResponse = {
-  data: { url: string; key: string };
 };
 
 type UserFormData = {
@@ -92,20 +89,10 @@ export default function UserSettings() {
   const uploadImage = async (
     file: File,
   ): Promise<{ url: string; key: string }> => {
-    const formDataUpload = new FormData();
-    formDataUpload.append("file", file);
-    const [response, error] = await PostRequestAxios<ImageUploadResponse>(
-      "/image/upload",
-      formDataUpload,
-      {
-        withToken: true,
-        withCredentials: true,
-        headers: { "Content-Type": "multipart/form-data" },
-      },
-    );
+    const [response, error] = await UploadFileAxios(file);
     if (error || !response)
       throw new Error(error?.message || "Failed to upload image");
-    return response.data;
+    return response;
   };
 
   const updateProfile = async (
