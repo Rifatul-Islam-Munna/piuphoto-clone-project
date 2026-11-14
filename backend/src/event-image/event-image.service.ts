@@ -907,27 +907,37 @@ export class EventImageService {
     let enhancedImage: EventImageDocument | null = null;
     let enhancementJob: { requestId: string; status: string } | null = null;
     if (event.autoEnhanceImages && !createEventImageDto.isEnhanced && createEventImageDto.mediaType !== 'video') {
-      try {
-        const enhancement = await this.tryEnhanceForOwner(
-          createEventImageDto.imageUrl,
-          createEventImageDto.eventId,
-          String(userId),
-          String(event.userId),
-          createEventImageDto.albumId,
-          createEventImageDto.enhancePrompt,
-          publishEnhanced,
-          String(eventImage._id),
-        );
-        if (enhancement && this.isEnhancementJobResult(enhancement)) {
-          enhancementJob = enhancement;
-        } else if (enhancement) {
-          enhancedImage = enhancement as EventImageDocument;
-          this.queuePhotoAutomation(enhancedImage);
-          this.emitGallery(createEventImageDto.eventId, { type: 'photo.enhanced', imageId: String(enhancedImage._id), isPublished: enhancedImage.isPublished !== false });
-          void this.workflowWebhooks.publish(createEventImageDto.eventId, 'photo.ai', { imageId: String(enhancedImage._id), sourceEventImageId: String(eventImage._id) });
+      const enhance = async () => {
+        try {
+          const enhancement = await this.tryEnhanceForOwner(
+            createEventImageDto.imageUrl,
+            createEventImageDto.eventId,
+            String(userId),
+            String(event.userId),
+            createEventImageDto.albumId,
+            createEventImageDto.enhancePrompt,
+            publishEnhanced,
+            String(eventImage._id),
+          );
+          if (enhancement && this.isEnhancementJobResult(enhancement)) {
+            enhancementJob = enhancement;
+          } else if (enhancement) {
+            enhancedImage = enhancement as EventImageDocument;
+            this.queuePhotoAutomation(enhancedImage);
+            this.emitGallery(createEventImageDto.eventId, { type: 'photo.enhanced', imageId: String(enhancedImage._id), isPublished: enhancedImage.isPublished !== false });
+            void this.workflowWebhooks.publish(createEventImageDto.eventId, 'photo.ai', { imageId: String(enhancedImage._id), sourceEventImageId: String(eventImage._id) });
+          }
+        } catch (error) {
+          this.logger.error('image-enhance-failed', error);
         }
-      } catch (error) {
-        this.logger.error('image-enhance-failed', error);
+      };
+      if (createEventImageDto.clientTransferId) {
+        // The original is already stored. Camera queues need its confirmation
+        // immediately so a slow AI request cannot hold the next photo hostage.
+        // Retries return the original above and do not charge for AI twice.
+        void enhance();
+      } else {
+        await enhance();
       }
     }
 

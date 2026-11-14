@@ -25,6 +25,7 @@ void main() {
 
   setUp(() async {
     UploadQueueService.stop();
+    UploadQueueService.cloudConfirmationTimeout = const Duration(seconds: 30);
     await getIt.reset();
     SharedPreferences.setMockInitialValues({});
     getIt.registerSingleton<SharedPreferences>(
@@ -47,6 +48,7 @@ void main() {
 
   tearDown(() async {
     UploadQueueService.stop();
+    UploadQueueService.cloudConfirmationTimeout = const Duration(seconds: 30);
     // Transfer-status synchronization is independent of image networking.
     await Future<void>.delayed(Duration.zero);
     await TransferLedgerStorage.init();
@@ -837,6 +839,62 @@ void main() {
       expect(retry['imageUrl'], first['imageUrl']);
       expect(TransferLedgerStorage.find(queued.id)!.isUploaded, isTrue);
       expect(UploadQueueStorage.items.value, isEmpty);
+    },
+  );
+
+  test(
+    'a hung cloud confirmation releases the queue and retries without reuploading',
+    () async {
+      UploadQueueService.cloudConfirmationTimeout = const Duration(milliseconds: 40);
+      final held = Completer<ResponseBody>();
+      final first = await receive('stalled-confirmation');
+      final next = await receive('next-photo');
+      var confirmations = 0;
+      adapter.onEventImage = (options) {
+        if (_requestData(options)['clientTransferId'] == first.id) {
+          confirmations++;
+          if (confirmations == 1) return held.future;
+        }
+        return Future.value(_json({
+          'data': {'_id': 'confirmed-photo', 'isPublished': true},
+        }));
+      };
+
+      try {
+        await UploadQueueService.processQueue().timeout(const Duration(seconds: 3));
+        final stalled = TransferLedgerStorage.find(first.id)!;
+        expect(stalled.status, TransferLedgerStatus.failed);
+        expect(stalled.registrationStarted, isTrue);
+        expect(stalled.imageUrl, isNotEmpty);
+        expect(stalled.error, contains('Cloud confirmation timed out'));
+        expect(UploadQueueStorage.isCompleted(first.id), isFalse);
+        expect(await File(first.localPath).exists(), isTrue);
+        expect(TransferLedgerStorage.find(next.id)!.isUploaded, isTrue);
+        expect(UploadQueueService.isProcessing.value, isFalse);
+        expect(adapter.imageUploads, hasLength(2));
+        expect(adapter.eventImages.first.cancelToken!.isCancelled, isTrue);
+
+        // A late response cannot complete or delete the retained retry copy.
+        held.complete(_json({
+          'data': {'_id': 'late-response', 'isPublished': true},
+        }));
+        await Future<void>.delayed(Duration.zero);
+        expect(UploadQueueStorage.isCompleted(first.id), isFalse);
+        expect(await File(first.localPath).exists(), isTrue);
+
+        await UploadQueueService.retryNow(first.id);
+        expect(adapter.imageUploads, hasLength(2));
+        final attempts = adapter.eventImages
+            .where((request) => _requestData(request)['clientTransferId'] == first.id)
+            .map(_requestData).toList();
+        expect(attempts, hasLength(2));
+        expect(attempts[1]['imageUrl'], attempts[0]['imageUrl']);
+        expect(TransferLedgerStorage.find(first.id)!.isUploaded, isTrue);
+        expect(UploadQueueStorage.items.value, isEmpty);
+        expect(await File(first.localPath).exists(), isFalse);
+      } finally {
+        if (!held.isCompleted) held.complete(_json({}));
+      }
     },
   );
 

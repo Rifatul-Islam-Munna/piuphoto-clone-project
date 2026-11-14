@@ -6,6 +6,7 @@ jest.mock('../face-search/qdrant-face.service', () => ({
 }));
 
 import axios from 'axios';
+import { Logger } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { EventImageService } from './event-image.service';
 import { FalEnhancementJobStatus } from './entities/fal-enhancement-job.entity';
@@ -227,5 +228,96 @@ describe('EventImageService upload idempotency', () => {
     expect(result.data).toBe(existing);
     expect(eventImageModel.create).not.toHaveBeenCalled();
     expect(members.assertCanUpload).toHaveBeenCalled();
+  });
+});
+
+describe('EventImageService camera upload confirmation', () => {
+  function makeService() {
+    const eventId = new Types.ObjectId();
+    const userId = new Types.ObjectId();
+    const event = { _id: eventId, userId, autoEnhanceImages: true };
+    const original = { _id: new Types.ObjectId(), eventId, isPublished: true };
+    const enhanced = { _id: new Types.ObjectId(), eventId, isPublished: true };
+    const model = {
+      findOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }),
+      create: jest.fn().mockResolvedValue(original),
+    };
+    const publish = jest.fn().mockResolvedValue(0);
+    const service = new EventImageService(
+      model as never, {} as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never, {} as never,
+      { assertCanUpload: jest.fn().mockResolvedValue(undefined) } as never,
+      {} as never, {} as never, {} as never, {} as never, {} as never,
+      { publish } as never,
+    );
+    jest.spyOn(service as any, 'assertCanUseEvent').mockResolvedValue(event);
+    jest.spyOn(service as any, 'assertEventUploadLimit').mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'resolvePublishPolicy').mockResolvedValue('auto_upload');
+    const automate = jest.spyOn(service as any, 'queuePhotoAutomation').mockImplementation(() => undefined);
+    let finishEnhancement: (value: unknown) => void;
+    let rejectEnhancement: (error: Error) => void;
+    const pending = new Promise((resolve, reject) => {
+      finishEnhancement = resolve;
+      rejectEnhancement = reject;
+    });
+    const enhance = jest.spyOn(service as any, 'tryEnhanceForOwner').mockReturnValue(pending);
+    return {
+      service, model, original, enhanced, automate, enhance, publish,
+      finishEnhancement, rejectEnhancement, userId,
+      dto: { eventId: String(eventId), imageUrl: 'https://images.example/shot.jpg', clientTransferId: 'camera-shot-1' },
+    };
+  }
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('confirms the saved photo while automatic enhancement is still blocked', async () => {
+    const fixture = makeService();
+    const response = fixture.service.create(fixture.dto, String(fixture.userId));
+    try {
+      const result = await Promise.race([
+        response,
+        new Promise((resolve) => setTimeout(() => resolve('still waiting for AI'), 20)),
+      ]);
+      expect(result).toMatchObject({ data: fixture.original });
+      expect(fixture.enhance).toHaveBeenCalledTimes(1);
+    } finally {
+      fixture.finishEnhancement(fixture.enhanced);
+      await response;
+      await new Promise(setImmediate);
+    }
+    expect(fixture.automate).toHaveBeenCalledWith(fixture.enhanced);
+    expect(fixture.publish).toHaveBeenCalledWith(
+      fixture.dto.eventId, 'photo.ai', expect.objectContaining({ imageId: String(fixture.enhanced._id) }),
+    );
+  });
+
+  it('does not start another enhancement when confirmation is retried', async () => {
+    const fixture = makeService();
+    const first = fixture.service.create(fixture.dto, String(fixture.userId));
+    fixture.finishEnhancement(null);
+    await first;
+    fixture.model.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(fixture.original) });
+    const repeated = await fixture.service.create(fixture.dto, String(fixture.userId));
+    expect(repeated.idempotent).toBe(true);
+    expect(fixture.enhance).toHaveBeenCalledTimes(1);
+    expect(fixture.model.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves synchronous enhancement results for callers without a transfer id', async () => {
+    const fixture = makeService();
+    const { clientTransferId, ...dto } = fixture.dto;
+    fixture.finishEnhancement(fixture.enhanced);
+    const result = await fixture.service.create(dto, String(fixture.userId));
+    expect(result.enhancedData).toBe(fixture.enhanced);
+  });
+
+  it('keeps a saved camera photo confirmed even when background enhancement fails', async () => {
+    const fixture = makeService();
+    const log = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const response = fixture.service.create(fixture.dto, String(fixture.userId));
+    fixture.rejectEnhancement(new Error('AI unavailable'));
+    await expect(response).resolves.toMatchObject({ data: fixture.original });
+    await new Promise(setImmediate);
+    expect(log).toHaveBeenCalledWith('image-enhance-failed', expect.any(Error));
   });
 });

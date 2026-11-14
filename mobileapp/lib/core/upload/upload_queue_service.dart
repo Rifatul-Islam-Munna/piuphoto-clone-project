@@ -34,6 +34,8 @@ class UploadQueueService {
   UploadQueueService._();
 
   static const _maxRetryDelayMinutes = 30;
+  @visibleForTesting
+  static Duration cloudConfirmationTimeout = const Duration(seconds: 30);
   static final ValueNotifier<bool> isProcessing = ValueNotifier<bool>(false);
   static final Map<String, Future<void>> _remoteSyncChains = {};
   static final Map<String, Future<PendingUploadItem>> _fileImportsInFlight = {};
@@ -920,6 +922,8 @@ class UploadQueueService {
         imageUrl: imageUrl,
         registrationStarted: true,
       );
+      final confirmationToken = CancelToken();
+      final confirmationTimeout = cloudConfirmationTimeout;
       final eventResponse = await DioHelper.post(
         '/eventImage',
         data: {
@@ -929,6 +933,23 @@ class UploadQueueService {
           'isEnhanced': isEnhanced,
           'mediaType': _mediaType(filename),
           'albumId': ?albumId,
+        },
+        cancelToken: confirmationToken,
+        options: Options(
+          sendTimeout: confirmationTimeout,
+          receiveTimeout: confirmationTimeout,
+        ),
+      ).timeout(
+        confirmationTimeout,
+        onTimeout: () {
+          // Bound the entire confirmation, including interceptors and stalled
+          // response streams. Keep the saved URL and transfer ID for a safe
+          // retry: cancelling HTTP does not undo a possible server commit.
+          confirmationToken.cancel('Cloud confirmation timed out');
+          throw TimeoutException(
+            'Cloud confirmation timed out. AirPix will retry.',
+            confirmationTimeout,
+          );
         },
       );
       final eventResponseData = eventResponse.data;
