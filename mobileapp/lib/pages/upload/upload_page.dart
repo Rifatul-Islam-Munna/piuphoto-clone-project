@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobileapp/core/guest/guest_qr_payload.dart';
 import 'package:mobileapp/core/guest/guest_qr_preparation.dart';
@@ -3074,7 +3075,10 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   }
 
   Future<void> _showPreparedGuestQr(EventSummary event) async {
-    final payload = GuestQrPayload.encode(event.id);
+    final payload = GuestQrPayload.encode(
+      event.id,
+      publicAppUrl: dotenv.env['PUBLIC_APP_URL'],
+    );
     await showDialog<void>(
       context: context,
       useRootNavigator: true,
@@ -3096,7 +3100,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Scan in AirPix. Guests take 2-5 selfies, then receive their matching photos.',
+              'Scan with your phone camera or AirPix. Guests take 2-5 selfies, then receive their matching photos.',
               textAlign: TextAlign.center,
             ),
           ],

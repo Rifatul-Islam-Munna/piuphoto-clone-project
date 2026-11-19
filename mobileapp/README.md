@@ -2,6 +2,17 @@
 
 A new Flutter project.
 
+## Guest QR website
+
+Set `PUBLIC_APP_URL=https://airpix.app` in `mobileapp/.env` to the public
+frontend website. `API_URL` stays pointed at the backend. Guest QR codes use
+`https://airpix.app/#/event/<eventId>?v=1&face=1`, which opens in a phone browser
+without installing AirPix and remains scannable inside AirPix.
+
+Release the updated mobile app, then generate and share fresh guest QR codes.
+Previously shared `airpix://` codes still work in the in-app scanner, but cannot
+be repaired for external browsers by changing backend environment variables.
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.

@@ -7,7 +7,8 @@ import 'package:mobileapp/widgets/intrinsic_qr_image.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 void main() {
-  const testPayload = 'airpix://guest/event/507f1f77bcf86cd799439011?v=1&face=1';
+  const testPayload =
+      'https://airpix.app/#/event/507f1f77bcf86cd799439011?v=1&face=1';
 
   // Regression test: an AlertDialog measures its content with IntrinsicWidth
   // before layout. QrImageView wraps its painter in a LayoutBuilder, which
