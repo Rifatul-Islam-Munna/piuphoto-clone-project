@@ -136,6 +136,83 @@ export class MinioService implements OnModuleInit, OnModuleDestroy {
     return `${apiUrl.replace(/\/+$/, '')}/image/file/${encodeURIComponent(fileName)}?token=${this.fileToken(fileName)}`;
   }
 
+  /** Resolve public bucket URLs and our HMAC-signed private-file URLs only. */
+  private storedObjectKey(fileUrl: string): string {
+    let objectUrl: URL;
+    try {
+      objectUrl = new URL(fileUrl);
+    } catch {
+      throw new HttpException('Photo is not hosted in configured storage', HttpStatus.BAD_REQUEST);
+    }
+    if (!['http:', 'https:'].includes(objectUrl.protocol) ||
+        objectUrl.username || objectUrl.password) {
+      throw new HttpException('Photo is not hosted in configured storage', HttpStatus.BAD_REQUEST);
+    }
+
+    let key: string | undefined;
+    if (this.publicUrl) {
+      const baseUrl = new URL(this.publicUrl);
+      const prefix = baseUrl.pathname.endsWith('/')
+        ? baseUrl.pathname : baseUrl.pathname + '/';
+      if (objectUrl.origin === baseUrl.origin &&
+          objectUrl.pathname.startsWith(prefix)) {
+        try {
+          key = objectUrl.pathname.slice(prefix.length)
+            .split('/').map(decodeURIComponent).join('/');
+        } catch {
+          throw new HttpException('Invalid storage object path', HttpStatus.BAD_REQUEST);
+        }
+      }
+    }
+
+    // R2 without a public bucket domain uses /image/file/:key?token=HMAC.
+    // Verify the same bucket/key HMAC used by fileUrl(); never fetch the URL
+    // itself or permit an arbitrary host to act as a storage proxy.
+    if (!key && objectUrl.pathname.startsWith('/image/file/')) {
+      let candidate: string;
+      try {
+        candidate = decodeURIComponent(objectUrl.pathname.slice('/image/file/'.length));
+      } catch {
+        throw new HttpException('Invalid storage object path', HttpStatus.BAD_REQUEST);
+      }
+      const supplied = objectUrl.searchParams.get('token') || '';
+      if (/^[a-f0-9]{64}$/i.test(supplied)) {
+        const expected = Buffer.from(this.fileToken(candidate), 'hex');
+        const received = Buffer.from(supplied, 'hex');
+        if (expected.length === received.length && timingSafeEqual(expected, received)) {
+          key = candidate;
+        }
+      }
+    }
+
+    if (!key || key.split('/').some((part) => !part || part === '.' || part === '..')) {
+      throw new HttpException('Photo is not hosted in configured storage', HttpStatus.BAD_REQUEST);
+    }
+    return key;
+  }
+
+  canStreamStoredUrl(fileUrl: string): boolean {
+    try {
+      this.storedObjectKey(fileUrl);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Streams original photo bytes from the authorized R2 / MinIO bucket. */
+  async openStoredUrl(fileUrl: string, signal?: AbortSignal): Promise<Readable> {
+    const key = this.storedObjectKey(fileUrl);
+    const response = await this.s3.send(
+      new GetObjectCommand({ Bucket: this.bucketName, Key: key }),
+      { abortSignal: signal },
+    );
+    if (!response.Body) {
+      throw new HttpException('Storage photo is unavailable', HttpStatus.NOT_FOUND);
+    }
+    return response.Body as Readable;
+  }
+
   async presignUpload(file: PresignUploadDto, requestOrigin?: string) {
     if (!file.fileName?.trim() || file.fileName.length > 255 || !Number.isInteger(file.size) || file.size <= 0 || file.size > MAX_UPLOAD_SIZE) {
       throw new HttpException('A file name and size between 1 byte and 256 MiB are required', HttpStatus.BAD_REQUEST);

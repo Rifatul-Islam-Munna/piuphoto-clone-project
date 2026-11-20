@@ -93,17 +93,24 @@ class PresignedUploadService {
   }
 
   static Future<List<String>> uploadFiles(
-    List<({String path, String filename})> files,
-  ) async {
+    List<({String path, String filename})> files, {
+    void Function(int index)? onStarted,
+    void Function(int index, int sent, int total)? onProgress,
+    void Function(int index)? onStored,
+  }) async {
     final urls = List<String>.filled(files.length, '');
     var next = 0;
     Future<void> worker() async {
       while (next < files.length) {
         final index = next++;
+        onStarted?.call(index);
         urls[index] = await uploadFile(
           path: files[index].path,
           filename: files[index].filename,
+          onSendProgress: (sent, total) => onProgress?.call(index, sent, total),
         );
+        // Stored in object storage, but not yet registered in the event.
+        onStored?.call(index);
       }
     }
 

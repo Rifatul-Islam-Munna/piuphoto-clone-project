@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -31,7 +32,9 @@ void main() {
     expect(url, 'https://images.invalid/photo.jpg');
     expect(adapter.requests.map((r) => r.method), ['POST', 'PUT']);
     final payload = adapter.requests.first.data;
-    final metadata = payload is String ? jsonDecode(payload) as Map : payload as Map;
+    final metadata = payload is String
+        ? jsonDecode(payload) as Map
+        : payload as Map;
     expect(metadata['fileName'], 'photo.jpg');
     expect(metadata['size'], 3);
     final put = adapter.requests.last;
@@ -43,11 +46,51 @@ void main() {
     expect(progress.last, 3);
   });
 
+  test(
+    'manual batch emits per-file progress and completion callbacks',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('airpix-batch-');
+      try {
+        final first = File('${directory.path}/first.jpg');
+        final second = File('${directory.path}/second.jpg');
+        await first.writeAsBytes([1, 2, 3]);
+        await second.writeAsBytes([4, 5, 6]);
+        final started = <int>[];
+        final stored = <int>[];
+        final progress = <int>[];
+
+        final urls = await PresignedUploadService.uploadFiles(
+          [
+            (path: first.path, filename: 'first.jpg'),
+            (path: second.path, filename: 'second.jpg'),
+          ],
+          onStarted: started.add,
+          onProgress: (index, sent, total) => progress.add(index),
+          onStored: stored.add,
+        );
+        expect(urls, [
+          'https://images.invalid/photo.jpg',
+          'https://images.invalid/photo.jpg',
+        ]);
+        expect(started, containsAll([0, 1]));
+        expect(stored, containsAll([0, 1]));
+        expect(progress, isNotEmpty);
+        expect(
+          adapter.requests.where((item) => item.method == 'PUT').length,
+          2,
+        );
+      } finally {
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
   test('failed direct PUT never reports a successful upload URL', () async {
     adapter.putStatus = 403;
     await expectLater(
       PresignedUploadService.uploadBytes(
-        bytes: Uint8List.fromList([1]), filename: 'photo.jpg',
+        bytes: Uint8List.fromList([1]),
+        filename: 'photo.jpg',
       ),
       throwsA(isA<DioException>()),
     );
@@ -58,9 +101,17 @@ void main() {
     adapter.afterSigning = () => token.cancel('cancelled');
     await expectLater(
       PresignedUploadService.uploadBytes(
-        bytes: Uint8List.fromList([1]), filename: 'photo.jpg', cancelToken: token,
+        bytes: Uint8List.fromList([1]),
+        filename: 'photo.jpg',
+        cancelToken: token,
       ),
-      throwsA(isA<DioException>().having((e) => e.type, 'type', DioExceptionType.cancel)),
+      throwsA(
+        isA<DioException>().having(
+          (e) => e.type,
+          'type',
+          DioExceptionType.cancel,
+        ),
+      ),
     );
     expect(adapter.requests, hasLength(1));
   });
@@ -81,18 +132,26 @@ class _DirectUploadAdapter implements HttpClientAdapter {
     requests.add(options);
     if (options.method == 'PUT') {
       if (requestStream != null) {
-        await for (final bytes in requestStream) { uploadedBytes.addAll(bytes); }
+        await for (final bytes in requestStream) {
+          uploadedBytes.addAll(bytes);
+        }
       }
       return ResponseBody.fromString('', putStatus);
     }
     if (requestStream != null) await requestStream.drain<void>();
     afterSigning?.call();
-    return ResponseBody.fromString(jsonEncode({
-      'uploadUrl': 'https://r2.invalid/photo.jpg?signature=test',
-      'url': 'https://images.invalid/photo.jpg',
-      'method': 'PUT',
-      'headers': {'Content-Type': 'image/jpeg'},
-    }), 200, headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
+    return ResponseBody.fromString(
+      jsonEncode({
+        'uploadUrl': 'https://r2.invalid/photo.jpg?signature=test',
+        'url': 'https://images.invalid/photo.jpg',
+        'method': 'PUT',
+        'headers': {'Content-Type': 'image/jpeg'},
+      }),
+      200,
+      headers: {
+        Headers.contentTypeHeader: [Headers.jsonContentType],
+      },
+    );
   }
 
   @override

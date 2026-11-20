@@ -270,6 +270,17 @@ class TransferLedgerStorage {
     return _mutate((current) => _replace(current, item));
   }
 
+  /// Save a confirmed manual upload batch with a single persistence write.
+  static Future<void> upsertAll(Iterable<TransferLedgerItem> updates) {
+    return _mutate((current) {
+      var next = current;
+      for (final item in updates) {
+        next = _replace(next, item);
+      }
+      return next;
+    });
+  }
+
   static Future<void> updateStatus(
     String id,
     TransferLedgerStatus status, {

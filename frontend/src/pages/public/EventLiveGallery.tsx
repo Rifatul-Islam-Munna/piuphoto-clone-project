@@ -74,6 +74,22 @@ import {
   PatchRequestAxios,
   PostRequestAxios,
 } from "@/api-hooks/api-hooks";
+import {
+  archiveName,
+  createGalleryZip,
+  galleryFileName,
+  hasDirectDiskSave,
+  launchNativeDownload,
+  nativeDownloadUrl,
+  reserveZipFile,
+  shouldUseNativeBrowserDownload,
+} from "@/lib/gallery-zip-download";
+import {
+  canSaveGalleryFolder,
+  chooseGalleryFolder,
+  saveGalleryToFolder,
+} from "@/lib/gallery-folder-download";
+import { shouldGateGalleryForFace } from "@/lib/gallery-face-options";
 
 type Branding = {
   logoUrl?: string;
@@ -221,8 +237,11 @@ async function downloadImage(url: string, filename: string) {
     const link = document.createElement("a");
     link.href = localUrl;
     link.download = filename;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(localUrl);
+    link.remove();
+    // Mobile browsers may not have accepted the download yet.
+    window.setTimeout(() => URL.revokeObjectURL(localUrl), 60_000);
   } catch {
     window.open(url, "_blank", "noopener,noreferrer");
   }
@@ -255,6 +274,10 @@ export default function EventLiveGallery() {
   const [faceSearching, setFaceSearching] = useState(false);
   const [faceMatches, setFaceMatches] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<{done: number; total: number} | null>(null);
+  const [preparedZip, setPreparedZip] = useState<{objectUrl: string; fileName: string; count: number} | null>(null);
+  const [nativeFallbackUrl, setNativeFallbackUrl] = useState("");
+  const downloadAbort = useRef<AbortController | null>(null);
   const [selfies, setSelfies] = useState<File[]>([]);
   const [registering, setRegistering] = useState(false);
   const [email, setEmail] = useState("");
@@ -274,10 +297,25 @@ export default function EventLiveGallery() {
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const [slideshow, setSlideshow] = useState(false);
   const [findMeOpen, setFindMeOpen] = useState(false);
+  const [faceEnrollmentOpen, setFaceEnrollmentOpen] = useState(false);
+  const [faceOfferDismissed, setFaceOfferDismissed] = useState(false);
+  const [downloadOptionsOpen, setDownloadOptionsOpen] = useState(false);
+  const [individualDownloadMode, setIndividualDownloadMode] = useState(false);
+  const [individualVisible, setIndividualVisible] = useState(18);
+  const [folderProgress, setFolderProgress] = useState<{ done: number; total: number } | null>(null);
+  const folderAbort = useRef<AbortController | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [shareTitle, setShareTitle] = useState("");
   const [shareQr, setShareQr] = useState("");
+
+  useEffect(() => {
+    return () => {
+      downloadAbort.current?.abort();
+      folderAbort.current?.abort();
+      // Keep archive URLs alive long enough for browser confirmation sheets.
+    };
+  }, []);
 
   const commonParams = useCallback(
     (includeAccess = true) => {
@@ -750,7 +788,8 @@ export default function EventLiveGallery() {
     window.location.href = data.url;
   };
 
-  const download = async (targetOverride?: GalleryImage[]) => {
+  const download = (targetOverride?: GalleryImage[]) => {
+    if (downloading) return;
     const target =
       targetOverride ||
       (selected.size
@@ -769,17 +808,169 @@ export default function EventLiveGallery() {
       return;
     }
 
-    setDownloading(true);
-    for (const [index, image] of target.entries()) {
-      if (image.imageUrl) {
-        track("download", imageId(image));
-        await downloadImage(
-          assetUrl(image.imageUrl),
-          `event-photo-${imageId(image).slice(-8) || index + 1}.${image.mediaType === "video" ? "mp4" : "jpg"}`,
-        );
-      }
+    const downloadable = target.filter((image) => Boolean(image.imageUrl));
+    if (!downloadable.length) {
+      toast.error("No downloadable photos in this gallery.");
+      return;
     }
-    setDownloading(false);
+    const fileName = archiveName(info?.title || "airpix-event-photos");
+    const nativeIds = targetOverride || selected.size
+      ? downloadable.map((image) => imageId(image))
+      : undefined;
+    const canNativeDownload =
+      !(faceMatches && !guestToken) &&
+      (!nativeIds || (
+        nativeIds.length <= 250 &&
+        nativeIds.every((id) => /^[0-9a-f]{24}$/i.test(id))
+      ));
+    const nativeUrl = canNativeDownload
+      ? nativeDownloadUrl(baseUrl, {
+          eventId, albumId, accessToken, guestToken,
+          ids: nativeIds,
+          single: downloadable.length === 1,
+        })
+      : "";
+    // A real HTTP attachment works on iOS Safari without delayed synthetic
+    // clicks, popup blockers, or keeping a giant ZIP in phone memory.
+    const useNative = canNativeDownload && nativeUrl.length < 7900 &&
+      (shouldUseNativeBrowserDownload(navigator.userAgent) ||
+        (!hasDirectDiskSave() && downloadable.length > 16));
+    setNativeFallbackUrl("");
+    if (preparedZip) {
+      const previous = preparedZip.objectUrl;
+      window.setTimeout(() => URL.revokeObjectURL(previous), 300_000);
+      setPreparedZip(null);
+    }
+    if (useNative) {
+      launchNativeDownload(nativeUrl);
+      track("download");
+      toast.info("Your browser is opening the file download. On iPhone, check Files > Downloads.");
+      return;
+    }
+    if (downloadable.length === 1) {
+      const image = downloadable[0];
+      setDownloading(true);
+      void downloadImage(
+        assetUrl(image.imageUrl),
+        galleryFileName(assetUrl(image.imageUrl), imageId(image), image.mediaType, 0),
+      ).then(() => track("download"))
+        .finally(() => setDownloading(false));
+      return;
+    }
+
+    const files = downloadable.map((image, index) => ({
+      url: assetUrl(image.imageUrl),
+      name: galleryFileName(
+        assetUrl(image.imageUrl), imageId(image), image.mediaType, index,
+      ),
+    }));
+    const controller = new AbortController();
+    downloadAbort.current = controller;
+    setDownloadProgress({ done: 0, total: files.length });
+    setDownloading(true);
+    // Reserve a disk destination while this click still has user activation.
+    const destination = hasDirectDiskSave()
+      ? reserveZipFile(fileName)
+      : Promise.resolve(null);
+    void (async () => {
+      try {
+        const writable = await destination;
+        const result = await createGalleryZip(files, fileName, {
+          writable,
+          signal: controller.signal,
+          onProgress: (done, total) => setDownloadProgress({ done, total }),
+        });
+        track("download");
+        if (result.kind === "ready") {
+          setPreparedZip({
+            objectUrl: result.objectUrl,
+            fileName: result.fileName,
+            count: result.count,
+          });
+          toast.info("ZIP prepared. Tap Save ZIP below to save it.");
+        } else {
+          toast.success(`ZIP saved with ${result.count} photos.`);
+        }
+      } catch (error) {
+        if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+          toast.info("Download cancelled.");
+        } else {
+          toast.error(error instanceof Error ? error.message : "Could not create ZIP");
+          if (canNativeDownload && nativeUrl.length < 7900) {
+            setNativeFallbackUrl(nativeUrl);
+          }
+        }
+      } finally {
+        if (downloadAbort.current === controller) downloadAbort.current = null;
+        setDownloading(false);
+        setDownloadProgress(null);
+      }
+    })();
+  };
+
+  const startFolderSave = () => {
+    if (downloading || folderProgress || !canSaveGalleryFolder()) return;
+    const target = selected.size
+      ? images.filter((image) => selected.has(imageId(image)))
+      : images;
+    const paid = target.filter((image) => image.purchaseRequired);
+    if (paid.length) {
+      toast.error("Purchase any locked originals before saving this selection.");
+      return;
+    }
+    const downloadable = target.filter((image) => Boolean(image.imageUrl));
+    if (!downloadable.length) {
+      toast.error("No available photos to save.");
+      return;
+    }
+    // Folder picker MUST run during this click, before any asynchronous work.
+    let directoryPromise: ReturnType<typeof chooseGalleryFolder>;
+    try {
+      directoryPromise = chooseGalleryFolder();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Folder picker unavailable.");
+      return;
+    }
+    const controller = new AbortController();
+    folderAbort.current = controller;
+    setDownloadOptionsOpen(false);
+    setFolderProgress({ done: 0, total: downloadable.length });
+    const files = downloadable.map((image, index) => {
+      const id = imageId(image);
+      return {
+        url: assetUrl(image.imageUrl),
+        name: galleryFileName(assetUrl(image.imageUrl), id, image.mediaType, index),
+        fallbackUrl: /^[a-f0-9]{24}$/i.test(id)
+          ? nativeDownloadUrl(baseUrl, {
+              eventId, albumId, accessToken, guestToken, ids: [id],
+              single: true,
+            })
+          : undefined,
+      };
+    });
+    void (async () => {
+      try {
+        const directory = await directoryPromise;
+        const count = await saveGalleryToFolder(directory, files, {
+          signal: controller.signal,
+          onProgress: (done, total) => setFolderProgress({ done, total }),
+        });
+        track("download");
+        toast.success(`Saved ${count} photos to the selected folder.`);
+      } catch (error) {
+        if (controller.signal.aborted ||
+            (error instanceof DOMException && error.name === "AbortError")) {
+          toast.info("Folder download cancelled.");
+        } else {
+          toast.error(
+            error instanceof Error ? error.message : "Could not save all photos.",
+          );
+        }
+      } finally {
+        if (folderAbort.current === controller) folderAbort.current = null;
+        setFolderProgress(null);
+      }
+    })();
   };
 
   const focusedImage =
@@ -896,12 +1087,13 @@ export default function EventLiveGallery() {
     );
   }
 
-  if (
-    (faceEnrollment ||
-      info?.requiresFaceSearch ||
-      info?.visibility === "facial") &&
-    !guestToken
-  ) {
+  if (shouldGateGalleryForFace({
+    isFaceDeliveryLink: faceEnrollment,
+    userSelectedFaceSetup: faceEnrollmentOpen,
+    eventRequiresFaceSearch: Boolean(info?.requiresFaceSearch),
+    isFacialOnlyGallery: info?.visibility === "facial",
+    hasGuestToken: Boolean(guestToken),
+  })) {
     return (
       <AccessShell info={info} branding={branding} cover={cover} style={style}>
         <UserRoundSearch className="mb-4 h-10 w-10" />
@@ -915,6 +1107,17 @@ export default function EventLiveGallery() {
             ? "Take 2-5 clear selfies and add your email + WhatsApp. We reuse the private face profile at enabled events so new matching photos can reach you automatically."
             : "Take or upload a selfie. Your personal gallery updates while photographers keep shooting."}
         </p>
+        {faceEnrollment && faceEnrollmentOpen &&
+          !info?.requiresFaceSearch && info?.visibility !== "facial" ? (
+          <Button
+            variant="outline"
+            className="mt-4"
+            onClick={() => setFaceEnrollmentOpen(false)}
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Continue browsing without face setup
+          </Button>
+        ) : null}
         {faceEnrollment ? (
           <div className="mt-5 grid grid-cols-3 gap-2">
             <EnrollmentStep
@@ -1113,6 +1316,39 @@ export default function EventLiveGallery() {
     );
   }
 
+  // On iOS, use an actual user-tapped link to an attachment response.
+  // A delayed JavaScript-triggered Blob download may be ignored by Safari.
+  const iosNativeTargets = selected.size
+    ? images.filter((image) => selected.has(imageId(image)))
+    : images;
+  const iosNativeIds = selected.size
+    ? iosNativeTargets.map((image) => imageId(image))
+    : undefined;
+  const iosNativeUrl = !storeEnabled &&
+    shouldUseNativeBrowserDownload(navigator.userAgent) &&
+    !(faceMatches && !guestToken) &&
+    iosNativeTargets.length > 0 &&
+    iosNativeTargets.every((image) => image.imageUrl && !image.purchaseRequired) &&
+    (!iosNativeIds || (
+      iosNativeIds.length <= 250 &&
+      iosNativeIds.every((id) => /^[0-9a-f]{24}$/i.test(id))
+    ))
+    ? nativeDownloadUrl(baseUrl, {
+        eventId, albumId, accessToken, guestToken, ids: iosNativeIds,
+        single: iosNativeTargets.length === 1,
+      })
+    : null;
+  const iosDownloadLink = iosNativeUrl && iosNativeUrl.length < 7900 ? iosNativeUrl : null;
+  const downloadTargets = selected.size
+    ? images.filter((image) => selected.has(imageId(image)))
+    : images;
+  const freeDownloadTargets = downloadTargets.filter(
+    (image) => Boolean(image.imageUrl) && !image.purchaseRequired,
+  );
+  const lockedDownloadCount = downloadTargets.filter(
+    (image) => image.purchaseRequired,
+  ).length;
+
   const visibleImages = images.slice(0, visibleCount);
   return (
     <div className="min-h-screen bg-background" style={style}>
@@ -1232,30 +1468,30 @@ export default function EventLiveGallery() {
                   Buy all · {storeCatalog.settings.currency} {buyAllPrice.toFixed(2)}
                 </Button>
               ) : null}
+              {storeEnabled ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => buySelectedOrAll()}
+                  disabled={!images.length}
+                >
+                  <ShoppingCart className="mr-2 h-4 w-4" />
+                  Buy photos
+                </Button>
+              ) : null}
               <Button
                 variant="outline"
-                size="icon"
-                disabled={downloading || images.length === 0}
-                aria-label={
-                  storeEnabled
-                    ? selected.size
-                      ? "Buy selected photos"
-                      : "Buy photos"
-                    : selected.size
-                      ? "Download selected photos"
-                      : "Download all photos"
-                }
-                onClick={() =>
-                  storeEnabled ? buySelectedOrAll() : void download()
-                }
+                size="sm"
+                disabled={downloading || Boolean(folderProgress) || images.length === 0}
+                aria-label="Choose photo download format"
+                onClick={() => {
+                  setIndividualDownloadMode(false);
+                  setIndividualVisible(18);
+                  setDownloadOptionsOpen(true);
+                }}
               >
-                {downloading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : storeEnabled ? (
-                  <ShoppingCart className="h-4 w-4" />
-                ) : (
-                  <Download className="h-4 w-4" />
-                )}
+                <Download className="mr-2 h-4 w-4" />
+                Download options
               </Button>
               <Button
                 variant="outline"
@@ -1319,6 +1555,128 @@ export default function EventLiveGallery() {
             </div>
           </div>
         </section>
+
+        {faceEnrollment && !guestToken && !faceOfferDismissed &&
+          info?.visibility !== "facial" && !info?.requiresFaceSearch ? (
+          <Card className="border-primary/20">
+            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <UserRoundSearch className="mt-0.5 h-6 w-6 shrink-0 text-primary" />
+                <div>
+                  <p className="font-semibold">Find your photos automatically (optional)</p>
+                  <p className="text-sm text-muted-foreground">
+                    You can browse and download event photos without a selfie.
+                    If you choose, set up face-based delivery to receive photos of yourself.
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setFaceOfferDismissed(true)}>
+                  Not now
+                </Button>
+                <Button size="sm" onClick={() => setFaceEnrollmentOpen(true)}>
+                  Set up face delivery
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {folderProgress ? (
+          <Card>
+            <CardContent className="space-y-3 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span>Saving individual photos into your folder</span>
+                <span className="font-semibold tabular-nums">
+                  {folderProgress.done} / {folderProgress.total}
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full bg-primary transition-[width]"
+                  style={{
+                    width: `${folderProgress.total
+                      ? 100 * folderProgress.done / folderProgress.total
+                      : 0}%`,
+                  }}
+                />
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => folderAbort.current?.abort()}>
+                Cancel folder download
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {(downloadProgress || preparedZip || nativeFallbackUrl) && (
+          <Card className="border-primary/20">
+            <CardContent className="space-y-3 p-4">
+              {downloadProgress && (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span>Adding photos to your ZIP</span>
+                    <span className="font-semibold tabular-nums">
+                      {downloadProgress.done} / {downloadProgress.total}
+                    </span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-primary transition-[width]"
+                      style={{
+                        width: `${downloadProgress.total
+                          ? 100 * downloadProgress.done / downloadProgress.total
+                          : 0}%`,
+                      }}
+                    />
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => downloadAbort.current?.abort()}
+                  >
+                    Cancel ZIP preparation
+                  </Button>
+                </>
+              )}
+              {preparedZip && (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-semibold">ZIP ready: {preparedZip.count} photos</p>
+                    <p className="text-xs text-muted-foreground">
+                      Tap Save ZIP to finish the download. On iPhone, find the file in Files &gt; Downloads.
+                    </p>
+                  </div>
+                  <Button asChild>
+                    <a
+                      href={preparedZip.objectUrl}
+                      download={preparedZip.fileName}
+                      onClick={() => {
+                        const url = preparedZip.objectUrl;
+                        window.setTimeout(() => URL.revokeObjectURL(url), 300_000);
+                      }}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Save ZIP to device
+                    </a>
+                  </Button>
+                </div>
+              )}
+              {nativeFallbackUrl && (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm">
+                    Direct Cloudflare download was unavailable. Use a normal browser file download instead.
+                  </p>
+                  <Button asChild variant="outline">
+                    <a href={nativeFallbackUrl} target="_blank" rel="noopener noreferrer">
+                      <Download className="mr-2 h-4 w-4" />
+                      Download via browser
+                    </a>
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {guestToken && info?.guestNotificationsEnabled ? (
           <Card>
@@ -1490,29 +1848,53 @@ export default function EventLiveGallery() {
                       }}
                     />
                   ) : null}
-                  <label className="absolute left-3 top-3 rounded-full bg-background/90 p-1.5 opacity-0 shadow-sm transition group-hover:opacity-100 has-[:checked]:opacity-100">
+                  <label className="absolute left-3 top-3 rounded-full bg-background/90 p-1.5 shadow-sm sm:opacity-0 sm:transition sm:group-hover:opacity-100 has-[:checked]:opacity-100">
                     <Checkbox
                       checked={isSelected}
                       onCheckedChange={() => toggle(id)}
                       aria-label="Select image"
                     />
                   </label>
-                  <Button
-                    size="icon"
-                    className="absolute bottom-3 right-3 h-9 w-9 rounded-full bg-white text-black opacity-0 shadow-sm transition hover:bg-white hover:text-black group-hover:opacity-100"
-                    aria-label={
-                      image.purchaseRequired
-                        ? "Buy original photo"
-                        : "Download original photo"
-                    }
-                    onClick={() => void download([image])}
-                  >
-                    {image.purchaseRequired ? (
-                      <ShoppingCart className="h-4 w-4" />
-                    ) : (
-                      <Download className="h-4 w-4" />
-                    )}
-                  </Button>
+                  {!image.purchaseRequired &&
+                    shouldUseNativeBrowserDownload(navigator.userAgent) &&
+                    !(faceMatches && !guestToken) &&
+                    /^[a-f0-9]{24}$/i.test(id) ? (
+                    <Button
+                      size="icon"
+                      asChild
+                      className="absolute bottom-3 right-3 h-9 w-9 rounded-full bg-white text-black shadow-sm hover:bg-white hover:text-black sm:opacity-0 sm:transition sm:group-hover:opacity-100"
+                    >
+                      <a
+                        aria-label="Download original photo"
+                        href={nativeDownloadUrl(baseUrl, {
+                          eventId, albumId, accessToken, guestToken,
+                          ids: [id], single: true,
+                        })}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => track("download", id)}
+                      >
+                        <Download className="h-4 w-4" />
+                      </a>
+                    </Button>
+                  ) : (
+                    <Button
+                      size="icon"
+                      className="absolute bottom-3 right-3 h-9 w-9 rounded-full bg-white text-black shadow-sm hover:bg-white hover:text-black sm:opacity-0 sm:transition sm:group-hover:opacity-100"
+                      aria-label={
+                        image.purchaseRequired
+                          ? "Buy original photo"
+                          : "Download original photo"
+                      }
+                      onClick={() => download([image])}
+                    >
+                      {image.purchaseRequired ? (
+                        <ShoppingCart className="h-4 w-4" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                    </Button>
+                  )}
                   {image.isEnhanced ? (
                     <Badge className="absolute right-3 top-3">Enhanced</Badge>
                   ) : null}
@@ -1585,6 +1967,198 @@ export default function EventLiveGallery() {
           onUpload={() => faceUploadInput.current?.click()}
         />
       ) : null}
+
+      <Sheet open={downloadOptionsOpen} onOpenChange={setDownloadOptionsOpen}>
+        <SheetContent
+          side="bottom"
+          className="max-h-[90vh] overflow-y-auto rounded-t-3xl px-4 pb-8 pt-6"
+        >
+          <div className="mx-auto w-full max-w-3xl space-y-5">
+            <SheetHeader className="pr-8">
+              <SheetTitle className="text-xl">
+                {individualDownloadMode ? "Save individual pictures" : "Choose download format"}
+              </SheetTitle>
+              <SheetDescription>
+                {individualDownloadMode
+                  ? "Tap Save for each photo you want. Each file is downloaded separately, with no ZIP or large memory use."
+                  : selected.size
+                    ? `${selected.size} selected photos. Choose how you want to save them.`
+                    : "Choose how to download event pictures. You do not need to use ZIP."}
+              </SheetDescription>
+            </SheetHeader>
+
+            {lockedDownloadCount > 0 ? (
+              <div className="rounded-xl border border-amber-400/30 bg-amber-500/5 p-3 text-xs text-muted-foreground">
+                {lockedDownloadCount} paid originals are locked. Purchase access before downloading them.
+              </div>
+            ) : null}
+
+            {!individualDownloadMode ? (
+              <div className="grid gap-3">
+                {iosDownloadLink && lockedDownloadCount === 0 ? (
+                  <Button variant="outline" size="lg" asChild className="h-auto justify-start gap-3 p-4 text-left">
+                    <a
+                      href={iosDownloadLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => {
+                        track("download");
+                        setDownloadOptionsOpen(false);
+                      }}
+                    >
+                      <Download className="h-6 w-6 shrink-0" />
+                      <span>
+                        <span className="block font-semibold">Download ZIP</span>
+                        <span className="block whitespace-normal text-xs text-muted-foreground">
+                          One archive; iPhone saves it through the browser to Files.
+                        </span>
+                      </span>
+                    </a>
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="h-auto justify-start gap-3 p-4 text-left"
+                    disabled={downloading || Boolean(folderProgress) || freeDownloadTargets.length === 0}
+                    onClick={() => {
+                      setDownloadOptionsOpen(false);
+                      download();
+                    }}
+                  >
+                    <Download className="h-6 w-6 shrink-0" />
+                    <span>
+                      <span className="block font-semibold">Download ZIP</span>
+                      <span className="block whitespace-normal text-xs text-muted-foreground">
+                        One file containing all available selected pictures.
+                      </span>
+                    </span>
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="h-auto justify-start gap-3 p-4 text-left"
+                  disabled={freeDownloadTargets.length === 0}
+                  onClick={() => setIndividualDownloadMode(true)}
+                >
+                  <ImageIcon className="h-6 w-6 shrink-0" />
+                  <span>
+                    <span className="block font-semibold">Save pictures individually</span>
+                    <span className="block whitespace-normal text-xs text-muted-foreground">
+                      Best for iPhone and smaller downloads. Save only the photos you want, one tap per photo.
+                    </span>
+                  </span>
+                </Button>
+                {canSaveGalleryFolder() ? (
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="h-auto justify-start gap-3 p-4 text-left"
+                    disabled={downloading || Boolean(folderProgress) ||
+                      lockedDownloadCount > 0 || freeDownloadTargets.length === 0}
+                    onClick={startFolderSave}
+                  >
+                    <Folder className="h-6 w-6 shrink-0" />
+                    <span>
+                      <span className="block font-semibold">Save directly to a folder</span>
+                      <span className="block whitespace-normal text-xs text-muted-foreground">
+                        Streams images separately into a chosen folder with no ZIP.
+                      </span>
+                    </span>
+                  </Button>
+                ) : (
+                  <p className="rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
+                    Your browser cannot write directly into a folder. On iPhone, save
+                    pictures individually or download a ZIP, then use the Files app
+                    to organize them into a folder.
+                  </p>
+                )}
+                {freeDownloadTargets.length === 0 && storeEnabled ? (
+                  <Button onClick={() => {
+                    setDownloadOptionsOpen(false);
+                    buySelectedOrAll();
+                  }}>
+                    <ShoppingCart className="mr-2 h-4 w-4" /> Buy original photos
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIndividualDownloadMode(false)}
+                >
+                  <ArrowLeft className="mr-2 h-4 w-4" /> All download options
+                </Button>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {freeDownloadTargets.slice(0, individualVisible).map((image, index) => {
+                    const id = imageId(image);
+                    const directLink = /^[a-f0-9]{24}$/i.test(id)
+                      ? nativeDownloadUrl(baseUrl, {
+                          eventId, albumId, accessToken, guestToken,
+                          ids: [id], single: true,
+                        })
+                      : null;
+                    return (
+                      <div
+                        key={id || index}
+                        className="overflow-hidden rounded-xl border bg-card"
+                      >
+                        <div className="aspect-square bg-muted">
+                          <img
+                            src={assetUrl(image.imageUrl)}
+                            alt={`Event photo ${index + 1}`}
+                            loading="lazy"
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                        <div className="space-y-2 p-2">
+                          <p className="truncate text-xs font-medium">
+                            Picture {index + 1}
+                          </p>
+                          {directLink ? (
+                            <Button asChild size="sm" variant="outline" className="w-full">
+                              <a
+                                href={directLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={() => track("download", id)}
+                                aria-label={`Save picture ${index + 1}`}
+                              >
+                                <Download className="mr-1.5 h-3.5 w-3.5" />
+                                Save photo
+                              </a>
+                            </Button>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              Original download unavailable
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {freeDownloadTargets.length > individualVisible ? (
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setIndividualVisible((count) => count + 24)}
+                  >
+                    Show more photos ({freeDownloadTargets.length - individualVisible} remaining)
+                  </Button>
+                ) : null}
+                <p className="text-xs text-muted-foreground">
+                  On iPhone, each Save photo opens a normal browser download.
+                  Find saved files in Files &gt; Downloads. Avoid tapping many at once.
+                </p>
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <ShareDialog
         open={shareOpen}

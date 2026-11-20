@@ -12,6 +12,10 @@ class ActiveEventStorage {
   static final ValueNotifier<EventSummary?> activeEvent =
       ValueNotifier<EventSummary?>(null);
 
+  // True while the Upload screen is transferring or receiving camera photos.
+  // Event shortcuts must not silently stop an active camera session.
+  static final ValueNotifier<bool> selectionLocked = ValueNotifier<bool>(false);
+
   static SharedPreferences get _prefs => getIt<SharedPreferences>();
 
   static Future<void> init() async {

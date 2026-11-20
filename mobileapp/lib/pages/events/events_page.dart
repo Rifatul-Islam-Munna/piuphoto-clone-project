@@ -101,6 +101,7 @@ class _EventsListView extends StatefulWidget {
 class _EventsListViewState extends State<_EventsListView> {
   late Future<List<EventModel>> _future;
   _EventFilter _filter = _EventFilter.all;
+  String? _activatingEventId;
 
   @override
   void initState() {
@@ -122,6 +123,56 @@ class _EventsListViewState extends State<_EventsListView> {
 
   void _refresh() {
     setState(() => _future = _loadEvents());
+  }
+
+  Future<void> _activateEvent(EventModel event) async {
+    if (event.id.isEmpty || _activatingEventId != null) return;
+    if (ActiveEventStorage.activeEvent.value?.id == event.id) return;
+    if (ActiveEventStorage.selectionLocked.value) {
+      AppToast.error('Stop the camera transfer or current upload first.');
+      return;
+    }
+
+    setState(() => _activatingEventId = event.id);
+    try {
+      // Some older events were disabled server-side. Reactivate them before
+      // selecting this event as the local camera upload destination.
+      if (!event.isActive) {
+        await DioHelper.patch(
+          '/event/toggle-active',
+          queryParameters: {'id': event.id},
+        );
+      }
+      // The backend request may take time; never switch underneath a transfer.
+      if (ActiveEventStorage.selectionLocked.value) {
+        AppToast.error('Stop the camera transfer before changing events.');
+        return;
+      }
+      await ActiveEventStorage.saveActiveEvent(
+        EventSummary(
+          id: event.id,
+          title: event.title,
+          description: event.description,
+          imageUrl: event.imageUrl,
+          photosCount: event.photosCount,
+        ),
+      );
+      if (!mounted) return;
+      AppToast.success('${event.title} is now your active upload event');
+      if (!event.isActive) _refresh();
+    } on DioException catch (error) {
+      if (!mounted) return;
+      final data = error.response?.data;
+      AppToast.error(
+        data is Map
+            ? data['message']?.toString() ?? 'Could not activate this event'
+            : 'Could not activate this event',
+      );
+    } catch (_) {
+      if (mounted) AppToast.error('Could not activate this event');
+    } finally {
+      if (mounted) setState(() => _activatingEventId = null);
+    }
   }
 
   @override
@@ -200,9 +251,23 @@ class _EventsListViewState extends State<_EventsListView> {
                   )
                 else
                   ...filteredEvents.map(
-                    (event) => _EventCardItem(
-                      event: event,
-                      onTap: () => _openEventDetail(context, event),
+                    (event) => ListenableBuilder(
+                      listenable: Listenable.merge([
+                        ActiveEventStorage.activeEvent,
+                        ActiveEventStorage.selectionLocked,
+                      ]),
+                      builder: (context, _) => _EventCardItem(
+                        event: event,
+                        onTap: () => _openEventDetail(context, event),
+                        onActivate: () => _activateEvent(event),
+                        isSelected:
+                            ActiveEventStorage.activeEvent.value?.id ==
+                            event.id,
+                        selectionLocked:
+                            ActiveEventStorage.selectionLocked.value,
+                        activating: _activatingEventId == event.id,
+                        canActivate: isPhotographer || canCreateEvents,
+                      ),
                     ),
                   ),
               ],
@@ -295,8 +360,21 @@ class _EventsListViewState extends State<_EventsListView> {
 class _EventCardItem extends StatelessWidget {
   final EventModel event;
   final VoidCallback onTap;
+  final VoidCallback onActivate;
+  final bool isSelected;
+  final bool selectionLocked;
+  final bool activating;
+  final bool canActivate;
 
-  const _EventCardItem({required this.event, required this.onTap});
+  const _EventCardItem({
+    required this.event,
+    required this.onTap,
+    required this.onActivate,
+    required this.isSelected,
+    required this.selectionLocked,
+    required this.activating,
+    required this.canActivate,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -306,7 +384,12 @@ class _EventCardItem extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(AppRadius.xl),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(
+          color: isSelected
+              ? AppColors.success.withValues(alpha: 0.7)
+              : AppColors.border,
+          width: isSelected ? 1.5 : 1,
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.03),
@@ -416,6 +499,64 @@ class _EventCardItem extends StatelessWidget {
                           label: '${event.photosCount} photos',
                         ),
                         const Spacer(),
+                        if (canActivate) ...[
+                          SizedBox(
+                            height: 34,
+                            child: FilledButton.tonalIcon(
+                              key: ValueKey('activate-event-${event.id}'),
+                              onPressed:
+                                  isSelected || activating || selectionLocked
+                                  ? null
+                                  : onActivate,
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                ),
+                                minimumSize: const Size(0, 32),
+                                tapTargetSize: MaterialTapTargetSize.padded,
+                                backgroundColor: isSelected
+                                    ? AppColors.success.withValues(alpha: 0.13)
+                                    : AppColors.primary.withValues(alpha: 0.12),
+                                foregroundColor: isSelected
+                                    ? AppColors.success
+                                    : AppColors.primary,
+                                disabledBackgroundColor: isSelected
+                                    ? AppColors.success.withValues(alpha: 0.13)
+                                    : AppColors.muted,
+                                disabledForegroundColor: isSelected
+                                    ? AppColors.success
+                                    : AppColors.mutedForeground,
+                                shape: const StadiumBorder(),
+                                textStyle: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              icon: activating
+                                  ? const SizedBox(
+                                      width: 13,
+                                      height: 13,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Icon(
+                                      isSelected
+                                          ? Icons.check_circle_rounded
+                                          : Icons.bolt_rounded,
+                                      size: 15,
+                                    ),
+                              label: Text(
+                                activating
+                                    ? 'Activating'
+                                    : isSelected
+                                    ? 'Active'
+                                    : 'Activate',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                        ],
                         const Icon(
                           Icons.chevron_right_rounded,
                           size: 20,
@@ -769,17 +910,52 @@ class _EventDetailPageState extends State<_EventDetailPage> {
     super.dispose();
   }
 
+  bool _reactivatedOnServer = false;
+
   Future<void> _makeActiveEvent() async {
-    await ActiveEventStorage.saveActiveEvent(
-      EventSummary(
-        id: _event.id,
-        title: _event.title,
-        description: _event.description,
-        imageUrl: _event.imageUrl,
-        photosCount: _event.photosCount,
-      ),
-    );
-    AppToast.success('Active upload event updated');
+    if (ActiveEventStorage.activeEvent.value?.id == _event.id) {
+      AppToast.success('This event is already selected for uploads.');
+      return;
+    }
+    if (ActiveEventStorage.selectionLocked.value) {
+      AppToast.error('Stop the camera transfer or current upload first.');
+      return;
+    }
+    try {
+      if (!_event.isActive && !_reactivatedOnServer) {
+        await DioHelper.patch(
+          '/event/toggle-active',
+          queryParameters: {'id': _event.id},
+        );
+        _reactivatedOnServer = true;
+      }
+      if (ActiveEventStorage.selectionLocked.value) {
+        AppToast.error('Stop the camera transfer before changing events.');
+        return;
+      }
+      await ActiveEventStorage.saveActiveEvent(
+        EventSummary(
+          id: _event.id,
+          title: _event.title,
+          description: _event.description,
+          imageUrl: _event.imageUrl,
+          photosCount: _event.photosCount,
+        ),
+      );
+      if (!mounted) return;
+      AppToast.success('${_event.title} is now your active upload event');
+      widget.onUpdated();
+    } on DioException catch (error) {
+      if (!mounted) return;
+      final data = error.response?.data;
+      AppToast.error(
+        data is Map
+            ? data['message']?.toString() ?? 'Could not activate event'
+            : 'Could not activate event',
+      );
+    } catch (_) {
+      if (mounted) AppToast.error('Could not activate event');
+    }
   }
 
   @override

@@ -369,6 +369,103 @@ void main() {
     },
   );
 
+  testWidgets('grid reports accurate live photo counts and filters', (
+    tester,
+  ) async {
+    final harness = _Harness([
+      _photo('waiting'),
+      _photo(
+        'sending',
+      ).copyWith(status: TransferLedgerStatus.uploading, progress: 45),
+      _photo(
+        'done',
+      ).copyWith(status: TransferLedgerStatus.published, progress: 100),
+      _photo('error').copyWith(
+        status: TransferLedgerStatus.failed,
+        error: 'Connection error',
+      ),
+      _photo('stopped').copyWith(status: TransferLedgerStatus.cancelled),
+    ]);
+    await _show(tester, harness);
+
+    expect(find.text('All 5'), findsOneWidget);
+    expect(find.text('Not uploaded 2'), findsOneWidget);
+    expect(find.text('Uploading 1'), findsOneWidget);
+    expect(find.text('Uploaded 1'), findsOneWidget);
+    expect(find.text('Failed 1'), findsOneWidget);
+    expect(find.byKey(const ValueKey('grid-waiting')), findsOneWidget);
+
+    tester
+        .widget<ChoiceChip>(find.byKey(const ValueKey('filter-uploaded')))
+        .onSelected
+        ?.call(true);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('grid-done')), findsOneWidget);
+    expect(find.byKey(const ValueKey('grid-waiting')), findsNothing);
+
+    tester
+        .widget<ChoiceChip>(find.byKey(const ValueKey('filter-failed')))
+        .onSelected
+        ?.call(true);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('grid-error')), findsOneWidget);
+    expect(find.byKey(const ValueKey('grid-done')), findsNothing);
+
+    harness.transfers.value = [
+      for (final photo in harness.transfers.value)
+        photo.id == 'error'
+            ? photo.copyWith(
+                status: TransferLedgerStatus.published,
+                progress: 100,
+              )
+            : photo,
+    ];
+    await tester.pump();
+    expect(find.text('Failed 0'), findsOneWidget);
+    expect(find.text('Uploaded 2'), findsOneWidget);
+    expect(find.byKey(const ValueKey('grid-error')), findsNothing);
+  });
+
+  testWidgets(
+    'three-dot Preview Photo Live preserves the running upload session',
+    (tester) async {
+      final harness = _Harness([_photo('shot')]);
+      var previews = 0;
+      await _show(tester, harness, onPreviewGallery: () => previews++);
+      await tester.tap(find.byTooltip('More camera transfer actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Preview Photo Live'));
+      await tester.pump();
+
+      expect(previews, 1);
+      expect(harness.session.value.isActive, isTrue);
+      expect(
+        harness.transfers.value.single.status,
+        TransferLedgerStatus.queued,
+      );
+    },
+  );
+
+  testWidgets(
+    'photographer can toggle grid and detailed list without losing photos',
+    (tester) async {
+      final harness = _Harness([_photo('shot')]);
+      await _show(tester, harness);
+      expect(find.byKey(const ValueKey('grid-shot')), findsOneWidget);
+      final menu = tester.widget<PopupMenuButton<String>>(
+        find.byWidgetPredicate((widget) => widget is PopupMenuButton<String>),
+      );
+      menu.onSelected?.call('view-list');
+      await tester.pump();
+      expect(find.byKey(const ValueKey('grid-shot')), findsNothing);
+      expect(find.text('shot.JPG'), findsOneWidget);
+
+      menu.onSelected?.call('view-grid');
+      await tester.pump();
+      expect(find.byKey(const ValueKey('grid-shot')), findsOneWidget);
+    },
+  );
+
   testWidgets('leaving the page keeps the parent camera session running', (
     tester,
   ) async {
@@ -419,6 +516,7 @@ Future<void> _show(
   Future<UploadCancellationResult> Function(String)? cancelUpload,
   Future<void> Function()? onStop,
   VoidCallback? onShareGuestQr,
+  VoidCallback? onPreviewGallery,
   VoidCallback? onCameraSetupHelp,
   WidgetBuilder? connectionDetailsBuilder,
 }) async {
@@ -434,6 +532,7 @@ Future<void> _show(
         cancelUpload: cancelUpload,
         onStop: onStop,
         onShareGuestQr: onShareGuestQr,
+        onPreviewGallery: onPreviewGallery,
         onCameraSetupHelp: onCameraSetupHelp,
         connectionDetailsBuilder: connectionDetailsBuilder,
       ),
@@ -460,6 +559,7 @@ class _Harness {
     Future<UploadCancellationResult> Function(String)? cancelUpload,
     Future<void> Function()? onStop,
     VoidCallback? onShareGuestQr,
+    VoidCallback? onPreviewGallery,
     VoidCallback? onCameraSetupHelp,
     WidgetBuilder? connectionDetailsBuilder,
   }) => CameraTransferPage(
@@ -477,6 +577,7 @@ class _Harness {
         !item.registrationStarted,
     onStop: onStop,
     onShareGuestQr: onShareGuestQr,
+    onPreviewGallery: onPreviewGallery,
     onCameraSetupHelp: onCameraSetupHelp,
     connectionDetailsBuilder: connectionDetailsBuilder,
   );

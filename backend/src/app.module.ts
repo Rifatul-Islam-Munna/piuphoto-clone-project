@@ -21,6 +21,7 @@ import { StoreModule } from './store/store.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ExternalApiModule } from './external-api/external-api.module';
 import { GuestGalleryModule } from './guest-gallery/guest-gallery.module';
+import { GalleryDownloadModule } from './gallery-download/gallery-download.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { GuestGalleryModule } from './guest-gallery/guest-gallery.module';
     AnalyticsModule,
     ExternalApiModule,
     GuestGalleryModule,
+    GalleryDownloadModule,
   ],
   controllers: [],
   providers: [],

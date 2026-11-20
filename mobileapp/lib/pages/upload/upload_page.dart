@@ -33,12 +33,16 @@ import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/storage/uploaded_gallery_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
+import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/camera_staging_cleanup.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
 import 'package:mobileapp/core/upload/presigned_upload_service.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/pages/upload/camera_transfer_page.dart';
+import 'package:mobileapp/pages/upload/event_live_preview_page.dart';
+import 'package:mobileapp/pages/upload/upload_event_picker.dart';
+import 'package:mobileapp/pages/upload/upload_transfer_overview.dart';
 import 'package:mobileapp/pages/upload/transfer_list_page.dart';
 import 'package:mobileapp/pages/upload/usb_camera_upload_mode_selector.dart';
 import 'package:mobileapp/pages/upload/usb_camera_setup_help.dart';
@@ -141,6 +145,10 @@ class UploadPage extends StatefulWidget {
 class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   final _picker = ImagePicker();
   final List<_SelectedUploadFile> _selectedFiles = [];
+  // Manual batches report each file's transfer progress, not just one spinner.
+  final Map<String, int> _manualProgress = {};
+  final Set<String> _manualStarted = {};
+  final Set<String> _manualStored = {};
   Timer? _wirelessTimer;
   Timer? _galleryTimer;
   LiveCameraCapture? _liveCamera;
@@ -172,6 +180,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 31)}';
   bool _resolvingSoloEvent = false;
   bool _soloEventResolved = false;
+  bool _switchingUploadEvent = false;
   bool _connectionPageOpen = false;
   CameraFtpReceiver? _ftpReceiver;
   CameraFtpConnection? _ftpConnection;
@@ -261,6 +270,12 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         message = _galleryStatus ?? 'Waiting for a photo.';
         break;
     }
+    ActiveEventStorage.selectionLocked.value =
+        _uploading ||
+        _switchingUploadEvent ||
+        _connectionPageOpen ||
+        _usbSessionLocked ||
+        _liveConnectionActive;
     _sessionStatus.value = CameraTransferSessionStatus(
       connectionLabel: label,
       message: message,
@@ -369,6 +384,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     _galleryTimer = null;
     WidgetsBinding.instance.removeObserver(this);
     ActiveEventStorage.activeEvent.removeListener(_handleLiveEventChange);
+    ActiveEventStorage.selectionLocked.value = false;
     final liveCamera = _liveCamera;
     _liveCamera = null;
     if (liveCamera != null) {
@@ -967,11 +983,30 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     return false;
   }
 
-  Future<List<String>> _uploadFilesBatch(
-    List<_SelectedUploadFile> files,
-  ) => PresignedUploadService.uploadFiles([
-    for (final file in files) (path: file.path, filename: file.name),
-  ]);
+  Future<List<String>> _uploadFilesBatch(List<_SelectedUploadFile> files) =>
+      PresignedUploadService.uploadFiles(
+        [for (final file in files) (path: file.path, filename: file.name)],
+        onStarted: (index) {
+          if (!mounted) return;
+          _safeSetState(() => _manualStarted.add(files[index].path));
+        },
+        onProgress: (index, sent, total) {
+          if (!mounted || total <= 0) return;
+          final path = files[index].path;
+          final percent = ((sent * 100) / total).round().clamp(0, 100);
+          final previous = _manualProgress[path] ?? 0;
+          // Avoid rebuilding the whole upload screen on every network chunk.
+          if (percent < 100 && percent - previous < 5) return;
+          _safeSetState(() => _manualProgress[path] = percent);
+        },
+        onStored: (index) {
+          if (!mounted) return;
+          _safeSetState(() {
+            _manualStored.add(files[index].path);
+            _manualProgress[files[index].path] = 100;
+          });
+        },
+      );
 
   Future<bool> _uploadOrQueueFile({
     required EventSummary event,
@@ -2435,6 +2470,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
 
     _safeSetState(() {
       _uploading = true;
+      _manualStarted.clear();
+      _manualStored.clear();
+      _manualProgress.clear();
       _uploadStatus = 'Uploading ${files.length} images...';
     });
 
@@ -2450,9 +2488,42 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       });
 
       await _createEventImages(event, imageUrls);
+      // Only count a photo as uploaded after the event registration succeeds.
+      // This records manually selected photos in the same live transfer grid.
+      try {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final fileSizes = await Future.wait([
+          for (final file in files)
+            File(file.path).length().catchError((_) => 0),
+        ]);
+        await TransferLedgerStorage.upsertAll([
+          for (var index = 0; index < imageUrls.length; index++)
+            TransferLedgerItem(
+              id: 'manual-$now-$index',
+              eventId: event.id,
+              eventTitle: event.title,
+              filename: files[index].name,
+              source: 'manual-picker',
+              status: TransferLedgerStatus.published,
+              createdAt: now + index,
+              updatedAt: now + index,
+              localPath: files[index].path,
+              imageUrl: imageUrls[index],
+              fileSize: fileSizes[index],
+              registrationStarted: true,
+              progress: 100,
+            ),
+        ]);
+      } catch (error) {
+        // Cloud registration already succeeded; never report a false upload failure.
+        debugPrint('Could not record manual upload history: $error');
+      }
       AppToast.success('${imageUrls.length} images uploaded to ${event.title}');
       _safeSetState(() {
         _selectedFiles.clear();
+        _manualStarted.clear();
+        _manualProgress.clear();
+        _manualStored.clear();
         _isEnhanced = false;
         _uploadStatus = null;
       });
@@ -2468,6 +2539,134 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         _safeSetState(() => _uploading = false);
       }
     }
+  }
+
+  bool get _canChangeUploadEvent =>
+      !_switchingUploadEvent &&
+      !_uploading &&
+      !_connectionPageOpen &&
+      !_usbSessionLocked &&
+      !_liveConnectionActive;
+
+  Future<bool> _activateUploadEvent(EventSummary event) async {
+    if (!_canChangeUploadEvent) {
+      AppToast.error(
+        'Stop the live camera session or current upload before switching events.',
+      );
+      return false;
+    }
+    if (event.id.isEmpty) {
+      AppToast.error('Invalid event. Refresh the list and try again.');
+      return false;
+    }
+    if (ActiveEventStorage.activeEvent.value?.id == event.id) return true;
+
+    _safeSetState(() => _switchingUploadEvent = true);
+    try {
+      await ActiveEventStorage.saveActiveEvent(event);
+      _soloEventResolved = true;
+      _safeSetState(() {
+        // File selections and albums belong to the previous event.
+        _selectedFiles.clear();
+        _manualStarted.clear();
+        _manualProgress.clear();
+        _manualStored.clear();
+        _selectedAlbumId = null;
+        _loadedAlbumEventId = null;
+        _albums = [];
+      });
+      AppToast.success('Uploading to ${event.title}');
+      return true;
+    } catch (_) {
+      AppToast.error('Could not change the active upload event');
+      return false;
+    } finally {
+      _safeSetState(() => _switchingUploadEvent = false);
+    }
+  }
+
+  Future<bool> _createAndActivateUploadEvent(String title) async {
+    if (!(UserStorage.currentUser.value?.hasPlannerAccess ?? false)) {
+      AppToast.error('Your plan cannot create events.');
+      return false;
+    }
+    if (!_canChangeUploadEvent) {
+      AppToast.error('Stop the camera transfer before creating a new event.');
+      return false;
+    }
+    try {
+      final response = await DioHelper.post(
+        '/event',
+        data: {
+          'title': title.trim(),
+          'isPublished': true,
+          'isActive': true,
+          'autoPublishImages': true,
+          'requireReview': false,
+        },
+      );
+      final data = response.data is Map ? response.data['data'] : null;
+      if (data is! Map) {
+        AppToast.error('Created event could not be selected. Refresh events.');
+        return false;
+      }
+      final event = EventSummary.fromJson(Map<String, dynamic>.from(data));
+      if (event.id.isEmpty) {
+        AppToast.error('Event has no id. Refresh events and select it.');
+        return false;
+      }
+      return await _activateUploadEvent(event);
+    } on DioException catch (error) {
+      final data = error.response?.data;
+      AppToast.error(
+        data is Map
+            ? data['message']?.toString() ?? 'Could not create event'
+            : 'Could not create event',
+      );
+      return false;
+    } catch (_) {
+      AppToast.error('Could not create event');
+      return false;
+    }
+  }
+
+  Future<void> _openUploadEventPicker(
+    EventSummary? current, {
+    bool focusCreate = false,
+  }) async {
+    await showUploadEventPicker(
+      context: context,
+      activeEvent: current,
+      canCreate: UserStorage.currentUser.value?.hasPlannerAccess ?? false,
+      onSelect: (event, enabled) async {
+        if (!enabled) {
+          if (!_canChangeUploadEvent) {
+            AppToast.error('Stop the live camera session first.');
+            return false;
+          }
+          try {
+            await DioHelper.patch(
+              '/event/toggle-active',
+              queryParameters: {'id': event.id},
+            );
+          } on DioException catch (error) {
+            final data = error.response?.data;
+            AppToast.error(
+              data is Map
+                  ? data['message']?.toString() ?? 'Could not reactivate event'
+                  : 'Could not reactivate event',
+            );
+            return false;
+          } catch (_) {
+            AppToast.error('Could not reactivate event');
+            return false;
+          }
+        }
+        return await _activateUploadEvent(event);
+      },
+      onCreate: _createAndActivateUploadEvent,
+      focusCreate: focusCreate,
+    );
   }
 
   Future<void> _ensureSoloActiveEvent() async {
@@ -2509,7 +2708,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
 
       if (rawEvent != null) {
         final event = EventSummary.fromJson(rawEvent);
-        if (event.id.isNotEmpty) {
+        if (event.id.isNotEmpty &&
+            ActiveEventStorage.activeEvent.value == null) {
           await ActiveEventStorage.saveActiveEvent(event);
         }
       }
@@ -2581,47 +2781,126 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
           body: ListView(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
             children: [
-              // ── Active event ──
-              if (activeEvent == null)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        if (_resolvingSoloEvent)
-                          const Padding(
-                            padding: EdgeInsets.only(right: 12),
+              // One compact row: event picker, create, gallery QR, face QR.
+              // The icon actions keep their labels in accessible tooltips.
+              Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 7,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
                             child: SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                              height: 38,
+                              child: OutlinedButton(
+                                onPressed: _canChangeUploadEvent
+                                    ? () => _openUploadEventPicker(activeEvent)
+                                    : null,
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                  minimumSize: Size.zero,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.search_rounded, size: 16),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        activeEvent?.title ?? 'Select event',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        textAlign: TextAlign.start,
+                                        style: const TextStyle(fontSize: 12),
+                                      ),
+                                    ),
+                                    const Icon(
+                                      Icons.arrow_drop_down_rounded,
+                                      size: 17,
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
-                        Expanded(
+                          if (UserStorage.currentUser.value?.hasPlannerAccess ??
+                              false) ...[
+                            const SizedBox(width: 5),
+                            IconButton.filledTonal(
+                              tooltip: 'Create event & activate',
+                              onPressed: _canChangeUploadEvent
+                                  ? () => _openUploadEventPicker(
+                                      activeEvent,
+                                      focusCreate: true,
+                                    )
+                                  : null,
+                              icon: const Icon(Icons.add_rounded, size: 19),
+                              style: IconButton.styleFrom(
+                                fixedSize: const Size(38, 38),
+                                padding: EdgeInsets.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                          ],
+                          if (activeEvent != null) ...[
+                            const SizedBox(width: 5),
+                            IconButton.outlined(
+                              tooltip: 'Gallery QR',
+                              onPressed: _guestQrPreparing
+                                  ? null
+                                  : () => _showGuestQr(activeEvent),
+                              icon: const Icon(Icons.qr_code_rounded, size: 18),
+                              style: IconButton.styleFrom(
+                                fixedSize: const Size(38, 38),
+                                padding: EdgeInsets.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            IconButton.outlined(
+                              tooltip: 'Face QR',
+                              onPressed: _guestQrPreparing
+                                  ? null
+                                  : () => _showGuestQr(
+                                      activeEvent,
+                                      faceEnrollment: true,
+                                    ),
+                              icon: const Icon(Icons.face_outlined, size: 18),
+                              style: IconButton.styleFrom(
+                                fixedSize: const Size(38, 38),
+                                padding: EdgeInsets.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (_resolvingSoloEvent)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 4),
+                          child: LinearProgressIndicator(minHeight: 2),
+                        ),
+                      if (!_canChangeUploadEvent)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 4),
                           child: Text(
-                            (UserStorage.currentUser.value?.hasPlannerAccess ??
-                                    false)
-                                ? 'Preparing your solo photographer workspace. You do not need a planner invitation.'
-                                : 'No active event selected. Accept an invitation and make an event active first.',
+                            'Finish transfer to switch events',
+                            style: TextStyle(fontSize: 10),
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-                )
-              else
-                Card(
-                  child: ListTile(
-                    dense: true,
-                    title: const Text('Active event'),
-                    subtitle: Text(activeEvent.title),
-                    trailing: IconButton(
-                      tooltip: 'Clear active event',
-                      onPressed: _uploading ? null : ActiveEventStorage.clear,
-                      icon: const Icon(Icons.close, size: 20),
-                    ),
+                    ],
                   ),
                 ),
+              ),
 
               // ── Album picker ──
               if (activeEvent != null && _albums.isNotEmpty)
@@ -2952,6 +3231,17 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 },
               ),
 
+              if (activeEvent != null) ...[
+                const SizedBox(height: 12),
+                UploadTransferOverview(
+                  eventId: activeEvent.id,
+                  onViewAll: () => _showTransferSessionPage(
+                    activeEvent,
+                    showAllTransfers: true,
+                  ),
+                ),
+              ],
+
               const SizedBox(height: 4),
 
               // ── Manual selection controls (only after a secondary method is used) ──
@@ -2985,20 +3275,130 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                           ? null
                           : () => _safeSetState(() {
                               _selectedFiles.clear();
+                              _manualStarted.clear();
+                              _manualProgress.clear();
+                              _manualStored.clear();
                               _uploadStatus = null;
                             }),
                       child: const Text('Clear'),
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.file(
-                    File(_selectedFiles.first.path),
-                    height: 180,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
+                const SizedBox(height: 8),
+                Text(
+                  _uploading
+                      ? '${_manualStored.length} / ${_selectedFiles.length} sent to storage · saving to event next'
+                      : 'Selected photos · tap Upload to send this batch',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                const SizedBox(height: 7),
+                SizedBox(
+                  height: _selectedFiles.length <= 3
+                      ? 158
+                      : _selectedFiles.length <= 6
+                      ? 310
+                      : 324,
+                  child: GridView.builder(
+                    key: const ValueKey('manual-selection-grid'),
+                    itemCount: _selectedFiles.length,
+                    padding: EdgeInsets.zero,
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          crossAxisSpacing: 7,
+                          mainAxisSpacing: 7,
+                          childAspectRatio: .70,
+                        ),
+                    itemBuilder: (context, index) {
+                      final file = _selectedFiles[index];
+                      final stored = _manualStored.contains(file.path);
+                      final started = _manualStarted.contains(file.path);
+                      final percent = _manualProgress[file.path] ?? 0;
+                      final status = stored
+                          ? 'Sent · saving event'
+                          : _uploading && started
+                          ? 'Uploading $percent%'
+                          : _uploading
+                          ? 'Queued'
+                          : 'Not uploaded';
+                      return ClipRRect(
+                        key: ValueKey('manual-photo-${file.path}'),
+                        borderRadius: BorderRadius.circular(8),
+                        child: ColoredBox(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerLow,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    Image.file(
+                                      File(file.path),
+                                      fit: BoxFit.cover,
+                                      cacheWidth: 320,
+                                      errorBuilder: (_, _, _) => const Center(
+                                        child: Icon(
+                                          Icons.image_not_supported_outlined,
+                                        ),
+                                      ),
+                                    ),
+                                    Positioned(
+                                      top: 4,
+                                      right: 4,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 5,
+                                          vertical: 3,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black87,
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          status,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 9,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    if (_uploading && started && !stored)
+                                      Positioned(
+                                        bottom: 0,
+                                        left: 0,
+                                        right: 0,
+                                        child: LinearProgressIndicator(
+                                          value: percent / 100,
+                                          minHeight: 4,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(5, 4, 5, 5),
+                                child: Text(
+                                  file.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 10,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -3054,16 +3454,20 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _showGuestQr(EventSummary event) async {
+  Future<void> _showGuestQr(
+    EventSummary event, {
+    bool faceEnrollment = false,
+  }) async {
     if (!mounted || _disposed || _guestQrPreparing) return;
     _guestQrPreparing = true;
     try {
       final ready = await runGuestQrPreparation(
         context: context,
-        prepare: () => _prepareGuestFaceDelivery(event),
+        prepare: () async =>
+            !faceEnrollment || await _prepareGuestFaceDelivery(event),
       );
       if (ready && mounted && !_disposed) {
-        await _showPreparedGuestQr(event);
+        await _showPreparedGuestQr(event, faceEnrollment: faceEnrollment);
       }
     } catch (_) {
       if (mounted && !_disposed) {
@@ -3074,16 +3478,20 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _showPreparedGuestQr(EventSummary event) async {
+  Future<void> _showPreparedGuestQr(
+    EventSummary event, {
+    required bool faceEnrollment,
+  }) async {
     final payload = GuestQrPayload.encode(
       event.id,
       publicAppUrl: dotenv.env['PUBLIC_APP_URL'],
+      faceEnrollment: faceEnrollment,
     );
     await showDialog<void>(
       context: context,
       useRootNavigator: true,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Guest face-delivery QR'),
+        title: Text(faceEnrollment ? 'Face-delivery QR' : 'Event gallery QR'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -3099,9 +3507,17 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(height: 12),
-            const Text(
-              'Scan with your phone camera or AirPix. Guests take 2-5 selfies, then receive their matching photos.',
+            Text(
+              faceEnrollment
+                  ? 'Scan with any phone camera to open this event in a browser and register for face-based delivery.'
+                  : 'Scan with any phone camera to open the full event gallery in a browser.',
               textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            SelectableText(
+              payload,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 11),
             ),
           ],
         ),
@@ -3139,7 +3555,10 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     if (mounted) await _showLiveCameraSetup();
   }
 
-  Future<void> _showTransferSessionPage(EventSummary event) async {
+  Future<void> _showTransferSessionPage(
+    EventSummary event, {
+    bool showAllTransfers = false,
+  }) async {
     if (!mounted || _connectionPageOpen) return;
     _connectionPageOpen = true;
     _refreshSessionStatus();
@@ -3150,9 +3569,22 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             eventId: event.id,
             eventTitle: event.title,
             session: _sessionStatus,
-            startedAt: _receivingEventId == event.id ? _sessionStartedAt : null,
+            startedAt: showAllTransfers
+                ? null
+                : _receivingEventId == event.id
+                ? _sessionStartedAt
+                : null,
             onStop: _stopReceivingSession,
             onShareGuestQr: () => _showGuestQr(event),
+            onShareFaceQr: () => _showGuestQr(event, faceEnrollment: true),
+            onPreviewGallery: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => EventLivePreviewPage(
+                  eventId: event.id,
+                  eventTitle: event.title,
+                ),
+              ),
+            ),
             onCameraSetupHelp: _sessionKind == 'usb'
                 ? () => unawaited(_restoreUnusableCameraAndShowSetup())
                 : null,
@@ -3171,6 +3603,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       );
     } finally {
       _connectionPageOpen = false;
+      _refreshSessionStatus();
     }
   }
 
@@ -3374,19 +3807,19 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 2,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          Flexible(
-                            child: Text(
-                              title,
-                              style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w800,
-                              ),
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
-                          if (badge != null) ...[
-                            const SizedBox(width: 6),
+                          if (badge != null)
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 7,
@@ -3405,7 +3838,6 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                                 ),
                               ),
                             ),
-                          ],
                         ],
                       ),
                       const SizedBox(height: 2),
