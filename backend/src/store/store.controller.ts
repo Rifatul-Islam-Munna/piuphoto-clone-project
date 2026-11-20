@@ -24,6 +24,7 @@ import {
   StoreVerifyDto,
 } from './dto/store.dto';
 import { StoreService } from './store.service';
+import { downloadAttachmentHeader } from './download-attachment-header';
 
 @Controller('store')
 export class StoreController {
@@ -62,6 +63,17 @@ export class StoreController {
   ) {
     return this.service.orderByToken(orderId, token);
   }
+  @Get('public/download-all.zip')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 12, ttl: 3600000 } })
+  async downloadAll(
+    @Query('orderId') orderId: string,
+    @Query('token') token: string,
+    @Res() res: Response,
+  ) {
+    return this.service.downloadPurchasedZip(orderId, token, res);
+  }
+
   @Get('public/download')
   async download(
     @Query('orderId') orderId: string,
@@ -71,11 +83,11 @@ export class StoreController {
   ) {
     const file = await this.service.downloadPurchased(orderId, token, imageId);
     res.setHeader('Content-Type', file.contentType);
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${file.filename}"`,
-    );
-    res.setHeader('Cache-Control', 'private,no-store');
+    res.setHeader('Content-Disposition', downloadAttachmentHeader(file.filename));
+    res.setHeader('Content-Length', String(file.buffer.length));
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
     res.send(file.buffer);
   }
   @Post('stripe-webhook') webhook(

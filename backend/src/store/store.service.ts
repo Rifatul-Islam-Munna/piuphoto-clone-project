@@ -5,10 +5,12 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import axios from 'axios';
+import type { Response } from 'express';
 import {
   createCipheriv,
   createDecipheriv,
@@ -26,6 +28,10 @@ import {
   EventImageDocument,
 } from '../event-image/entities/event-image.entity';
 import { NotificationService } from '../notification/notification.service';
+import { MinioService } from '../lib/minio.service';
+import { safePhotoEntryName } from '../gallery-download/gallery-download.service';
+import { streamPhotoZip } from '../gallery-download/stream-photo-zip';
+import { downloadAttachmentHeader } from './download-attachment-header';
 import { User, UserDocument } from '../user/entities/user.entity';
 import {
   StoreAccountSettingsDto,
@@ -44,6 +50,10 @@ import {
   StoreSettings,
   StoreSettingsDocument,
 } from './entities/store-settings.entity';
+import {
+  purchasedPhotoLinkExpiresAt,
+  PURCHASE_LINK_LIFETIME_HOURS,
+} from './purchase-link-expiry';
 
 @Injectable()
 export class StoreService implements OnModuleInit, OnModuleDestroy {
@@ -63,6 +73,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     private readonly members: EventMemberService,
     private readonly config: ConfigService,
     private readonly notifier: NotificationService,
+    @Optional() private readonly storage?: MinioService,
   ) {}
   onModuleInit() {
     this.deliveryWorker = setInterval(
@@ -294,7 +305,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
           wholeEventPrice: 0,
           bundlePrice: 0,
           bundleMinPhotos: 10,
-          downloadExpiresHours: 72,
+          downloadExpiresHours: PURCHASE_LINK_LIFETIME_HOURS,
           watermarkedPreview: true,
           previewMaxWidth: 1200,
           previewQuality: 64,
@@ -701,16 +712,15 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     if (full.status === StoreOrderStatus.REFUNDED)
       throw new HttpException('Order refunded', 400);
     if (full.status !== StoreOrderStatus.PAID || !full.downloadTokenCipher) {
-      const config = await this.getSettings(String(full.eventId));
       const tokenCandidate = randomBytes(32).toString('base64url');
+      const paidAt = full.paidAt || new Date();
       const set: Record<string, unknown> = {
         status: StoreOrderStatus.PAID,
-        paidAt: full.paidAt || new Date(),
+        paidAt,
         downloadTokenHash: this.hash(tokenCandidate),
         downloadTokenCipher: this.encrypt(tokenCandidate),
-        downloadExpiresAt: new Date(
-          Date.now() + (config?.downloadExpiresHours || 72) * 3600000,
-        ),
+        // Fixed 30-day purchase access, including events with old 72h settings.
+        downloadExpiresAt: purchasedPhotoLinkExpiresAt(paidAt),
       };
       if (paymentIntentId) set.paymentIntentId = paymentIntentId;
       const claimed = await this.orders
@@ -788,6 +798,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
         eventTitle: event?.title || 'Your event',
         link,
         photoCount: order.imageIds.length,
+        orderNo: order.orderNo,
+        expiresAt: order.downloadExpiresAt,
       });
       await this.orders.updateOne(
         { _id: order._id, deliverySentAt: { $exists: false } },
@@ -930,6 +942,79 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     }));
     return { data: { ...order, imageIds: safeImages } };
   }
+  /**
+   * Stream an entire PAID order to the browser as one ZIP attachment.
+   * Does not buffer photos or expose the original R2 URLs to the guest.
+   * Uses the exact order token/expiry checks of individual downloads.
+   */
+  async downloadPurchasedZip(orderId: string, token: string, response: Response) {
+    const storage = this.storage;
+    if (!storage) throw new HttpException('Bulk storage is unavailable', 503);
+    const order = await this.orders
+      .findOne({
+        _id: this.oid(orderId),
+        downloadTokenHash: this.hash(token),
+        status: StoreOrderStatus.PAID,
+        downloadExpiresAt: { $gt: new Date() },
+      })
+      .select('eventId imageIds orderNo')
+      .lean();
+    if (!order) {
+      throw new ForbiddenException('Purchased file access is invalid or expired');
+    }
+    const ids = (order.imageIds || []).map(String);
+    if (!ids.length || ids.length > 10000) {
+      throw new HttpException('Order contains an invalid number of photos', 400);
+    }
+    const rows = await this.images
+      .find({ _id: { $in: ids.map((id) => this.oid(id)) }, eventId: order.eventId })
+      .select('_id imageUrl mediaType')
+      .lean();
+    const byId = new Map(rows.map((item) => [String(item._id), item]));
+    const entries = ids.map((id, index) => {
+      const photo = byId.get(id);
+      if (!photo?.imageUrl || !storage.canStreamStoredUrl(photo.imageUrl)) {
+        throw new HttpException(
+          'Some purchased originals cannot be archived. Download those photos individually.',
+          409,
+        );
+      }
+      return {
+        name: safePhotoEntryName({
+          _id: id,
+          imageUrl: photo.imageUrl,
+          mediaType: photo.mediaType,
+        }, index),
+        open: (signal: AbortSignal) => storage.openStoredUrl(photo.imageUrl, signal),
+      };
+    });
+
+    const name = String(order.orderNo || orderId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+    response.status(200);
+    response.setHeader('Content-Type', 'application/zip');
+    response.setHeader('Content-Disposition', downloadAttachmentHeader(`AirPix-${name}.zip`));
+    response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+
+    const controller = new AbortController();
+    const onClose = () => {
+      if (!response.writableFinished) controller.abort(new Error('Buyer disconnected'));
+    };
+    response.once('close', onClose);
+    try {
+      await streamPhotoZip(entries, response, controller.signal);
+    } catch (error) {
+      if (response.headersSent) {
+        if (!response.destroyed) response.destroy(error instanceof Error ? error : undefined);
+      } else {
+        throw error;
+      }
+    } finally {
+      response.off('close', onClose);
+    }
+  }
+
   async downloadPurchased(orderId: string, token: string, imageId: string) {
     const order = await this.orders
       .findOne({
@@ -1020,7 +1105,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
         wholeEventPrice: Number(settings.wholeEventPrice ?? 0),
         bundlePrice: Number(settings.bundlePrice ?? 0),
         bundleMinPhotos: Number(settings.bundleMinPhotos ?? 10),
-        downloadExpiresHours: Number(settings.downloadExpiresHours ?? 72),
+        downloadExpiresHours: PURCHASE_LINK_LIFETIME_HOURS,
         watermarkedPreview: settings.watermarkedPreview !== false,
         previewMaxWidth: Number(settings.previewMaxWidth ?? 1200),
         previewQuality: Number(settings.previewQuality ?? 64),
@@ -1041,7 +1126,10 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
   async updateSettings(dto: StoreSettingsDto, userId?: string, role?: string) {
     await this.members.assertCanManage(dto.eventId, userId, role);
     const current: any = await this.getSettings(dto.eventId, true);
-    const set: { [key: string]: unknown } = {};
+    const set: { [key: string]: unknown } = {
+      // Normalize legacy 72-hour settings when the planner next saves this event.
+      downloadExpiresHours: PURCHASE_LINK_LIFETIME_HOURS,
+    };
     for (const key of [
       'enabled',
       'currency',
@@ -1049,7 +1137,6 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
       'wholeEventPrice',
       'bundlePrice',
       'bundleMinPhotos',
-      'downloadExpiresHours',
       'watermarkedPreview',
       'previewMaxWidth',
       'previewQuality',

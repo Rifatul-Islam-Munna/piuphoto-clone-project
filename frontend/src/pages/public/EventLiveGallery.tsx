@@ -90,6 +90,7 @@ import {
   saveGalleryToFolder,
 } from "@/lib/gallery-folder-download";
 import { shouldGateGalleryForFace } from "@/lib/gallery-face-options";
+import { PhotoMasonry } from "@/components/gallery/PhotoMasonry";
 
 type Branding = {
   logoUrl?: string;
@@ -758,9 +759,11 @@ export default function EventLiveGallery() {
     }
   };
 
+  const deliveryEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+
   const startCheckout = async () => {
-    if (!storeCatalog || !email.trim()) {
-      toast.error("Enter the email where your originals should be delivered");
+    if (!storeCatalog || !deliveryEmailValid) {
+      toast.error("Enter a valid email so we can send your download link");
       return;
     }
     if (purchaseMode === "selected" && !purchaseIds.size) return;
@@ -1777,10 +1780,7 @@ export default function EventLiveGallery() {
             </p>
           </div>
         ) : (
-          <div
-            id="gallery-grid"
-            className="columns-1 gap-1 sm:columns-2 lg:columns-3 xl:columns-4"
-          >
+          <PhotoMasonry id="gallery-grid" className="relative left-1/2 w-[calc(100vw-10px)] -translate-x-1/2">
             {visibleImages.map((image, index) => {
               const id = imageId(image);
               if (!id) return null;
@@ -1788,7 +1788,7 @@ export default function EventLiveGallery() {
               return (
                 <article
                   key={id}
-                  className="group relative mb-4 break-inside-avoid overflow-hidden rounded-2xl border bg-black"
+                  className="group relative block w-full overflow-hidden bg-[#f4f4f2]"
                 >
                   {image.imageUrl ? (
                     image.mediaType === "video" ? (
@@ -1812,7 +1812,8 @@ export default function EventLiveGallery() {
                           src={assetUrl(image.imageUrl)}
                           alt={`Event photo ${index + 1}`}
                           loading="lazy"
-                          className="h-auto w-full object-cover transition duration-500 group-hover:scale-[1.03]"
+                          decoding="async"
+                          className="block h-auto w-full transition-transform duration-300 group-hover:scale-[1.015]"
                         />
                       </button>
                     )
@@ -1901,7 +1902,7 @@ export default function EventLiveGallery() {
                 </article>
               );
             })}
-          </div>
+          </PhotoMasonry>
         )}
 
         {visibleCount < images.length ? (
@@ -2177,8 +2178,9 @@ export default function EventLiveGallery() {
             <SheetHeader className="pr-8">
               <SheetTitle className="text-2xl">Purchase originals</SheetTitle>
               <SheetDescription>
-                Complete payment securely with Stripe. Your full-resolution,
-                unwatermarked photos will be delivered by email.
+                Complete payment securely with Stripe. Download full-resolution,
+                unwatermarked originals immediately after payment. If SMTP is
+                configured, we will also email your secure download link.
               </SheetDescription>
             </SheetHeader>
 
@@ -2231,9 +2233,12 @@ export default function EventLiveGallery() {
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label>Email for delivery</Label>
+                    <Label>Email for your download link (required)</Label>
                     <Input
                       type="email"
+                      autoComplete="email"
+                      inputMode="email"
+                      required
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
                       placeholder="you@example.com"
@@ -2267,7 +2272,7 @@ export default function EventLiveGallery() {
                     size="lg"
                     disabled={
                       checkingOut ||
-                      !email.trim() ||
+                      !deliveryEmailValid ||
                       (purchaseMode === "selected" && !purchaseIds.size)
                     }
                     onClick={() => void startCheckout()}

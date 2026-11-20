@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import nodemailer, { Transporter } from 'nodemailer';
+import { buildStoreDeliveryHtml, buildStoreDeliveryText } from './store-delivery-email';
 
 export type LinkNotification = {
   email?: string;
@@ -9,6 +10,8 @@ export type LinkNotification = {
   eventTitle: string;
   link: string;
   photoCount: number;
+  orderNo?: string;
+  expiresAt?: Date | string;
 };
 
 @Injectable()
@@ -54,12 +57,13 @@ export class NotificationService {
     return Boolean(this.env('WHATSAPP_ACCESS_TOKEN') && this.env('WHATSAPP_PHONE_NUMBER_ID'));
   }
 
-  async sendEmail(to: string, subject: string, text: string) {
+  async sendEmail(to: string, subject: string, text: string, html?: string) {
     await this.smtpTransport().sendMail({
       from: this.fromAddress(),
       to,
       subject,
       text,
+      ...(html ? { html } : {}),
     });
   }
 
@@ -126,15 +130,17 @@ export class NotificationService {
     await this.sendWhatsApp(data.whatsapp, data.eventTitle, data.link, text);
   }
   async sendStoreDelivery(data: LinkNotification) {
-    const noun = data.photoCount === 1 ? 'photo' : 'photos';
-    const text = `Your ${data.photoCount} purchased ${noun} from ${data.eventTitle} are ready. Download: ${data.link}`;
+    const text = buildStoreDeliveryText(data);
+    const html = buildStoreDeliveryHtml(data);
     const attempts: Promise<unknown>[] = [];
+    const mustDeliverEmail = Boolean(data.email && this.emailConfigured());
     if (data.email && this.emailConfigured()) {
       attempts.push(
         this.sendEmail(
           data.email,
-          `Your photos from ${data.eventTitle}`,
+          `Your photos from ${data.eventTitle} are ready`,
           text,
+          html,
         ),
       );
     }
@@ -145,10 +151,13 @@ export class NotificationService {
     }
     if (!attempts.length) return;
     const results = await Promise.allSettled(attempts);
-    if (!results.some((result) => result.status === 'fulfilled')) {
+    if (
+      !results.some((result) => result.status === 'fulfilled') ||
+      (mustDeliverEmail && results[0]?.status !== 'fulfilled')
+    ) {
       const reason = results.find((result) => result.status === 'rejected');
       this.logger.warn(`delivery-failed ${String((reason as PromiseRejectedResult | undefined)?.reason)}`);
-      throw new Error('All configured delivery channels failed');
+      throw new Error('Configured delivery channel failed');
     }
   }
 }

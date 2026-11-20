@@ -127,7 +127,7 @@ export default function StoreManager() {
     wholeEventPrice: 0,
     bundlePrice: 0,
     bundleMinPhotos: 10,
-    downloadExpiresHours: 72,
+    downloadExpiresHours: 720,
     watermarkedPreview: true,
     previewMaxWidth: 1200,
     previewQuality: 64,
@@ -153,7 +153,7 @@ export default function StoreManager() {
       wholeEventPrice: Number(data.wholeEventPrice ?? 0),
       bundlePrice: Number(data.bundlePrice ?? 0),
       bundleMinPhotos: Number(data.bundleMinPhotos ?? 10),
-      downloadExpiresHours: Number(data.downloadExpiresHours ?? 72),
+      downloadExpiresHours: 720,
       watermarkedPreview: data.watermarkedPreview !== false,
       previewMaxWidth: Number(data.previewMaxWidth ?? 1200),
       previewQuality: Number(data.previewQuality ?? 64),
@@ -467,17 +467,14 @@ export default function StoreManager() {
                 setForm((f) => ({ ...f, bundleMinPhotos: Number(v) || 2 }))
               }
             />
-            <Field
-              label="Download link hours"
-              type="number"
-              value={String(form.downloadExpiresHours)}
-              onChange={(v) =>
-                setForm((f) => ({
-                  ...f,
-                  downloadExpiresHours: Number(v) || 72,
-                }))
-              }
-            />
+            <div className="rounded-xl border bg-muted/30 p-3 text-sm">
+              <p className="font-semibold">Purchase link: 30 days</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Every paid order includes a secure download link valid for
+                30 days after payment. The buyer can download immediately
+                and receive the same link by email.
+              </p>
+            </div>
             <Field
               label="Preview max width (px)"
               type="number"

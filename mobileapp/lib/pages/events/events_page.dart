@@ -12,6 +12,7 @@ import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/pages/event_gallery/event_gallery_page.dart';
+import 'package:mobileapp/pages/upload/event_live_preview_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 import 'package:mobileapp/widgets/app_ui.dart';
 
@@ -1075,6 +1076,23 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      key: ValueKey('preview-event-${_event.id}'),
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => EventLivePreviewPage(
+                            eventId: _event.id,
+                            eventTitle: _event.title,
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(Icons.visibility_outlined, size: 19),
+                      label: const Text('Preview gallery'),
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   InkWell(
                     onTap: () =>

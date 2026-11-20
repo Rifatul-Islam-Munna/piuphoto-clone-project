@@ -144,6 +144,38 @@ void main() {
     );
   });
 
+  testWidgets(
+    'preview button opens the selected event inside the app without activating it',
+    (tester) async {
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.binding.setSurfaceSize(null);
+      });
+      await showEvents(tester);
+
+      // Event A stays active while we preview event B.
+      await tester.tap(find.byKey(const ValueKey('activate-event-event-a')));
+      await tester.pumpAndSettle();
+      expect(ActiveEventStorage.activeEvent.value?.id, 'event-a');
+
+      await tester.ensureVisible(find.text('Second shoot'));
+      await tester.tap(find.text('Second shoot'));
+      await tester.pumpAndSettle();
+
+      final previewButton = find.byKey(const ValueKey('preview-event-event-b'));
+      expect(previewButton, findsOneWidget);
+      await tester.ensureVisible(previewButton);
+      await tester.tap(previewButton);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Photo Live'), findsWidgets);
+      expect(find.text('Second shoot'), findsWidgets);
+      expect(ActiveEventStorage.activeEvent.value?.id, 'event-a');
+      expect(backend.patchedIds, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('backend reactivation failure leaves current selection alone', (
     tester,
   ) async {

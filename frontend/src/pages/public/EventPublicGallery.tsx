@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { GetRequestAxios, PostRequestAxios } from "@/api-hooks/api-hooks";
+import { PhotoMasonry } from "@/components/gallery/PhotoMasonry";
 
 type EventImage = {
   _id?: string;
@@ -524,19 +525,20 @@ export default function EventPublicGallery() {
               </section>
             )}
 
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <PhotoMasonry className="relative left-1/2 w-[calc(100vw-10px)] -translate-x-1/2">
               {visibleImages.map((image, index) => {
                 const id = getImageId(image);
                 const isSelected = selectedIds.has(id);
 
                 return (
-                  <Card key={id} className="overflow-hidden">
-                    <div className="relative aspect-[4/3] bg-muted">
+                  <Card key={id} className="group relative w-full overflow-hidden rounded-none border-0 bg-muted py-0 shadow-none">
+                    <div className="relative w-full bg-muted">
                       <img
                         src={image.imageUrl}
                         alt={`Event image ${index + 1}`}
-                        className="h-full w-full object-cover"
+                        className="block h-auto w-full"
                         loading="lazy"
+                        decoding="async"
                       />
                       <label className="absolute left-3 top-3 flex h-9 w-9 cursor-pointer items-center justify-center rounded-md bg-background/95 shadow">
                         <Checkbox
@@ -551,7 +553,7 @@ export default function EventPublicGallery() {
                         </Badge>
                       )}
                     </div>
-                    <CardContent className="flex items-center justify-between gap-2 p-3">
+                    <CardContent className="absolute inset-x-0 bottom-0 z-10 flex items-center justify-between gap-2 bg-gradient-to-t from-black/65 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                       <Button asChild variant="outline" size="sm">
                         <Link to={`/event/${eventId}/image/${id}`}>Open</Link>
                       </Button>
@@ -575,7 +577,7 @@ export default function EventPublicGallery() {
                   </Card>
                 );
               })}
-            </div>
+            </PhotoMasonry>
 
             {hasMore && (
               <div className="flex justify-center">

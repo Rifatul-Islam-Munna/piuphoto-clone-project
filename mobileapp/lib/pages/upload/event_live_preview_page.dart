@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:intl/intl.dart';
 import 'package:mobileapp/core/guest/guest_qr_payload.dart';
@@ -263,11 +264,10 @@ class _EventLivePreviewPageState extends State<EventLivePreviewPage> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final groups = <String, List<LiveEventPhoto>>{};
-    for (final photo in _photos) {
-      final label = DateFormat('yyyy-MM-dd HH:00').format(photo.createdAt);
-      groups.putIfAbsent(label, () => []).add(photo);
-    }
+    // Keep one uninterrupted masonry grid across all upload timestamps.
+    // Splitting photos into hourly slivers leaves blank space beneath shorter
+    // columns whenever a new hour starts.
+    final galleryPhotos = _photos;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Photo Live'),
@@ -370,59 +370,76 @@ class _EventLivePreviewPageState extends State<EventLivePreviewPage> {
                   ),
                 ),
               ),
-            for (final group in groups.entries) ...[
+            if (galleryPhotos.isNotEmpty) ...[
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 22, 14, 8),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.expand_more_rounded, size: 20),
-                      const SizedBox(width: 5),
-                      Text(
-                        group.key,
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      const Spacer(),
-                      Text('${group.value.length} photos'),
-                    ],
+                  padding: const EdgeInsets.fromLTRB(5, 10, 5, 8),
+                  child: Text(
+                    '${_total > 0 ? _total : galleryPhotos.length} photos',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
               ),
+              // Same natural-aspect masonry layout as the web gallery.
+              // A sliver lazily builds only nearby thumbnails during long shoots.
               SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 5),
                 sliver: SliverLayoutBuilder(
                   builder: (context, constraints) {
-                    final columns = constraints.crossAxisExtent < 480 ? 3 : 5;
-                    return SliverGrid(
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        crossAxisSpacing: 5,
-                        mainAxisSpacing: 5,
-                        childAspectRatio: 1,
-                      ),
-                      delegate: SliverChildBuilderDelegate((context, index) {
-                        final photo = group.value[index];
+                    final columns = constraints.crossAxisExtent < 680
+                        ? 2
+                        : constraints.crossAxisExtent < 1024
+                        ? 3
+                        : 4;
+                    return SliverMasonryGrid.count(
+                      crossAxisCount: columns,
+                      mainAxisSpacing: 5,
+                      crossAxisSpacing: 5,
+                      childCount: galleryPhotos.length,
+                      itemBuilder: (context, index) {
+                        final photo = galleryPhotos[index];
                         return Material(
                           key: ValueKey('live-photo-${photo.id}'),
                           color: colors.surfaceContainer,
                           child: InkWell(
                             onTap: () => _showPhoto(photo),
                             child: Stack(
-                              fit: StackFit.expand,
                               children: [
                                 if (photo.mediaType == 'video')
-                                  const Center(
-                                    child: Icon(Icons.videocam, size: 40),
+                                  const AspectRatio(
+                                    aspectRatio: 16 / 9,
+                                    child: Center(
+                                      child: Icon(Icons.videocam, size: 40),
+                                    ),
                                   )
                                 else
                                   Image.network(
                                     photo.imageUrl,
-                                    fit: BoxFit.cover,
-                                    cacheWidth: 400,
-                                    errorBuilder: (_, _, _) => const Center(
-                                      child: Icon(Icons.broken_image_outlined),
-                                    ),
+                                    width: double.infinity,
+                                    fit: BoxFit.fitWidth,
+                                    cacheWidth: 600,
+                                    // Keep the tile stable until the image's
+                                    // real aspect ratio is decoded.
+                                    loadingBuilder: (context, child, progress) {
+                                      if (progress == null) return child;
+                                      return const AspectRatio(
+                                        aspectRatio: 4 / 3,
+                                        child: Center(
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    errorBuilder: (_, _, _) =>
+                                        const AspectRatio(
+                                          aspectRatio: 4 / 3,
+                                          child: Center(
+                                            child: Icon(
+                                              Icons.broken_image_outlined,
+                                            ),
+                                          ),
+                                        ),
                                   ),
                                 if (!photo.isPublished)
                                   Positioned(
@@ -448,7 +465,7 @@ class _EventLivePreviewPageState extends State<EventLivePreviewPage> {
                             ),
                           ),
                         );
-                      }, childCount: group.value.length),
+                      },
                     );
                   },
                 ),
