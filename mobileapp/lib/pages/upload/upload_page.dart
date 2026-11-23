@@ -25,7 +25,6 @@ import 'package:mobileapp/core/platform/otg_file_picker.dart';
 import 'package:mobileapp/core/platform/ptp_ip_camera.dart';
 import 'package:mobileapp/core/platform/usb_camera_guidance.dart';
 import 'package:mobileapp/core/platform/usb_camera_mode_advisor.dart';
-import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/storage/camera_ftp_profile_storage.dart';
 import 'package:mobileapp/core/storage/usb_camera_upload_mode_storage.dart';
@@ -39,7 +38,13 @@ import 'package:mobileapp/core/upload/upload_queue_storage.dart';
 import 'package:mobileapp/core/upload/presigned_upload_service.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
+import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/pages/upload/camera_transfer_page.dart';
+import 'package:mobileapp/pages/event_gallery/event_auto_enhance_toggle.dart';
+import 'package:mobileapp/pages/events/events_page.dart';
+import 'package:mobileapp/pages/upload/camera_upload_sheet_view.dart';
+import 'package:mobileapp/pages/upload/camera_upload_preferences_sheet.dart';
+import 'package:mobileapp/pages/upload/manual_camera_staging.dart';
 import 'package:mobileapp/pages/upload/event_live_preview_page.dart';
 import 'package:mobileapp/pages/upload/upload_event_picker.dart';
 import 'package:mobileapp/pages/upload/upload_transfer_overview.dart';
@@ -134,9 +139,34 @@ class _UsbCaptureTarget {
   final bool photoCatalog;
 }
 
+/// Opens the same native upload controller directly inside the method sheet.
+/// Keep the sheet mounted behind the live monitor so receiving never stops
+/// when the photographer navigates to the transfer counts.
+Future<void> showCameraUploadBottomSheet(
+  BuildContext context, {
+  String? initialAlbumId,
+}) => showModalBottomSheet<void>(
+  context: context,
+  isScrollControlled: true,
+  isDismissible: false,
+  enableDrag: false,
+  backgroundColor: Colors.transparent,
+  builder: (_) =>
+      UploadPage(initialAlbumId: initialAlbumId, asBottomSheet: true),
+);
+
 @RoutePage()
 class UploadPage extends StatefulWidget {
-  const UploadPage({super.key});
+  const UploadPage({
+    super.key,
+    this.initialAlbumId,
+    this.initialUploadMethod,
+    this.asBottomSheet = false,
+  });
+
+  final String? initialAlbumId;
+  final String? initialUploadMethod;
+  final bool asBottomSheet;
 
   @override
   State<UploadPage> createState() => _UploadPageState();
@@ -145,10 +175,19 @@ class UploadPage extends StatefulWidget {
 class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   final _picker = ImagePicker();
   final List<_SelectedUploadFile> _selectedFiles = [];
+  final ValueNotifier<List<PickedTransferPhoto>> _pickedTransferPhotos =
+      ValueNotifier<List<PickedTransferPhoto>>(const []);
+  final ValueNotifier<bool> _pickedUploading = ValueNotifier<bool>(false);
+  String? _selectedSheetMethod;
   // Manual batches report each file's transfer progress, not just one spinner.
   final Map<String, int> _manualProgress = {};
   final Set<String> _manualStarted = {};
   final Set<String> _manualStored = {};
+  // Delivery approval is a Dart-only preference; camera capture remains native.
+  final ValueNotifier<bool> _manualCameraMode = ValueNotifier<bool>(false);
+  String? _manualModeEventId;
+  Future<void>? _manualModeRestore;
+  bool _approvingManual = false;
   Timer? _wirelessTimer;
   Timer? _galleryTimer;
   LiveCameraCapture? _liveCamera;
@@ -164,7 +203,6 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   LiveCameraUploadMode _usbUploadMode = LiveCameraUploadMode.newShotsOnly;
   LiveCameraUploadMode _usbSessionUploadMode =
       LiveCameraUploadMode.newShotsOnly;
-  bool _isEnhanced = false;
   bool _uploading = false;
   bool _galleryImporting = false;
   bool _galleryBusy = false;
@@ -182,6 +220,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   bool _soloEventResolved = false;
   bool _switchingUploadEvent = false;
   bool _connectionPageOpen = false;
+  bool _closingCameraSheet = false;
   CameraFtpReceiver? _ftpReceiver;
   CameraFtpConnection? _ftpConnection;
   bool _ftpStarting = false;
@@ -318,8 +357,20 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _usbUploadMode = UsbCameraUploadModeStorage.read();
+    unawaited(ManualCameraStaging.load());
     WidgetsBinding.instance.addObserver(this);
     ActiveEventStorage.activeEvent.addListener(_handleLiveEventChange);
+    if (widget.initialUploadMethod != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final event = ActiveEventStorage.activeEvent.value;
+        if (!mounted || event == null) return;
+        await _restoreManualCameraMode(event);
+        await _loadAlbumsForEvent(event);
+        if (mounted) {
+          await _startInitialUploadMethod(event, widget.initialUploadMethod!);
+        }
+      });
+    }
   }
 
   void _handleLiveEventChange() {
@@ -403,6 +454,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       unawaited(TransferScreenAwake.setEnabled(awakeOwner, false));
     }
     _sessionStatus.dispose();
+    _manualCameraMode.dispose();
+    _pickedTransferPhotos.dispose();
+    _pickedUploading.dispose();
     final canonCamera = _canonCcapiCamera;
     _canonCcapiCamera = null;
     if (canonCamera != null) unawaited(canonCamera.close());
@@ -414,6 +468,143 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     if (ptpEvents != null) unawaited(ptpEvents.cancel());
     _wirelessConnectCancellation?.cancel('Page closed');
     super.dispose();
+  }
+
+  Future<void> _restoreManualCameraMode(EventSummary event) {
+    if (_manualModeEventId == event.id) {
+      return _manualModeRestore ?? Future<void>.value();
+    }
+    _manualModeEventId = event.id;
+    final restoring = () async {
+      try {
+        final preferences = await SharedPreferences.getInstance();
+        if (!mounted || _manualModeEventId != event.id) return;
+        _manualCameraMode.value =
+            preferences.getBool('manual_camera_review_mode_${event.id}') ??
+            false;
+      } catch (error) {
+        debugPrint('Could not restore camera review preference: $error');
+      }
+    }();
+    _manualModeRestore = restoring;
+    return restoring;
+  }
+
+  Future<void> _setManualCameraMode(EventSummary event, bool manual) async {
+    await _restoreManualCameraMode(event);
+    if (!mounted) return;
+    _manualCameraMode.value = manual;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool('manual_camera_review_mode_${event.id}', manual);
+    if (mounted) {
+      AppToast.success(
+        manual
+            ? 'Select & Upload: review photos before cloud upload'
+            : 'Shoot & Upload: new photos upload automatically',
+      );
+    }
+  }
+
+  Future<void> _showCameraUploadPreferences(EventSummary event) async {
+    if (!mounted) return;
+    final manual = await showCameraUploadPreferencesSheet(
+      context,
+      manualSelection: _manualCameraMode.value,
+    );
+    if (manual == null || !mounted) return;
+    await _setManualCameraMode(event, manual);
+  }
+
+  Future<void> _approveManualPhotos(List<String> ids) async {
+    if (_approvingManual || ids.isEmpty) return;
+    _safeSetState(() => _approvingManual = true);
+    var accepted = 0;
+    try {
+      for (final id in ids) {
+        final candidates = ManualCameraStaging.items.value.where(
+          (p) => p.id == id && p.isPending,
+        );
+        if (candidates.isEmpty) continue;
+        final photo = candidates.first;
+        // Reuse the proven durable queue and automatic retry; never upload an
+        // unapproved file, and never alter the original camera source.
+        await UploadQueueService.receiveCameraFile(
+          event: EventSummary(id: photo.eventId, title: photo.eventTitle),
+          path: photo.path,
+          filename: photo.filename,
+          // Review photos are unprocessed originals; the server reads the
+          // album event's autoEnhanceImages setting before AI processing.
+          isEnhanced: false,
+          albumId: photo.albumId,
+          source: photo.source,
+          cameraId: photo.cameraId,
+          fingerprint: photo.fingerprint,
+        );
+        await ManualCameraStaging.markSubmitted(photo.id);
+        accepted++;
+      }
+      if (mounted && accepted > 0) {
+        AppToast.success('$accepted photos approved for cloud upload');
+      }
+    } catch (error) {
+      if (mounted) {
+        AppToast.error(
+          'Could not queue every photo. The remaining photos are safely saved for review.',
+        );
+      }
+    } finally {
+      if (mounted) _safeSetState(() => _approvingManual = false);
+    }
+  }
+
+  Future<void> _discardManualPhotos(List<String> ids) async {
+    for (final id in ids) {
+      await ManualCameraStaging.discard(id);
+    }
+    if (mounted && ids.isNotEmpty) {
+      AppToast.success('Removed from local review only');
+    }
+  }
+
+  Future<void> _shareEventLink(EventSummary event) async {
+    try {
+      final url = GuestQrPayload.encode(
+        event.id,
+        publicAppUrl: dotenv.env['PUBLIC_APP_URL'],
+        faceEnrollment: false,
+      );
+      await SharePlus.instance.share(ShareParams(text: url));
+    } catch (_) {
+      if (mounted) AppToast.error('Could not share gallery link');
+    }
+  }
+
+  void _syncPickedPhotos() {
+    if (_disposed) return;
+    _pickedTransferPhotos.value = List<PickedTransferPhoto>.unmodifiable(
+      _selectedFiles.map(
+        (file) => PickedTransferPhoto(path: file.path, filename: file.name),
+      ),
+    );
+  }
+
+  void _clearPickedPhotos() {
+    _safeSetState(() {
+      _selectedFiles.clear();
+      _manualStarted.clear();
+      _manualProgress.clear();
+      _manualStored.clear();
+      _uploadStatus = null;
+    });
+    _syncPickedPhotos();
+  }
+
+  void _removePickedPhoto(String path) {
+    if (_uploading) return;
+    _safeSetState(
+      () => _selectedFiles.removeWhere((file) => file.path == path),
+    );
+    _syncPickedPhotos();
   }
 
   void _addSelectedFiles(List<_SelectedUploadFile> files) {
@@ -428,6 +619,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     _safeSetState(() {
       _selectedFiles.addAll(freshFiles);
     });
+    _syncPickedPhotos();
   }
 
   Future<void> _pickPhoneImages() async {
@@ -1019,7 +1211,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       event: event,
       path: path,
       filename: filename,
-      isEnhanced: _isEnhanced,
+      isEnhanced: false,
       albumId: _selectedAlbumId,
       source: source,
       cameraId: cameraId,
@@ -1043,7 +1235,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       data: {
         'eventId': event.id,
         'imageUrls': imageUrls,
-        'isEnhanced': _isEnhanced,
+        'isEnhanced': false,
         if (_selectedAlbumId != null) 'albumId': _selectedAlbumId,
       },
     );
@@ -1060,11 +1252,18 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         queryParameters: {'eventId': event.id},
       );
       final data = response.data['data'] as List? ?? [];
+      final albums = data
+          .map((item) => AlbumModel.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
       if (!mounted) return;
       _safeSetState(() {
-        _albums = data
-            .map((item) => AlbumModel.fromJson(Map<String, dynamic>.from(item)))
-            .toList();
+        _albums = albums;
+        final requestedAlbumId = widget.initialAlbumId;
+        _selectedAlbumId =
+            requestedAlbumId != null &&
+                albums.any((album) => album.id == requestedAlbumId)
+            ? requestedAlbumId
+            : null;
       });
     } catch (_) {
       if (!mounted) return;
@@ -1087,7 +1286,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     final target = _WirelessCaptureTarget(
       event: event,
       mode: mode,
-      isEnhanced: _isEnhanced,
+      isEnhanced: false,
       albumId: _selectedAlbumId,
     );
     final generation = ++_wirelessGeneration;
@@ -1208,24 +1407,42 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   }) async {
     // A complete in-flight photo belongs to the event/album captured when the
     // session started, even when Stop or an event change happens during its read.
-    await UploadQueueService.receiveCameraBytes(
-      event: target.event,
-      bytes: bytes,
-      filename: filename,
-      isEnhanced: target.isEnhanced,
-      albumId: target.albumId,
-      source: '$source-${target.mode.name}',
-      cameraId: cameraId,
-      fingerprint: _wirelessFingerprint(
+    if (_manualCameraMode.value) {
+      await ManualCameraStaging.stageBytes(
         event: target.event,
-        imageUrl: imageKey,
-        signature: '$signature|${sha256.convert(bytes)}',
-      ),
-    );
+        bytes: bytes,
+        filename: filename,
+        isEnhanced: false,
+        albumId: target.albumId,
+        source: '$source-${target.mode.name}',
+        cameraId: cameraId,
+        fingerprint: _wirelessFingerprint(
+          event: target.event,
+          imageUrl: imageKey,
+          signature: '$signature|${sha256.convert(bytes)}',
+        ),
+      );
+    } else {
+      await UploadQueueService.receiveCameraBytes(
+        event: target.event,
+        bytes: bytes,
+        filename: filename,
+        isEnhanced: false,
+        albumId: target.albumId,
+        source: '$source-${target.mode.name}',
+        cameraId: cameraId,
+        fingerprint: _wirelessFingerprint(
+          event: target.event,
+          imageUrl: imageKey,
+          signature: '$signature|${sha256.convert(bytes)}',
+        ),
+      );
+    }
     if (_wirelessActive(generation)) {
       _safeSetState(
-        () => _wirelessStatus =
-            'Photo received. Cloud upload starts automatically. Keep shooting.',
+        () => _wirelessStatus = _manualCameraMode.value
+            ? 'Photo saved on this phone. Select it to upload.'
+            : 'Photo received. Cloud upload starts automatically. Keep shooting.',
       );
     }
   }
@@ -1294,13 +1511,14 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     if (!mounted ||
         _disposed ||
         _wirelessImporting ||
-        ActiveEventStorage.activeEvent.value?.id != event.id)
+        ActiveEventStorage.activeEvent.value?.id != event.id) {
       return;
+    }
     _beginReceivingSession(event, 'wireless');
     final target = _WirelessCaptureTarget(
       event: event,
       mode: _WirelessImportMode.ptpIp,
-      isEnhanced: _isEnhanced,
+      isEnhanced: false,
       albumId: _selectedAlbumId,
     );
     final generation = ++_wirelessGeneration;
@@ -1314,7 +1532,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       try {
         preferences = await SharedPreferences.getInstance();
       } catch (_) {}
-      if (!_wirelessActive(generation)) return;
+      if (!_wirelessActive(generation) || !mounted) return;
       final address = await showDialog<String>(
         context: context,
         builder: (_) => PtpIpSetupDialog(
@@ -1338,8 +1556,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         timeout: const Duration(seconds: 5),
       );
       if (!_wirelessActive(generation)) return;
-      if (opening == null)
+      if (opening == null) {
         throw const SocketException('Camera PTP/IP connection failed');
+      }
       await opening.establishLiveBaseline();
       if (!_wirelessActive(generation)) return;
       final connected = opening;
@@ -1383,8 +1602,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       }
     } finally {
       await opening?.close();
-      if (_wirelessActive(generation))
+      if (_wirelessActive(generation)) {
         _safeSetState(() => _wirelessScanning = false);
+      }
     }
   }
 
@@ -1421,8 +1641,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       // Queue persistence resolves before ACK; network upload runs separately.
       camera.acknowledgeImages([image.handle]);
     }
-    if (incomplete)
+    if (incomplete) {
       throw const SocketException('Camera is still writing a pending photo');
+    }
   }
 
   Future<void> _pollWirelessCamera(
@@ -1639,18 +1860,30 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     try {
       final session = await capture.start(
         save: (file, session) async {
-          // Save a separate queue copy before native ACK. Internet delivery
-          // runs independently so burst shooting is not network-bound.
-          await UploadQueueService.receiveCameraFile(
-            event: event,
-            path: file.path,
-            filename: file.name,
-            isEnhanced: target.isEnhanced,
-            albumId: target.albumId,
-            source: source,
-            cameraId: session.name,
-            fingerprint: '${event.id}|$source|${session.cameraId}|${file.id}',
-          );
+          // Camera ACK still follows a durable local copy in both modes.
+          if (_manualCameraMode.value) {
+            await ManualCameraStaging.stageFile(
+              event: event,
+              path: file.path,
+              filename: file.name,
+              isEnhanced: false,
+              albumId: target.albumId,
+              source: source,
+              cameraId: session.name,
+              fingerprint: '${event.id}|$source|${session.cameraId}|${file.id}',
+            );
+          } else {
+            await UploadQueueService.receiveCameraFile(
+              event: event,
+              path: file.path,
+              filename: file.name,
+              isEnhanced: false,
+              albumId: target.albumId,
+              source: source,
+              cameraId: session.name,
+              fingerprint: '${event.id}|$source|${session.cameraId}|${file.id}',
+            );
+          }
           if (_otgActive(generation)) {
             _safeSetState(() => _wiredPhotoReceived = true);
           }
@@ -1890,7 +2123,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       event: event,
       uploadMode: _usbUploadMode,
       photoCatalog: _usbPhotoCatalogReader,
-      isEnhanced: _isEnhanced,
+      isEnhanced: false,
       albumId: _selectedAlbumId,
     );
     _safeSetState(() {
@@ -2005,7 +2238,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     final target = _UsbCaptureTarget(
       event: event,
       uploadMode: LiveCameraUploadMode.newShotsOnly,
-      isEnhanced: _isEnhanced,
+      isEnhanced: false,
       albumId: _selectedAlbumId,
     );
     _safeSetState(() {
@@ -2142,7 +2375,6 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     _beginReceivingSession(event, 'ftp');
     final generation = ++_wirelessGeneration;
     final albumId = _selectedAlbumId;
-    final enhanced = _isEnhanced;
     _safeSetState(() {
       _ftpStarting = true;
       _ftpHasReceived = false;
@@ -2192,19 +2424,31 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
           '${temporary.path}${Platform.pathSeparator}camera_ftp',
         ),
         onFile: (file) async {
-          // FTP 226 (accepted) is sent only after this local copy is durable.
-          // The camera can send its next shot without waiting for cloud upload.
-          await UploadQueueService.receiveCameraFile(
-            event: event,
-            path: file.localPath,
-            filename: file.name,
-            isEnhanced: enhanced,
-            albumId: albumId,
-            source: 'wireless-ftp',
-            cameraId: 'Camera FTP',
-            fingerprint: '${event.id}|wireless-ftp|${file.fingerprint}',
-          );
-          // The durable queue owns a separate copy; journal staging cleanup.
+          // FTP ACK is sent only after a durable local copy in both modes.
+          if (_manualCameraMode.value) {
+            await ManualCameraStaging.stageFile(
+              event: event,
+              path: file.localPath,
+              filename: file.name,
+              isEnhanced: false,
+              albumId: albumId,
+              source: 'wireless-ftp',
+              cameraId: 'Camera FTP',
+              fingerprint: '${event.id}|wireless-ftp|${file.fingerprint}',
+            );
+          } else {
+            await UploadQueueService.receiveCameraFile(
+              event: event,
+              path: file.localPath,
+              filename: file.name,
+              isEnhanced: false,
+              albumId: albumId,
+              source: 'wireless-ftp',
+              cameraId: 'Camera FTP',
+              fingerprint: '${event.id}|wireless-ftp|${file.fingerprint}',
+            );
+          }
+          // The approved queue or manual inbox owns a separate copy.
           await CameraStagingCleanup.release(file.localPath);
           if (_wirelessActive(generation)) {
             _safeSetState(() {
@@ -2468,6 +2712,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
 
     final files = List<_SelectedUploadFile>.from(_selectedFiles);
 
+    _pickedUploading.value = true;
     _safeSetState(() {
       _uploading = true;
       _manualStarted.clear();
@@ -2524,9 +2769,11 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         _manualStarted.clear();
         _manualProgress.clear();
         _manualStored.clear();
-        _isEnhanced = false;
+        // Enhancement is an event-level preference; completing one upload
+        // must not silently turn it off for the next batch.
         _uploadStatus = null;
       });
+      _syncPickedPhotos();
     } on DioException catch (error) {
       AppToast.error(
         error.response?.data?['message']?.toString() ??
@@ -2537,6 +2784,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     } finally {
       if (mounted) {
         _safeSetState(() => _uploading = false);
+        _pickedUploading.value = false;
       }
     }
   }
@@ -2575,6 +2823,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         _loadedAlbumEventId = null;
         _albums = [];
       });
+      _syncPickedPhotos();
       AppToast.success('Uploading to ${event.title}');
       return true;
     } catch (_) {
@@ -2721,6 +2970,151 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     }
   }
 
+  /// All button actions below reuse the same state and receiver callbacks as
+  /// the legacy page. No second upload screen is pushed.
+  Widget _buildCameraUploadSheet(EventSummary? activeEvent) {
+    return ValueListenableBuilder<List<PendingUploadItem>>(
+      valueListenable: UploadQueueStorage.items,
+      builder: (context, queued, _) {
+        return ValueListenableBuilder<List<ManualCameraPhoto>>(
+          valueListenable: ManualCameraStaging.items,
+          builder: (context, staged, _) => CameraUploadSheetView(
+            eventTitle: activeEvent?.title ?? 'Choose an album first',
+            albums: _albums,
+            selectedAlbumId: _selectedAlbumId,
+            selectedFileCount: _selectedFiles.length,
+            isUploading: _uploading,
+            receiving: _liveConnectionActive,
+            isBusy:
+                _usbStartRequested ||
+                _otgStarting ||
+                _wirelessScanning ||
+                _usbPickInProgress ||
+                _uploading,
+            queueCount: queued
+                .where((item) => item.eventId == activeEvent?.id)
+                .length,
+            pendingReviewCount: staged
+                .where(
+                  (photo) =>
+                      photo.isPending && photo.eventId == activeEvent?.id,
+                )
+                .length,
+            statusMessage:
+                _uploadStatus ??
+                (_usbSessionLocked ? _otgStatus : null) ??
+                (_wirelessImporting ? _wirelessStatus : null) ??
+                (_galleryImporting ? _galleryStatus : null),
+            onStart: (method) async {
+              if (activeEvent == null) {
+                AppToast.error('Choose an album before uploading');
+                return;
+              }
+              await _startSheetUploadMethod(activeEvent, method);
+            },
+            onClose: _closeCameraUploadSheet,
+            onStop: _stopReceivingSession,
+            onOpenTransfers: () {
+              if (activeEvent != null) {
+                unawaited(_showTransferSessionPage(activeEvent));
+              }
+            },
+            onUploadSettings: () {
+              if (activeEvent != null) {
+                unawaited(_showCameraUploadPreferences(activeEvent));
+              }
+            },
+            onUsbOptions: () => unawaited(_showUsbCameraOptions()),
+            onWirelessOptions: () => unawaited(_showWirelessCameraOptions()),
+            onShare: () {
+              if (activeEvent != null) {
+                unawaited(_shareEventLink(activeEvent));
+              }
+            },
+            onGuestQr: () {
+              if (activeEvent != null) {
+                unawaited(_showGuestQr(activeEvent));
+              }
+            },
+            onFaceQr: () {
+              if (activeEvent != null) {
+                unawaited(_showGuestQr(activeEvent, faceEnrollment: true));
+              }
+            },
+            onPreview: () {
+              if (activeEvent != null) {
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) => EventLivePreviewPage(
+                      eventId: activeEvent.id,
+                      eventTitle: activeEvent.title,
+                    ),
+                  ),
+                );
+              }
+            },
+            onChangeAlbum: (value) {
+              if (!_liveConnectionActive && !_usbSessionLocked) {
+                _safeSetState(() => _selectedAlbumId = value);
+              }
+            },
+            onClearSelected: _clearPickedPhotos,
+            onUploadSelected: () {
+              if (activeEvent != null) unawaited(_submit(activeEvent));
+            },
+            onRetryQueue: () => unawaited(UploadQueueService.processQueue()),
+            onFreeSpace: () => unawaited(_freeUploadedGallerySpace()),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _closeCameraUploadSheet() async {
+    if (_closingCameraSheet) return;
+    _closingCameraSheet = true;
+    try {
+      if (_uploading || _connectionPageOpen) {
+        AppToast.error('Finish the active upload before closing');
+        return;
+      }
+      if (_liveConnectionActive || _usbSessionLocked) {
+        final shouldStop = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Stop receiving photos?'),
+            content: const Text(
+              'Closing the upload sheet disconnects this camera session. '
+              'Photos already received or queued will stay saved.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Keep receiving'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Stop and close'),
+              ),
+            ],
+          ),
+        );
+        if (shouldStop != true || !mounted) return;
+        await _stopReceivingSession();
+        if (!mounted) return;
+        if (_liveConnectionActive || _usbSessionLocked) {
+          AppToast.error('The camera is still disconnecting. Try again.');
+          return;
+        }
+        // Let PopScope observe the completed native shutdown before popping.
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      if (mounted) Navigator.of(context).pop<void>();
+    } finally {
+      _closingCameraSheet = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder(
@@ -2728,7 +3122,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       builder: (context, activeEvent, _) {
         if (activeEvent != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _loadAlbumsForEvent(activeEvent);
+            if (!mounted) return;
+            unawaited(_restoreManualCameraMode(activeEvent));
+            _loadAlbumsForEvent(activeEvent);
           });
         } else if (_loadedAlbumEventId != null) {
           _loadedAlbumEventId = null;
@@ -2742,40 +3138,97 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
           });
         }
 
+        if (widget.asBottomSheet) {
+          return PopScope(
+            canPop: !_uploading && !_liveConnectionActive && !_usbSessionLocked,
+            onPopInvokedWithResult: (didPop, _) {
+              if (!didPop) unawaited(_closeCameraUploadSheet());
+            },
+            child: _buildCameraUploadSheet(activeEvent),
+          );
+        }
+
         return Scaffold(
           appBar: AppBar(
-            toolbarHeight: 82,
-            title: const Column(
+            toolbarHeight: 76,
+            title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Upload'),
-                SizedBox(height: 3),
                 Text(
-                  'Capture, sync and deliver',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w500,
+                  activeEvent?.title ?? 'Upload',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  UserStorage.currentUser.value?.email ?? 'Camera transfer',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
                     color: AppColors.mutedForeground,
                   ),
                 ),
               ],
             ),
             actions: [
-              if (activeEvent != null)
-                TextButton.icon(
-                  onPressed: _connectionPageOpen
-                      ? null
-                      : () => _showTransferSessionPage(activeEvent),
-                  icon: Icon(
-                    _liveConnectionActive
-                        ? Icons.camera_alt_rounded
-                        : Icons.tune_rounded,
-                    color: AppColors.primary,
-                    size: 18,
-                  ),
-                  label: const Text('Session'),
+              if (activeEvent != null) ...[
+                IconButton(
+                  tooltip: 'Share album',
+                  onPressed: () => _shareEventLink(activeEvent),
+                  icon: const Icon(Icons.share_outlined),
                 ),
-              const SizedBox(width: 8),
+                PopupMenuButton<String>(
+                  tooltip: 'More upload actions',
+                  icon: const Icon(Icons.more_vert_rounded),
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'settings':
+                        _showCameraUploadPreferences(activeEvent);
+                      case 'session':
+                        if (!_connectionPageOpen) {
+                          _showTransferSessionPage(activeEvent);
+                        }
+                      case 'qr':
+                        _showGuestQr(activeEvent);
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'settings',
+                      child: ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.tune_rounded),
+                        title: Text('Upload settings'),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'session',
+                      child: ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.camera_alt_outlined),
+                        title: Text('Camera session'),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'qr',
+                      child: ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.qr_code_rounded),
+                        title: Text('Share gallery QR'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(width: 4),
             ],
           ),
           body: ListView(
@@ -2943,6 +3396,145 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                   ),
                 ),
 
+              if (activeEvent != null) ...[
+                const SizedBox(height: 12),
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            AppIconTile(
+                              icon: Icons.photo_library_outlined,
+                              size: 42,
+                              iconSize: 21,
+                            ),
+                            const SizedBox(width: 10),
+                            const Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Select & Upload',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  SizedBox(height: 3),
+                                  Text(
+                                    'Choose only the photos you want. Nothing uploads until you confirm.',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      height: 1.35,
+                                      color: AppColors.mutedForeground,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _uploading ? null : _pickPhoneImages,
+                            icon: const Icon(Icons.photo_library_outlined),
+                            label: const Text('Select from phone gallery'),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _uploading || _usbSessionLocked
+                                ? null
+                                : _pickOtgFiles,
+                            icon: const Icon(Icons.usb_rounded),
+                            label: const Text('Select from connected camera'),
+                          ),
+                        ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: _uploading
+                                ? null
+                                : () => _showUploadMethodSheet(activeEvent),
+                            icon: const Icon(Icons.tune_rounded, size: 16),
+                            label: const Text('More upload methods'),
+                          ),
+                        ),
+                        if (_selectedFiles.isNotEmpty) ...[
+                          const Divider(height: 18),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '${_selectedFiles.length} photos selected',
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _selectedFiles
+                                          .take(2)
+                                          .map((file) => file.name)
+                                          .join(', '),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: AppColors.mutedForeground,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _uploading
+                                    ? null
+                                    : () => _safeSetState(() {
+                                        _selectedFiles.clear();
+                                        _manualStarted.clear();
+                                        _manualProgress.clear();
+                                        _manualStored.clear();
+                                        _uploadStatus = null;
+                                      }),
+                                child: const Text('Clear'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.icon(
+                              onPressed: _uploading
+                                  ? null
+                                  : () => _submit(activeEvent),
+                              icon: const Icon(Icons.cloud_upload_outlined),
+                              label: Text(
+                                _uploading
+                                    ? 'Uploading ${_selectedFiles.length} photos...'
+                                    : 'Upload selected photos',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+
               const SizedBox(height: 8),
 
               if (activeEvent != null && _liveConnectionActive) ...[
@@ -3072,27 +3664,15 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
                   ),
                   subtitle: const Text(
-                    'Phone photos, phone camera, files and gallery watching',
+                    'Phone camera, automatic gallery watching and uploaded photos',
                     style: TextStyle(fontSize: 11),
                   ),
                   children: [
-                    _uploadSourceTile(
-                      icon: Icons.photo_library_outlined,
-                      title: 'Phone photos',
-                      subtitle: 'Choose existing photos from this phone.',
-                      onTap: _uploading ? null : _pickPhoneImages,
-                    ),
                     _uploadSourceTile(
                       icon: Icons.camera_alt_outlined,
                       title: 'Take a phone photo',
                       subtitle: 'Take one photo with the phone camera.',
                       onTap: _uploading ? null : _pickCameraImage,
-                    ),
-                    _uploadSourceTile(
-                      icon: Icons.sd_storage_outlined,
-                      title: 'Files / SD card / USB storage',
-                      subtitle: 'Choose stored photos from the Files picker.',
-                      onTap: _uploading ? null : _pickOtgFilesFromFiles,
                     ),
                     _uploadSourceTile(
                       icon: _galleryImporting
@@ -3114,10 +3694,10 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     if (activeEvent != null)
                       _uploadSourceTile(
                         icon: Icons.image_outlined,
-                        title: 'Uploaded photos',
-                        subtitle: 'View photos already uploaded to this event.',
+                        title: 'Albums',
+                        subtitle: 'Open an album to manage and upload photos.',
                         onTap: () =>
-                            context.router.root.push(const EventImagesRoute()),
+                            context.router.root.push(const EventsRoute()),
                       ),
                   ],
                 ),
@@ -3246,18 +3826,13 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
 
               // ── Manual selection controls (only after a secondary method is used) ──
               if (_selectedFiles.isNotEmpty) ...[
-                SwitchListTile(
-                  dense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                  title: const Text(
-                    'Enhanced image',
-                    style: TextStyle(fontSize: 14),
+                if (activeEvent != null) ...[
+                  EventAutoEnhanceToggle(
+                    key: ValueKey('manual-event-enhancement-${activeEvent.id}'),
+                    eventId: activeEvent.id,
                   ),
-                  value: _isEnhanced,
-                  onChanged: _uploading
-                      ? null
-                      : (value) => _safeSetState(() => _isEnhanced = value),
-                ),
+                  const SizedBox(height: 10),
+                ],
                 Card(
                   child: ListTile(
                     dense: true,
@@ -3575,6 +4150,12 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 ? _sessionStartedAt
                 : null,
             onStop: _stopReceivingSession,
+            manualCaptureMode: _manualCameraMode,
+            manualInbox: ManualCameraStaging.items,
+            onChangeManualMode: (manual) => _setManualCameraMode(event, manual),
+            onUploadManual: _approveManualPhotos,
+            onDiscardManual: _discardManualPhotos,
+            onShareGallery: () => _showGuestQr(event),
             onShareGuestQr: () => _showGuestQr(event),
             onShareFaceQr: () => _showGuestQr(event, faceEnrollment: true),
             onPreviewGallery: () => Navigator.of(context).push<void>(
@@ -3588,6 +4169,28 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             onCameraSetupHelp: _sessionKind == 'usb'
                 ? () => unawaited(_restoreUnusableCameraAndShowSetup())
                 : null,
+            onCameraOptions: () => unawaited(_showMonitorCameraOptions()),
+            onInvitePhotographers: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => EventPhotographerInvitesPage(
+                  eventId: event.id,
+                  eventTitle: event.title,
+                ),
+              ),
+            ),
+            onRepeatPickedSource: () => unawaited(_repeatSelectedSource()),
+            // The event-level switch is the source of truth for AI processing.
+            enhancementControl: EventAutoEnhanceToggle(
+              key: ValueKey('event-enhancement-${event.id}'),
+              eventId: event.id,
+            ),
+            onAddPickedPhotos: () => unawaited(_pickMoreFromTransferMonitor()),
+            onClearPickedPhotos: _uploading ? null : _clearPickedPhotos,
+            onRemovePickedPhoto: _removePickedPhoto,
+            onUploadPickedPhotos: () => _submit(event),
+            pickedPhotos: _pickedTransferPhotos,
+            pickedUploading: _pickedUploading,
+            selectedSource: _selectedSheetMethod,
             onViewHistory: () => Navigator.of(context).push<void>(
               MaterialPageRoute(
                 builder: (_) => TransferListPage(
@@ -3609,6 +4212,300 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
 
   bool get _liveConnectionActive =>
       _otgImporting || _wirelessImporting || _galleryImporting;
+
+  Future<void> _startInitialUploadMethod(
+    EventSummary event,
+    String method,
+  ) async {
+    if (method == 'phone') {
+      await _pickPhoneImages();
+    } else if (method == 'camera') {
+      await _pickOtgFiles();
+    } else if (method == 'files') {
+      await _pickOtgFilesFromFiles();
+    } else if (method == 'usb') {
+      await _toggleOtgAutoUpload(event);
+    } else if (method == 'wireless') {
+      await _toggleWirelessAutoUpload(event);
+    } else if (method == 'gallery') {
+      await _togglePhoneAutoUpload(event);
+    }
+  }
+
+  /// Every source converges on the same live transfer monitor. USB and
+  /// wireless still open it themselves after native setup succeeds; the
+  /// fallback below covers phone photos, picked camera files, card readers,
+  /// gallery watching, and cancelled/failed connection attempts.
+  Future<void> _startSheetUploadMethod(
+    EventSummary event,
+    String method,
+  ) async {
+    _selectedSheetMethod = method;
+    try {
+      if (method == 'phone-camera') {
+        await _pickCameraImage();
+      } else {
+        await _startInitialUploadMethod(event, method);
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Could not start $method: $error\n$stackTrace');
+      if (mounted) {
+        AppToast.error(
+          'Could not start this upload method. Check the camera and permissions.',
+        );
+      }
+    } finally {
+      // The receiver can have already pushed its monitor. Never open two.
+      if (mounted && widget.asBottomSheet && !_connectionPageOpen) {
+        unawaited(_showTransferSessionPage(event));
+      }
+    }
+  }
+
+  Future<void> _showMonitorCameraOptions() async {
+    if (!mounted) return;
+    if (_sessionKind == 'wireless' ||
+        _sessionKind == 'ftp' ||
+        _selectedSheetMethod == 'wireless') {
+      await _showWirelessCameraOptions();
+      return;
+    }
+    if (_sessionKind == 'usb' ||
+        _selectedSheetMethod == 'usb' ||
+        _selectedSheetMethod == 'camera') {
+      await _showUsbCameraOptions();
+      return;
+    }
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(title: Text('Camera options')),
+            ListTile(
+              leading: const Icon(Icons.usb_rounded),
+              title: const Text('Wired camera options'),
+              onTap: () => Navigator.pop(sheetContext, 'usb'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.wifi_rounded),
+              title: const Text('Wireless camera options'),
+              onTap: () => Navigator.pop(sheetContext, 'wireless'),
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (selected == 'usb') await _showUsbCameraOptions();
+    if (selected == 'wireless') await _showWirelessCameraOptions();
+  }
+
+  /// Keep the photographer on the live monitor when adding more photos.
+  /// This only reopens the existing source picker; no camera/native logic changes.
+  Future<void> _repeatSelectedSource() async {
+    if (_uploading || !mounted) return;
+    try {
+      switch (_selectedSheetMethod) {
+        case 'phone':
+          await _pickPhoneImages();
+        case 'phone-camera':
+          await _pickCameraImage();
+        case 'camera':
+          await _pickOtgFiles();
+        case 'files':
+          await _pickOtgFilesFromFiles();
+        default:
+          await _pickMoreFromTransferMonitor();
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Could not reopen photo source: $error\n$stackTrace');
+      if (mounted) AppToast.error('Could not open this photo source');
+    }
+  }
+
+  Future<void> _pickMoreFromTransferMonitor() async {
+    if (!mounted || _uploading) return;
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              title: Text('Add photos'),
+              subtitle: Text('Choose another source for this album'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Phone Gallery'),
+              onTap: () => Navigator.pop(sheetContext, 'phone'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('Take a Phone Photo'),
+              onTap: () => Navigator.pop(sheetContext, 'phone-camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.usb_rounded),
+              title: const Text('Choose Camera Photos'),
+              onTap: () => Navigator.pop(sheetContext, 'camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.sd_storage_outlined),
+              title: const Text('Card Reader / Files'),
+              onTap: () => Navigator.pop(sheetContext, 'files'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    try {
+      switch (selected) {
+        case 'phone':
+          await _pickPhoneImages();
+        case 'phone-camera':
+          await _pickCameraImage();
+        case 'camera':
+          await _pickOtgFiles();
+        case 'files':
+          await _pickOtgFilesFromFiles();
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Could not add photos: $error\n$stackTrace');
+      if (mounted) AppToast.error('Could not select photos from this source.');
+    }
+  }
+
+  Future<void> _showUploadMethodSheet(EventSummary event) async {
+    if (!mounted || _uploading) return;
+
+    final selectedMethod = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Upload method',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Choose how to add photos to ${event.title}.',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.mutedForeground,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'SELECT PHOTOS',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.mutedForeground,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 6),
+              _uploadSourceTile(
+                icon: Icons.photo_library_outlined,
+                title: 'Select & Upload',
+                subtitle: 'Choose only the photos you want from this phone.',
+                onTap: () => Navigator.pop(sheetContext, 'phone'),
+              ),
+              _uploadSourceTile(
+                icon: Icons.usb_rounded,
+                title: 'Select from connected camera',
+                subtitle: _usbSessionLocked
+                    ? 'Stop the live USB session before selecting camera photos.'
+                    : 'Choose individual photos from a USB-connected camera.',
+                onTap: _usbSessionLocked || _usbPickInProgress
+                    ? null
+                    : () => Navigator.pop(sheetContext, 'camera'),
+              ),
+              _uploadSourceTile(
+                icon: Icons.sd_storage_outlined,
+                title: 'Card reader / Files',
+                subtitle: 'Choose photos from an SD card or USB storage.',
+                onTap: () => Navigator.pop(sheetContext, 'files'),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Divider(height: 1),
+              ),
+              const Text(
+                'AUTOMATIC UPLOAD',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.mutedForeground,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 6),
+              _uploadSourceTile(
+                icon: Icons.camera_alt_outlined,
+                title: _otgImporting
+                    ? 'Stop wired camera upload'
+                    : 'Shoot & Upload',
+                subtitle:
+                    'Automatically upload new photos from a wired camera.',
+                onTap: () => Navigator.pop(sheetContext, 'usb'),
+              ),
+              _uploadSourceTile(
+                icon: Icons.wifi_tethering_rounded,
+                title: _wirelessImporting
+                    ? 'Stop wireless camera upload'
+                    : 'Wireless camera connection',
+                subtitle: 'Receive new photos automatically over camera Wi-Fi.',
+                onTap: () => Navigator.pop(sheetContext, 'wireless'),
+              ),
+              _uploadSourceTile(
+                icon: _galleryImporting
+                    ? Icons.stop_circle_outlined
+                    : Icons.phone_android_outlined,
+                title: _galleryImporting
+                    ? 'Stop watching phone gallery'
+                    : 'Watch phone gallery',
+                subtitle:
+                    'Automatically upload new photos saved on this phone.',
+                onTap: () => Navigator.pop(sheetContext, 'gallery'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!mounted || selectedMethod == null) return;
+
+    if (selectedMethod == 'phone') {
+      await _pickPhoneImages();
+    } else if (selectedMethod == 'camera') {
+      await _pickOtgFiles();
+    } else if (selectedMethod == 'files') {
+      await _pickOtgFilesFromFiles();
+    } else if (selectedMethod == 'usb') {
+      await _toggleOtgAutoUpload(event);
+    } else if (selectedMethod == 'wireless') {
+      await _toggleWirelessAutoUpload(event);
+    } else if (selectedMethod == 'gallery') {
+      await _togglePhoneAutoUpload(event);
+    }
+  }
 
   Future<void> _showUsbCameraOptions() async {
     if (!mounted) return;
@@ -3646,6 +4543,21 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                     setSheetState(() => selectedMode = mode);
                     _changeUsbUploadMode(mode);
                   },
+                ),
+
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.photo_library_outlined),
+                  title: const Text('Select & Upload'),
+                  subtitle: const Text(
+                    'Choose only the camera photos you want to send.',
+                  ),
+                  onTap: _usbSessionLocked || _uploading || _usbPickInProgress
+                      ? null
+                      : () {
+                          Navigator.pop(sheetContext);
+                          unawaited(_pickOtgFiles());
+                        },
                 ),
 
                 if (_usbSessionLocked) ...[

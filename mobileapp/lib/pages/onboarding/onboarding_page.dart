@@ -16,7 +16,7 @@ class OnboardingPage extends StatelessWidget {
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 22, 20, 24),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -37,68 +37,44 @@ class OnboardingPage extends StatelessWidget {
               const Spacer(),
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(22, 26, 22, 22),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  gradient: AppGradients.studio,
-                  borderRadius: BorderRadius.circular(32),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.12),
-                      blurRadius: 32,
-                      offset: const Offset(0, 16),
-                    ),
-                  ],
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
                 ),
-                child: Stack(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Positioned(
-                      right: -54,
-                      top: -62,
-                      child: Container(
-                        width: 180,
-                        height: 180,
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.22),
-                          shape: BoxShape.circle,
-                        ),
+                    Container(
+                      width: 44,
+                      height: 44,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: AppColors.cream,
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                      child: const Icon(
+                        Icons.burst_mode_rounded,
+                        color: AppColors.primary,
+                        size: 25,
                       ),
                     ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: 52,
-                          height: 52,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: const Icon(
-                            Icons.burst_mode_rounded,
-                            color: Colors.white,
-                            size: 27,
-                          ),
-                        ),
-                        const SizedBox(height: 42),
-                        const Text(
-                          'Photos delivered\nwhile the moment lives.',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 31,
-                            height: 1.06,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -1.05,
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        Text(
-                          'A focused workspace for photographers, planners and guests — from capture to live gallery delivery.',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: Colors.white.withValues(alpha: 0.72),
-                            height: 1.5,
-                          ),
-                        ),
-                      ],
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Photos delivered\nwhile the moment lives.',
+                      style: TextStyle(
+                        color: AppColors.foreground,
+                        fontSize: 24,
+                        height: 1.12,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.6,
+                      ),
+                    ),
+                    const SizedBox(height: 9),
+                    Text(
+                      'A focused workspace for photographers, planners and guests — from capture to live gallery delivery.',
+                      style: theme.textTheme.bodySmall?.copyWith(height: 1.4),
                     ),
                   ],
                 ),

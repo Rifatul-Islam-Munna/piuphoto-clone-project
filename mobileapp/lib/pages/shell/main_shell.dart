@@ -14,23 +14,14 @@ class MainShellPage extends StatelessWidget {
       valueListenable: UserStorage.currentUser,
       builder: (context, user, _) {
         final isPhotographer = user?.isPhotographer ?? false;
-        final hasPlannerAccess = user?.hasPlannerAccess ?? false;
 
         final routes = isPhotographer
-            ? (hasPlannerAccess
-                  ? [
-                      const HomeRoute(),
-                      const EventsRoute(),
-                      const UploadRoute(),
-                      const InvitationsRoute(),
-                      const ProfileRoute(),
-                    ]
-                  : [
-                      const HomeRoute(),
-                      const UploadRoute(),
-                      const InvitationsRoute(),
-                      const ProfileRoute(),
-                    ])
+            ? [
+                const EventsRoute(),
+                const HomeRoute(),
+                const InvitationsRoute(),
+                const ProfileRoute(),
+              ]
             : [
                 const HomeRoute(),
                 const EventsRoute(),
@@ -61,26 +52,17 @@ class _AppBottomNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: AppColors.background,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+    // Dock the navigation flush to the screen instead of floating it in
+    // a rounded card. SafeArea adds only the system gesture-bar inset.
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: AppColors.card,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
       child: SafeArea(
         top: false,
-        minimum: const EdgeInsets.only(bottom: 2),
-        child: Container(
-          height: 70,
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: AppColors.border),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.06),
-                blurRadius: 26,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
+        child: SizedBox(
+          height: 64,
           child: Row(
             children: [
               for (var i = 0; i < items.length; i++)
@@ -127,7 +109,7 @@ class _NavItemTile extends StatelessWidget {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeOutCubic,
-          margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 7),
+          margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
           decoration: BoxDecoration(
             color: selected ? AppColors.accentSoft : Colors.transparent,
             borderRadius: BorderRadius.circular(17),

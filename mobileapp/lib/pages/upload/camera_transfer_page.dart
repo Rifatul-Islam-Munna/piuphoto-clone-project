@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
+import 'package:mobileapp/pages/upload/camera_upload_preferences_sheet.dart';
+import 'package:mobileapp/pages/upload/manual_camera_staging.dart';
+import 'package:mobileapp/core/theme/app_theme.dart';
 
 @immutable
 class CameraTransferSessionStatus {
@@ -22,6 +25,14 @@ class CameraTransferSessionStatus {
   final bool isConnecting;
 }
 
+@immutable
+class PickedTransferPhoto {
+  const PickedTransferPhoto({required this.path, required this.filename});
+
+  final String path;
+  final String filename;
+}
+
 /// A view of the receiving session. The caller owns the camera connection so
 /// opening or leaving this page never stops a transfer in progress.
 class CameraTransferPage extends StatefulWidget {
@@ -32,11 +43,28 @@ class CameraTransferPage extends StatefulWidget {
     required this.session,
     this.startedAt,
     this.onStop,
+    this.manualCaptureMode,
+    this.manualInbox,
+    this.onChangeManualMode,
+    this.onUploadManual,
+    this.onDiscardManual,
+    this.onShareGallery,
     this.onShareGuestQr,
     this.onShareFaceQr,
     this.onPreviewGallery,
     this.onViewHistory,
     this.onCameraSetupHelp,
+    this.onCameraOptions,
+    this.onInvitePhotographers,
+    this.onRepeatPickedSource,
+    this.enhancementControl,
+    this.onAddPickedPhotos,
+    this.onClearPickedPhotos,
+    this.onRemovePickedPhoto,
+    this.onUploadPickedPhotos,
+    this.pickedPhotos,
+    this.pickedUploading,
+    this.selectedSource,
     this.connectionDetailsBuilder,
     this.transfers,
     this.queue,
@@ -49,11 +77,28 @@ class CameraTransferPage extends StatefulWidget {
   final ValueListenable<CameraTransferSessionStatus> session;
   final DateTime? startedAt;
   final Future<void> Function()? onStop;
+  final ValueListenable<bool>? manualCaptureMode;
+  final ValueListenable<List<ManualCameraPhoto>>? manualInbox;
+  final Future<void> Function(bool manual)? onChangeManualMode;
+  final Future<void> Function(List<String> ids)? onUploadManual;
+  final Future<void> Function(List<String> ids)? onDiscardManual;
+  final VoidCallback? onShareGallery;
   final VoidCallback? onShareGuestQr;
   final VoidCallback? onShareFaceQr;
   final VoidCallback? onPreviewGallery;
   final VoidCallback? onViewHistory;
   final VoidCallback? onCameraSetupHelp;
+  final VoidCallback? onCameraOptions;
+  final VoidCallback? onInvitePhotographers;
+  final VoidCallback? onRepeatPickedSource;
+  final Widget? enhancementControl;
+  final VoidCallback? onAddPickedPhotos;
+  final VoidCallback? onClearPickedPhotos;
+  final ValueChanged<String>? onRemovePickedPhoto;
+  final Future<void> Function()? onUploadPickedPhotos;
+  final ValueListenable<List<PickedTransferPhoto>>? pickedPhotos;
+  final ValueListenable<bool>? pickedUploading;
+  final String? selectedSource;
   final WidgetBuilder? connectionDetailsBuilder;
 
   // Optional inputs keep the screen testable without opening a camera or
@@ -115,6 +160,8 @@ String _statusDescription(TransferLedgerItem item) => switch (item.status) {
 
 class _CameraTransferPageState extends State<CameraTransferPage> {
   final Set<String> _cancelling = {};
+  final Set<String> _selectedManualIds = {};
+  bool _manualActionBusy = false;
   bool _stopping = false;
   bool _showGrid = true;
   _TransferFilter _filter = _TransferFilter.all;
@@ -125,10 +172,38 @@ class _CameraTransferPageState extends State<CameraTransferPage> {
   ValueListenable<List<PendingUploadItem>> get _queue =>
       widget.queue ?? UploadQueueStorage.items;
 
+  bool get _isSelectedPhotoSource => const {
+    'phone',
+    'phone-camera',
+    'camera',
+    'files',
+  }.contains(widget.selectedSource);
+
+  String get _repeatSourceLabel => switch (widget.selectedSource) {
+    'phone' => 'Select more from gallery',
+    'phone-camera' => 'Take another photo',
+    'camera' => 'Select more camera photos',
+    'files' => 'Select more files',
+    _ => 'Add photos',
+  };
+
+  IconData get _repeatSourceIcon => switch (widget.selectedSource) {
+    'phone' => Icons.photo_library_outlined,
+    'phone-camera' => Icons.add_a_photo_outlined,
+    'camera' => Icons.usb_rounded,
+    'files' => Icons.sd_storage_outlined,
+    _ => Icons.add_photo_alternate_outlined,
+  };
+
+  void _onPickedPhotosChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
     _queue.addListener(_syncCountdown);
+    widget.pickedPhotos?.addListener(_onPickedPhotosChanged);
     _syncCountdown();
   }
 
@@ -140,12 +215,17 @@ class _CameraTransferPageState extends State<CameraTransferPage> {
       oldQueue.removeListener(_syncCountdown);
       _queue.addListener(_syncCountdown);
     }
+    if (!identical(oldWidget.pickedPhotos, widget.pickedPhotos)) {
+      oldWidget.pickedPhotos?.removeListener(_onPickedPhotosChanged);
+      widget.pickedPhotos?.addListener(_onPickedPhotosChanged);
+    }
     _syncCountdown();
   }
 
   @override
   void dispose() {
     _queue.removeListener(_syncCountdown);
+    widget.pickedPhotos?.removeListener(_onPickedPhotosChanged);
     _countdownTimer?.cancel();
     // The parent remains responsible for stopping the receiving session.
     super.dispose();
@@ -307,16 +387,556 @@ class _CameraTransferPageState extends State<CameraTransferPage> {
     );
   }
 
+  Future<void> _showUploadPreferences() async {
+    final mode = widget.manualCaptureMode;
+    final update = widget.onChangeManualMode;
+    if (mode == null || update == null) return;
+    final selected = await showCameraUploadPreferencesSheet(
+      context,
+      manualSelection: mode.value,
+    );
+    if (selected != null && mounted) await update(selected);
+  }
+
+  Future<void> _uploadManualSelection(List<String> ids) async {
+    final send = widget.onUploadManual;
+    if (send == null || ids.isEmpty || _manualActionBusy) return;
+    setState(() => _manualActionBusy = true);
+    try {
+      await send(ids);
+      if (mounted) setState(() => _selectedManualIds.removeAll(ids));
+    } finally {
+      if (mounted) setState(() => _manualActionBusy = false);
+    }
+  }
+
+  Future<void> _discardManualSelection(List<String> ids) async {
+    final discard = widget.onDiscardManual;
+    if (discard == null || ids.isEmpty || _manualActionBusy) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove local copies?'),
+        content: Text(
+          'Remove ${ids.length} selected photos from this phone review queue? Original photos on the camera will not be deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _manualActionBusy = true);
+    try {
+      await discard(ids);
+      if (mounted) setState(() => _selectedManualIds.removeAll(ids));
+    } finally {
+      if (mounted) setState(() => _manualActionBusy = false);
+    }
+  }
+
+  Widget _buildManualInbox() {
+    final mode = widget.manualCaptureMode!;
+    final inbox = widget.manualInbox!;
+    return ValueListenableBuilder<bool>(
+      valueListenable: mode,
+      builder: (context, manual, _) => ValueListenableBuilder<List<ManualCameraPhoto>>(
+        valueListenable: inbox,
+        builder: (context, all, _) {
+          final pending =
+              all
+                  .where(
+                    (photo) =>
+                        photo.isPending && photo.eventId == widget.eventId,
+                  )
+                  .toList()
+                ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          if (!manual && pending.isEmpty) return const SizedBox.shrink();
+          final availableIds = pending.map((photo) => photo.id).toSet();
+          final selected = _selectedManualIds
+              .intersection(availableIds)
+              .toList();
+          return Card(
+            margin: EdgeInsets.zero,
+            elevation: 0,
+            color: AppColors.card,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: const BorderSide(color: AppColors.border),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(13),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        manual
+                            ? Icons.checklist_rounded
+                            : Icons.photo_library_outlined,
+                        color: AppColors.primary,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          manual
+                              ? 'Select & Upload'
+                              : 'Photos awaiting approval',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${pending.length} pending',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.mutedForeground,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    manual
+                        ? 'Photos stay on this phone until you select them. No cloud upload happens before approval.'
+                        : 'Previously captured manual photos still need approval.',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.mutedForeground,
+                      height: 1.4,
+                    ),
+                  ),
+                  if (pending.isEmpty) ...[
+                    const SizedBox(height: 12),
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text(
+                          'Nothing to review yet. Take a photo with your connected camera.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.mutedForeground,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          '${selected.length} selected',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: _manualActionBusy
+                              ? null
+                              : () => setState(() {
+                                  if (selected.length == pending.length) {
+                                    _selectedManualIds.removeAll(availableIds);
+                                  } else {
+                                    _selectedManualIds.addAll(availableIds);
+                                  }
+                                }),
+                          child: Text(
+                            selected.length == pending.length
+                                ? 'Deselect all'
+                                : 'Select all',
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(
+                      height: pending.length > 3 ? 264 : 126,
+                      child: GridView.builder(
+                        itemCount: pending.length,
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 3,
+                              crossAxisSpacing: 7,
+                              mainAxisSpacing: 7,
+                              childAspectRatio: .93,
+                            ),
+                        itemBuilder: (context, index) {
+                          final photo = pending[index];
+                          final checked = _selectedManualIds.contains(photo.id);
+                          return InkWell(
+                            key: ValueKey('review-${photo.id}'),
+                            borderRadius: BorderRadius.circular(9),
+                            onTap: _manualActionBusy
+                                ? null
+                                : () => setState(() {
+                                    if (!checked) {
+                                      _selectedManualIds.add(photo.id);
+                                    } else {
+                                      _selectedManualIds.remove(photo.id);
+                                    }
+                                  }),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(9),
+                                  child: Image.file(
+                                    File(photo.path),
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, error, stackTrace) =>
+                                        const ColoredBox(
+                                          color: AppColors.accentSoft,
+                                          child: Icon(
+                                            Icons.photo_outlined,
+                                            color: AppColors.primary,
+                                            size: 30,
+                                          ),
+                                        ),
+                                  ),
+                                ),
+                                Positioned(
+                                  right: 5,
+                                  top: 5,
+                                  child: Icon(
+                                    checked
+                                        ? Icons.check_circle_rounded
+                                        : Icons.radio_button_unchecked_rounded,
+                                    color: checked
+                                        ? AppColors.primary
+                                        : Colors.white,
+                                    size: 25,
+                                    shadows: const [
+                                      Shadow(
+                                        color: Colors.black54,
+                                        blurRadius: 3,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Positioned(
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: Container(
+                                    color: Colors.black54,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 3,
+                                    ),
+                                    child: Text(
+                                      photo.filename,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _manualActionBusy || selected.isEmpty
+                                ? null
+                                : () => _discardManualSelection(selected),
+                            icon: const Icon(
+                              Icons.delete_outline_rounded,
+                              size: 18,
+                            ),
+                            label: const Text('Remove'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 2,
+                          child: FilledButton.icon(
+                            onPressed: _manualActionBusy || selected.isEmpty
+                                ? null
+                                : () => _uploadManualSelection(selected),
+                            icon: _manualActionBusy
+                                ? const SizedBox(
+                                    width: 15,
+                                    height: 15,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.cloud_upload_outlined,
+                                    size: 18,
+                                  ),
+                            label: Text('Upload selected (${selected.length})'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildPickedPhotos() {
+    final photos = widget.pickedPhotos;
+    if (photos == null) return const SizedBox.shrink();
+    return ValueListenableBuilder<List<PickedTransferPhoto>>(
+      valueListenable: photos,
+      builder: (context, selected, _) {
+        if (selected.isEmpty) return const SizedBox.shrink();
+        return Card(
+          margin: EdgeInsets.zero,
+          elevation: 0,
+          color: AppColors.card,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: AppColors.border),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.photo_library_outlined,
+                      size: 20,
+                      color: AppColors.primary,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        'Selected photos (${selected.length})',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (widget.onAddPickedPhotos != null)
+                      TextButton(
+                        onPressed: widget.onAddPickedPhotos,
+                        child: const Text('Add'),
+                      ),
+                    if (widget.onClearPickedPhotos != null)
+                      TextButton(
+                        onPressed: widget.onClearPickedPhotos,
+                        child: const Text('Clear'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: selected.length > 3 ? 220 : 112,
+                  child: GridView.builder(
+                    primary: false,
+                    itemCount: selected.length,
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          mainAxisSpacing: 7,
+                          crossAxisSpacing: 7,
+                          childAspectRatio: 1,
+                        ),
+                    itemBuilder: (context, index) {
+                      final photo = selected[index];
+                      return Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.file(
+                              File(photo.path),
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, error, stackTrace) =>
+                                  const ColoredBox(
+                                    color: AppColors.accentSoft,
+                                    child: Icon(
+                                      Icons.photo_outlined,
+                                      size: 30,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                            ),
+                          ),
+                          Positioned(
+                            right: 3,
+                            top: 3,
+                            child: IconButton.filledTonal(
+                              key: ValueKey('remove-picked-${photo.path}'),
+                              tooltip: 'Remove ${photo.filename}',
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints(
+                                minWidth: 28,
+                                minHeight: 28,
+                              ),
+                              padding: EdgeInsets.zero,
+                              iconSize: 16,
+                              onPressed: widget.onRemovePickedPhoto == null
+                                  ? null
+                                  : () =>
+                                        widget.onRemovePickedPhoto!(photo.path),
+                              icon: const Icon(Icons.close_rounded),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 3,
+                              ),
+                              color: Colors.black54,
+                              child: Text(
+                                photo.filename,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+                if (widget.onUploadPickedPhotos != null)
+                  ValueListenableBuilder<bool>(
+                    valueListenable:
+                        widget.pickedUploading ??
+                        const AlwaysStoppedAnimation<bool>(false),
+                    builder: (context, uploading, _) => SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: uploading
+                            ? null
+                            : () => widget.onUploadPickedPhotos?.call(),
+                        icon: uploading
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.cloud_upload_outlined),
+                        label: Text(
+                          uploading
+                              ? 'Uploading selected photos...'
+                              : 'Upload selected (${selected.length})',
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  PopupMenuItem<String> _menuAction(
+    String value,
+    String title,
+    IconData icon,
+  ) => PopupMenuItem<String>(
+    value: value,
+    height: 53,
+    child: Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: AppColors.accentSoft,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 18, color: AppColors.primary),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 64,
+        toolbarHeight: 68,
         actions: [
+          if (widget.onShareGuestQr != null || widget.onShareGallery != null)
+            IconButton(
+              tooltip: 'Share album QR code',
+              style: IconButton.styleFrom(
+                backgroundColor: AppColors.accentSoft,
+                foregroundColor: AppColors.primary,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              onPressed: widget.onShareGuestQr ?? widget.onShareGallery,
+              icon: const Icon(Icons.share_rounded, size: 20),
+            ),
           PopupMenuButton<String>(
             tooltip: 'More camera transfer actions',
+            position: PopupMenuPosition.under,
+            offset: const Offset(0, 6),
+            color: AppColors.card,
+            elevation: 8,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+              side: const BorderSide(color: AppColors.border),
+            ),
+            constraints: const BoxConstraints(minWidth: 245, maxWidth: 295),
             onSelected: (value) {
               switch (value) {
+                case 'upload-settings':
+                  _showUploadPreferences();
+                case 'camera-options':
+                  widget.onCameraOptions?.call();
+                case 'invite':
+                  widget.onInvitePhotographers?.call();
+                case 'add-photos':
+                  widget.onAddPickedPhotos?.call();
                 case 'details':
                   _showConnectionDetails();
                 case 'history':
@@ -333,80 +953,90 @@ class _CameraTransferPageState extends State<CameraTransferPage> {
                   widget.onShareFaceQr?.call();
               }
             },
-            itemBuilder: (context) => [
+            itemBuilder: (_) => [
+              if (widget.onAddPickedPhotos != null)
+                _menuAction(
+                  'add-photos',
+                  'Choose more photos',
+                  Icons.add_photo_alternate_outlined,
+                ),
+              if (widget.onInvitePhotographers != null)
+                _menuAction(
+                  'invite',
+                  'Invite photographers',
+                  Icons.group_add_outlined,
+                ),
+              if (widget.onChangeManualMode != null)
+                _menuAction(
+                  'upload-settings',
+                  'Upload settings',
+                  Icons.tune_rounded,
+                ),
+              if (widget.onCameraOptions != null)
+                _menuAction(
+                  'camera-options',
+                  'Camera options',
+                  Icons.settings_input_component_outlined,
+                ),
+              const PopupMenuDivider(height: 8),
               if (widget.connectionDetailsBuilder != null)
-                const PopupMenuItem(
-                  value: 'details',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.usb_rounded),
-                    title: Text('Connection details'),
-                  ),
+                _menuAction(
+                  'details',
+                  'Connection details',
+                  Icons.cable_rounded,
                 ),
               if (widget.onPreviewGallery != null)
-                const PopupMenuItem(
-                  value: 'preview',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.preview_outlined),
-                    title: Text('Preview Photo Live'),
-                  ),
+                _menuAction(
+                  'preview',
+                  'Preview Photo Live',
+                  Icons.preview_outlined,
                 ),
-              PopupMenuItem(
-                value: _showGrid ? 'view-list' : 'view-grid',
-                child: ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    _showGrid
-                        ? Icons.view_list_rounded
-                        : Icons.grid_view_rounded,
-                  ),
-                  title: Text(_showGrid ? 'List view' : 'Grid view'),
-                ),
+              _menuAction(
+                _showGrid ? 'view-list' : 'view-grid',
+                _showGrid ? 'List view' : 'Grid view',
+                _showGrid ? Icons.view_list_rounded : Icons.grid_view_rounded,
               ),
               if (widget.onViewHistory != null)
-                const PopupMenuItem(
-                  value: 'history',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.history),
-                    title: Text('Transfer history'),
-                  ),
+                _menuAction(
+                  'history',
+                  'Transfer history',
+                  Icons.history_rounded,
                 ),
               if (widget.onShareGuestQr != null)
-                const PopupMenuItem(
-                  value: 'qr',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.qr_code_2),
-                    title: Text('Share gallery QR'),
-                  ),
-                ),
+                _menuAction('qr', 'Share gallery QR', Icons.qr_code_2_rounded),
               if (widget.onShareFaceQr != null)
-                const PopupMenuItem(
-                  value: 'face-qr',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.face_retouching_natural_outlined),
-                    title: Text('Share face-delivery QR'),
-                  ),
+                _menuAction(
+                  'face-qr',
+                  'Share face-delivery QR',
+                  Icons.face_retouching_natural_outlined,
                 ),
             ],
-            icon: const Icon(Icons.more_vert_rounded),
+            icon: Container(
+              width: 36,
+              height: 36,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.accentSoft,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.more_horiz_rounded,
+                color: AppColors.primary,
+                size: 22,
+              ),
+            ),
           ),
         ],
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Camera transfers'),
             Text(
               widget.eventTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(
+              'Camera transfers',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodySmall,
@@ -422,221 +1052,285 @@ class _CameraTransferPageState extends State<CameraTransferPage> {
             constraints: const BoxConstraints(maxWidth: 720),
             child: ValueListenableBuilder<CameraTransferSessionStatus>(
               valueListenable: widget.session,
-              builder: (context, session, _) =>
-                  ValueListenableBuilder<List<TransferLedgerItem>>(
-                    valueListenable: _transfers,
-                    builder: (context, allItems, _) =>
-                        ValueListenableBuilder<List<PendingUploadItem>>(
-                          valueListenable: _queue,
-                          builder: (context, queued, _) {
-                            final since =
-                                widget.startedAt?.millisecondsSinceEpoch;
-                            final items =
-                                allItems
-                                    .where(
-                                      (item) =>
-                                          item.eventId == widget.eventId &&
-                                          (since == null ||
-                                              item.createdAt >= since),
-                                    )
-                                    .toList()
-                                  ..sort((a, b) {
-                                    final byCreated = b.createdAt.compareTo(
-                                      a.createdAt,
-                                    );
-                                    return byCreated != 0
-                                        ? byCreated
-                                        : a.id.compareTo(b.id);
-                                  });
-                            final queueById = {
-                              for (final item in queued) item.id: item,
-                            };
-                            final canCancel =
-                                widget.canCancel ??
-                                UploadQueueService.canCancel;
-                            final filtered = items
-                                .where(
-                                  (item) => _transferMatches(item, _filter),
-                                )
-                                .toList(growable: false);
-                            return CustomScrollView(
-                              key: PageStorageKey(
-                                'camera-transfers-${widget.eventId}-$since',
-                              ),
-                              slivers: [
-                                SliverPadding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    12,
-                                    8,
-                                    12,
-                                    10,
-                                  ),
-                                  sliver: SliverToBoxAdapter(
+              builder: (context, session, _) => ValueListenableBuilder<List<TransferLedgerItem>>(
+                valueListenable: _transfers,
+                builder: (context, allItems, _) => ValueListenableBuilder<List<PendingUploadItem>>(
+                  valueListenable: _queue,
+                  builder: (context, queued, _) {
+                    final since = widget.startedAt?.millisecondsSinceEpoch;
+                    final items =
+                        allItems
+                            .where(
+                              (item) =>
+                                  item.eventId == widget.eventId &&
+                                  (since == null || item.createdAt >= since),
+                            )
+                            .toList()
+                          ..sort((a, b) {
+                            final byCreated = b.createdAt.compareTo(
+                              a.createdAt,
+                            );
+                            return byCreated != 0
+                                ? byCreated
+                                : a.id.compareTo(b.id);
+                          });
+                    final queueById = {
+                      for (final item in queued) item.id: item,
+                    };
+                    final canCancel =
+                        widget.canCancel ?? UploadQueueService.canCancel;
+                    final filtered = items
+                        .where((item) => _transferMatches(item, _filter))
+                        .toList(growable: false);
+                    return CustomScrollView(
+                      key: PageStorageKey(
+                        'camera-transfers-${widget.eventId}-$since',
+                      ),
+                      slivers: [
+                        if (widget.pickedPhotos != null)
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+                            sliver: SliverToBoxAdapter(
+                              child: _buildPickedPhotos(),
+                            ),
+                          ),
+                        if (widget.manualCaptureMode != null &&
+                            widget.manualInbox != null)
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+                            sliver: SliverToBoxAdapter(
+                              child: _buildManualInbox(),
+                            ),
+                          ),
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                          sliver: SliverToBoxAdapter(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (_isSelectedPhotoSource && !session.isActive)
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(13),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.accentSoft,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
                                     child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                        _SessionHeader(
-                                          session: session,
-                                          items: items,
-                                          stopping: _stopping,
-                                          onStop: widget.onStop == null
-                                              ? null
-                                              : _stop,
-                                        ),
-                                        const SizedBox(height: 12),
-                                        SingleChildScrollView(
-                                          scrollDirection: Axis.horizontal,
-                                          child: Row(
-                                            children: [
-                                              for (final filter
-                                                  in _TransferFilter.values)
-                                                Padding(
-                                                  padding:
-                                                      const EdgeInsets.only(
-                                                        right: 6,
-                                                      ),
-                                                  child: ChoiceChip(
-                                                    key: ValueKey(
-                                                      'filter-${filter.name}',
-                                                    ),
-                                                    visualDensity:
-                                                        VisualDensity.compact,
-                                                    label: Text(
-                                                      '${_filterTitle(filter)} ${items.where((item) => _transferMatches(item, filter)).length}',
-                                                      style: const TextStyle(
-                                                        fontSize: 11,
-                                                      ),
-                                                    ),
-                                                    selected: _filter == filter,
-                                                    onSelected: (_) => setState(
-                                                      () => _filter = filter,
-                                                    ),
-                                                  ),
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              (widget
+                                                          .pickedPhotos
+                                                          ?.value
+                                                          .isNotEmpty ??
+                                                      false)
+                                                  ? Icons
+                                                        .check_circle_outline_rounded
+                                                  : Icons
+                                                        .add_photo_alternate_outlined,
+                                              color: AppColors.primary,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text(
+                                                (widget
+                                                            .pickedPhotos
+                                                            ?.value
+                                                            .isNotEmpty ??
+                                                        false)
+                                                    ? 'Photos ready to upload'
+                                                    : 'Add photos to this album',
+                                                maxLines: 2,
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.w800,
                                                 ),
-                                            ],
-                                          ),
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                         const SizedBox(height: 5),
                                         Text(
-                                          _showGrid
-                                              ? 'Tap a photo to inspect it · updates live'
-                                              : 'Photo transfer details',
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.bodySmall,
+                                          (widget
+                                                      .pickedPhotos
+                                                      ?.value
+                                                      .isNotEmpty ??
+                                                  false)
+                                              ? '${widget.pickedPhotos!.value.length} selected. Review your photos before uploading.'
+                                              : 'Choose more photos here anytime. Uploaded photos stay in the gallery below.',
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            color: AppColors.mutedForeground,
+                                          ),
                                         ),
+                                        if (widget.onRepeatPickedSource !=
+                                            null) ...[
+                                          const SizedBox(height: 10),
+                                          SizedBox(
+                                            width: double.infinity,
+                                            child: FilledButton.tonalIcon(
+                                              key: const Key(
+                                                'repeat-upload-source',
+                                              ),
+                                              onPressed:
+                                                  widget.onRepeatPickedSource,
+                                              icon: Icon(
+                                                _repeatSourceIcon,
+                                                size: 18,
+                                              ),
+                                              label: Text(_repeatSourceLabel),
+                                            ),
+                                          ),
+                                        ],
                                       ],
-                                    ),
-                                  ),
-                                ),
-                                if (items.isEmpty)
-                                  SliverToBoxAdapter(
-                                    child: _EmptyTransfers(
-                                      session: session,
-                                      onCameraSetupHelp:
-                                          widget.onCameraSetupHelp,
-                                    ),
-                                  )
-                                else if (filtered.isEmpty)
-                                  SliverToBoxAdapter(
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(32),
-                                      child: Center(
-                                        child: Text(
-                                          'No ${_filterTitle(_filter).toLowerCase()} photos',
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.bodyMedium,
-                                        ),
-                                      ),
-                                    ),
-                                  )
-                                else if (_showGrid)
-                                  SliverPadding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                      10,
-                                      0,
-                                      10,
-                                      24,
-                                    ),
-                                    sliver: SliverLayoutBuilder(
-                                      builder: (context, constraints) {
-                                        final columns =
-                                            constraints.crossAxisExtent < 480
-                                            ? 3
-                                            : constraints.crossAxisExtent < 650
-                                            ? 4
-                                            : 5;
-                                        return SliverGrid(
-                                          gridDelegate:
-                                              SliverGridDelegateWithFixedCrossAxisCount(
-                                                crossAxisCount: columns,
-                                                crossAxisSpacing: 7,
-                                                mainAxisSpacing: 8,
-                                                childAspectRatio: 0.63,
-                                              ),
-                                          delegate: SliverChildBuilderDelegate((
-                                            context,
-                                            index,
-                                          ) {
-                                            final item = filtered[index];
-                                            return _TransferGridTile(
-                                              key: ValueKey('grid-${item.id}'),
-                                              item: item,
-                                              queued: queueById[item.id],
-                                              cancelling: _cancelling.contains(
-                                                item.id,
-                                              ),
-                                              onCancel: canCancel(item)
-                                                  ? () => _cancel(item)
-                                                  : null,
-                                              onTap: () =>
-                                                  _showPhotoDetails(item),
-                                            );
-                                          }, childCount: filtered.length),
-                                        );
-                                      },
                                     ),
                                   )
                                 else
-                                  SliverPadding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                      12,
-                                      0,
-                                      12,
-                                      24,
-                                    ),
-                                    sliver: SliverList(
-                                      delegate: SliverChildBuilderDelegate((
-                                        context,
-                                        index,
-                                      ) {
-                                        final item = filtered[index];
-                                        return Padding(
-                                          padding: const EdgeInsets.only(
-                                            bottom: 8,
-                                          ),
-                                          child: _TransferPhotoCard(
-                                            key: ValueKey(item.id),
-                                            item: item,
-                                            queued: queueById[item.id],
-                                            cancelling: _cancelling.contains(
-                                              item.id,
-                                            ),
-                                            onCancel: canCancel(item)
-                                                ? () => _cancel(item)
-                                                : null,
-                                          ),
-                                        );
-                                      }, childCount: filtered.length),
-                                    ),
+                                  _SessionHeader(
+                                    session: session,
+                                    items: items,
+                                    stopping: _stopping,
+                                    onStop: widget.onStop == null
+                                        ? null
+                                        : _stop,
                                   ),
+                                if (widget.enhancementControl != null) ...[
+                                  const SizedBox(height: 12),
+                                  widget.enhancementControl!,
+                                ],
+                                const SizedBox(height: 12),
+                                SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: Row(
+                                    children: [
+                                      for (final filter
+                                          in _TransferFilter.values)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            right: 6,
+                                          ),
+                                          child: ChoiceChip(
+                                            key: ValueKey(
+                                              'filter-${filter.name}',
+                                            ),
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            label: Text(
+                                              '${_filterTitle(filter)} ${items.where((item) => _transferMatches(item, filter)).length + ((filter == _TransferFilter.all || filter == _TransferFilter.notUploaded) ? (widget.pickedPhotos?.value.length ?? 0) : 0)}',
+                                              style: const TextStyle(
+                                                fontSize: 11,
+                                              ),
+                                            ),
+                                            selected: _filter == filter,
+                                            onSelected: (_) => setState(
+                                              () => _filter = filter,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  _showGrid
+                                      ? 'Tap a photo to inspect it · updates live'
+                                      : 'Photo transfer details',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
                               ],
-                            );
-                          },
+                            ),
+                          ),
                         ),
-                  ),
+                        if (items.isEmpty)
+                          SliverToBoxAdapter(
+                            child: _EmptyTransfers(
+                              session: session,
+                              onCameraSetupHelp: widget.onCameraSetupHelp,
+                            ),
+                          )
+                        else if (filtered.isEmpty)
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.all(32),
+                              child: Center(
+                                child: Text(
+                                  'No ${_filterTitle(_filter).toLowerCase()} photos',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                              ),
+                            ),
+                          )
+                        else if (_showGrid)
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(10, 0, 10, 24),
+                            sliver: SliverLayoutBuilder(
+                              builder: (context, constraints) {
+                                final columns =
+                                    constraints.crossAxisExtent < 480
+                                    ? 3
+                                    : constraints.crossAxisExtent < 650
+                                    ? 4
+                                    : 5;
+                                return SliverGrid(
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: columns,
+                                        crossAxisSpacing: 7,
+                                        mainAxisSpacing: 8,
+                                        childAspectRatio: 0.63,
+                                      ),
+                                  delegate: SliverChildBuilderDelegate((
+                                    context,
+                                    index,
+                                  ) {
+                                    final item = filtered[index];
+                                    return _TransferGridTile(
+                                      key: ValueKey('grid-${item.id}'),
+                                      item: item,
+                                      queued: queueById[item.id],
+                                      cancelling: _cancelling.contains(item.id),
+                                      onCancel: canCancel(item)
+                                          ? () => _cancel(item)
+                                          : null,
+                                      onTap: () => _showPhotoDetails(item),
+                                    );
+                                  }, childCount: filtered.length),
+                                );
+                              },
+                            ),
+                          )
+                        else
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                            sliver: SliverList(
+                              delegate: SliverChildBuilderDelegate((
+                                context,
+                                index,
+                              ) {
+                                final item = filtered[index];
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: _TransferPhotoCard(
+                                    key: ValueKey(item.id),
+                                    item: item,
+                                    queued: queueById[item.id],
+                                    cancelling: _cancelling.contains(item.id),
+                                    onCancel: canCancel(item)
+                                        ? () => _cancel(item)
+                                        : null,
+                                  ),
+                                );
+                              }, childCount: filtered.length),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+              ),
             ),
           ),
         ),

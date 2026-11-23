@@ -5,6 +5,7 @@ import 'package:mobileapp/core/router/auth_guard.dart';
 
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/models/user_model.dart';
+import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/pages/auth/login_page.dart';
 import 'package:mobileapp/pages/auth/register_page.dart';
 import 'package:mobileapp/pages/camera/camera_page.dart';
@@ -101,7 +102,12 @@ Widget _smoothPageTransition(
 }
 
 Future<void> goHome(BuildContext context) {
-  return context.router.root.replaceAll([const MainShellRoute()]);
+  final photographer = UserStorage.currentUser.value?.isPhotographer ?? false;
+  return context.router.root.replaceAll([
+    MainShellRoute(
+      children: [photographer ? const EventsRoute() : const HomeRoute()],
+    ),
+  ]);
 }
 
 Future<void> popOrHome(BuildContext context) async {
@@ -117,42 +123,18 @@ Future<void> popOrHome(BuildContext context) async {
 
 /// Bottom navigation for the active workspace.
 ///
-/// Photographers get a studio-oriented bar (shoot, upload, deliver) while
-/// event planners get an events-oriented bar (overview, events, plans).
+/// Photographers manage their shoots from Albums; upload actions live
+/// inside each album so the bottom navigation stays focused on destinations.
 List<BottomNavigationBarItem> buildShellItems(UserModel? user) {
   if (user?.isPhotographer ?? false) {
-    if (user?.hasPlannerAccess ?? false) {
-      return const [
-        BottomNavigationBarItem(
-          icon: Icon(Icons.camera_roll_outlined),
-          label: 'Studio',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.event_outlined),
-          label: 'Events',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.cloud_upload_outlined),
-          label: 'Upload',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.mail_outline),
-          label: 'Invites',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.person_outline),
-          label: 'Profile',
-        ),
-      ];
-    }
     return const [
+      BottomNavigationBarItem(
+        icon: Icon(Icons.photo_library_outlined),
+        label: 'Albums',
+      ),
       BottomNavigationBarItem(
         icon: Icon(Icons.camera_roll_outlined),
         label: 'Studio',
-      ),
-      BottomNavigationBarItem(
-        icon: Icon(Icons.cloud_upload_outlined),
-        label: 'Deliver',
       ),
       BottomNavigationBarItem(icon: Icon(Icons.mail_outline), label: 'Invites'),
       BottomNavigationBarItem(

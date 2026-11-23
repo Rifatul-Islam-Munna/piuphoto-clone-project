@@ -779,29 +779,13 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
 
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 76,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              profileSetup
-                  ? 'Face delivery'
-                  : (widget.albumTitle ?? 'Event photos'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 3),
-            Text(
-              profileSetup
-                  ? 'Set up your personal gallery'
-                  : 'Tap photos to select and download',
-              style: const TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w500,
-                color: AppColors.mutedForeground,
-              ),
-            ),
-          ],
+        title: Text(
+          profileSetup
+              ? 'Face delivery'
+              : (widget.albumTitle ?? 'Event photos'),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
         ),
         actions: [
           if (!_accessBlocked && !profileSetup)
@@ -861,12 +845,12 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
             )
           : GridView.builder(
               controller: _scrollController,
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 20),
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 20),
               itemCount: visible.length,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
-                mainAxisSpacing: 5,
-                crossAxisSpacing: 5,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
               ),
               itemBuilder: (context, index) {
                 final image = visible[index];

@@ -11,6 +11,8 @@ import 'package:mobileapp/core/utils/image_upload_helper.dart';
 import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
+import 'package:mobileapp/pages/event_gallery/album_library_page.dart';
+import 'package:mobileapp/pages/event_gallery/album_management_page.dart';
 import 'package:mobileapp/pages/event_gallery/event_gallery_page.dart';
 import 'package:mobileapp/pages/upload/event_live_preview_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
@@ -182,38 +184,33 @@ class _EventsListViewState extends State<_EventsListView> {
     final canCreateEvents = user?.hasPlannerAccess ?? false;
     final isPhotographer = user?.isPhotographer ?? false;
 
+    if (isPhotographer && canCreateEvents) {
+      return AlbumLibraryPage(
+        onCreateEvent: canCreateEvents
+            ? () => _showCreateEventDialog(context)
+            : null,
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 82,
-        title: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(isPhotographer ? 'Shoots' : 'Events'),
-            const SizedBox(height: 3),
-            Text(
-              isPhotographer
-                  ? 'Assignments and active photo deliveries'
-                  : 'Create, organize and publish client events',
-              style: const TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w500,
-                color: AppColors.mutedForeground,
-              ),
-            ),
-          ],
+        title: Text(
+          isPhotographer ? 'Shoots' : 'Events',
+          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
         ),
         actions: [
-          IconButton.filledTonal(
+          if (canCreateEvents)
+            TextButton.icon(
+              onPressed: () => _showCreateEventDialog(context),
+              icon: const Icon(Icons.add_rounded, size: 17),
+              label: const Text('New event'),
+            ),
+          IconButton(
             tooltip: 'Refresh',
             onPressed: _refresh,
-            icon: const Icon(Icons.refresh_rounded, size: 20),
-            style: IconButton.styleFrom(
-              backgroundColor: AppColors.muted,
-              foregroundColor: AppColors.foreground,
-            ),
+            icon: const Icon(Icons.refresh_rounded, size: 21),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 4),
         ],
       ),
       body: FutureBuilder<List<EventModel>>(
@@ -240,10 +237,30 @@ class _EventsListViewState extends State<_EventsListView> {
           return RefreshIndicator(
             onRefresh: () async => _refresh(),
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
               children: [
                 _buildEventFilters(events),
                 const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Text(
+                      isPhotographer ? 'Your shoots' : 'Your events',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${filteredEvents.length} events',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
                 if (filteredEvents.isEmpty)
                   const AppEmptyState(
                     icon: Icons.filter_alt_off_outlined,
@@ -276,13 +293,6 @@ class _EventsListViewState extends State<_EventsListView> {
           );
         },
       ),
-      floatingActionButton: canCreateEvents
-          ? FloatingActionButton.extended(
-              onPressed: () => _showCreateEventDialog(context),
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('New event'),
-            )
-          : null,
     );
   }
 
@@ -338,8 +348,8 @@ class _EventsListViewState extends State<_EventsListView> {
     );
   }
 
-  void _showCreateEventDialog(BuildContext context) {
-    showModalBottomSheet(
+  Future<void> _showCreateEventDialog(BuildContext context) async {
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -380,209 +390,148 @@ class _EventCardItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 9),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppColors.card,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isSelected
-              ? AppColors.success.withValues(alpha: 0.7)
+              ? AppColors.secondary.withValues(alpha: .5)
               : AppColors.border,
-          width: isSelected ? 1.5 : 1,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 24,
-            offset: const Offset(0, 10),
-          ),
-        ],
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AspectRatio(
-                aspectRatio: 16 / 9,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    ImageLoader.loadImage(
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    width: 70,
+                    height: 70,
+                    child: ImageLoader.loadImage(
                       event.imageUrl,
                       fit: BoxFit.cover,
-                      errorWidget: _buildPlaceholder(context),
-                    ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: Container(
-                        height: 70,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.black.withValues(alpha: 0),
-                              Colors.black.withValues(alpha: 0.45),
-                            ],
-                          ),
+                      errorWidget: const ColoredBox(
+                        color: AppColors.accentSoft,
+                        child: Icon(
+                          Icons.photo_library_outlined,
+                          color: AppColors.primary,
+                          size: 27,
                         ),
                       ),
                     ),
-                    Positioned(
-                      top: 12,
-                      right: 12,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 11,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: event.isPublished
-                              ? AppColors.success
-                              : AppColors.tertiary,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          event.isPublished ? 'Published' : 'Draft',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                            color: event.isPublished
-                                ? Colors.white
-                                : const Color(0xFF422006),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      event.title,
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.foreground,
-                        letterSpacing: -0.2,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (event.description?.isNotEmpty ?? false) ...[
-                      const SizedBox(height: 6),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        event.description!,
+                        event.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 13,
-                          height: 1.45,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        event.description?.isNotEmpty == true
+                            ? event.description!
+                            : 'Event album',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
                           color: AppColors.mutedForeground,
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ],
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        AppPill(
-                          icon: Icons.photo_library_outlined,
-                          label: '${event.photosCount} photos',
-                        ),
-                        const Spacer(),
-                        if (canActivate) ...[
-                          SizedBox(
-                            height: 34,
-                            child: FilledButton.tonalIcon(
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 7,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: event.isPublished
+                                  ? AppColors.secondarySoft
+                                  : AppColors.accentSoft,
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              event.isPublished ? 'Published' : 'Draft',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: event.isPublished
+                                    ? AppColors.secondary
+                                    : AppColors.primary,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            '${event.photosCount} photos',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: AppColors.mutedForeground,
+                            ),
+                          ),
+                          if (canActivate)
+                            FilledButton.tonal(
                               key: ValueKey('activate-event-${event.id}'),
                               onPressed:
                                   isSelected || activating || selectionLocked
                                   ? null
                                   : onActivate,
                               style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.accentSoft,
+                                foregroundColor: AppColors.primary,
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
+                                  horizontal: 6,
                                 ),
                                 minimumSize: const Size(0, 32),
-                                tapTargetSize: MaterialTapTargetSize.padded,
-                                backgroundColor: isSelected
-                                    ? AppColors.success.withValues(alpha: 0.13)
-                                    : AppColors.primary.withValues(alpha: 0.12),
-                                foregroundColor: isSelected
-                                    ? AppColors.success
-                                    : AppColors.primary,
-                                disabledBackgroundColor: isSelected
-                                    ? AppColors.success.withValues(alpha: 0.13)
-                                    : AppColors.muted,
-                                disabledForegroundColor: isSelected
-                                    ? AppColors.success
-                                    : AppColors.mutedForeground,
-                                shape: const StadiumBorder(),
                                 textStyle: const TextStyle(
                                   fontSize: 11,
-                                  fontWeight: FontWeight.w800,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              icon: activating
-                                  ? const SizedBox(
-                                      width: 13,
-                                      height: 13,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : Icon(
-                                      isSelected
-                                          ? Icons.check_circle_rounded
-                                          : Icons.bolt_rounded,
-                                      size: 15,
-                                    ),
-                              label: Text(
+                              child: Text(
                                 activating
                                     ? 'Activating'
                                     : isSelected
                                     ? 'Active'
                                     : 'Activate',
                               ),
+                            )
+                          else
+                            const Icon(
+                              Icons.chevron_right_rounded,
+                              size: 19,
+                              color: AppColors.mutedForeground,
                             ),
-                          ),
-                          const SizedBox(width: 5),
                         ],
-                        const Icon(
-                          Icons.chevron_right_rounded,
-                          size: 20,
-                          color: AppColors.mutedForeground,
-                        ),
-                      ],
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPlaceholder(BuildContext context) {
-    return const ColoredBox(
-      color: AppColors.cream,
-      child: Center(
-        child: Icon(
-          Icons.image_outlined,
-          size: 54,
-          color: AppColors.primaryLight,
         ),
       ),
     );
@@ -1169,7 +1118,10 @@ class _EventDetailPageState extends State<_EventDetailPage> {
                     _GalleryPrivacySection(eventId: _event.id),
                   ],
                   const SizedBox(height: 32),
-                  _EventAlbumsSection(eventId: _event.id),
+                  _EventAlbumsSection(
+                    eventId: _event.id,
+                    eventTitle: _event.title,
+                  ),
                   const SizedBox(height: 32),
                   Text(
                     'Invite Photographers',
@@ -1260,9 +1212,10 @@ class _EventDetailPageState extends State<_EventDetailPage> {
 }
 
 class _GalleryPrivacySection extends StatefulWidget {
-  const _GalleryPrivacySection({required this.eventId});
+  const _GalleryPrivacySection({required this.eventId, this.storeOnly = false});
 
   final String eventId;
+  final bool storeOnly;
 
   @override
   State<_GalleryPrivacySection> createState() => _GalleryPrivacySectionState();
@@ -1305,8 +1258,12 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
   @override
   void initState() {
     super.initState();
-    _load();
-    _loadStore();
+    if (widget.storeOnly) {
+      _loading = false;
+      _loadStore();
+    } else {
+      _load();
+    }
   }
 
   @override
@@ -1600,100 +1557,111 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            DropdownButtonFormField<String>(
-              initialValue: _mode,
-              decoration: const InputDecoration(
-                labelText: 'Who can view this gallery?',
-                border: OutlineInputBorder(),
+            if (!widget.storeOnly) ...[
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: _mode,
+                decoration: const InputDecoration(
+                  labelText: 'Who can view this gallery?',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'public',
+                    child: Text('Public - anyone with link'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'password',
+                    child: Text('Password protected'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'private',
+                    child: Text('Private secure link only'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'facial',
+                    child: Text('Face recognition privacy'),
+                  ),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _mode = value ?? 'public'),
               ),
-              items: const [
-                DropdownMenuItem(
-                  value: 'public',
-                  child: Text('Public - anyone with link'),
-                ),
-                DropdownMenuItem(
-                  value: 'password',
-                  child: Text('Password protected'),
-                ),
-                DropdownMenuItem(
-                  value: 'private',
-                  child: Text('Private secure link only'),
-                ),
-                DropdownMenuItem(
-                  value: 'facial',
-                  child: Text('Face recognition privacy'),
+              if (_mode == 'password') ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _passwordController,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: _loadedMode == 'password'
+                        ? 'New password (optional)'
+                        : 'Gallery password',
+                    hintText: _loadedMode == 'password'
+                        ? 'Leave blank to keep current password'
+                        : 'Required',
+                    border: const OutlineInputBorder(),
+                  ),
                 ),
               ],
-              onChanged: _saving
-                  ? null
-                  : (value) => setState(() => _mode = value ?? 'public'),
-            ),
-            if (_mode == 'password') ...[
               const SizedBox(height: 12),
-              TextField(
-                controller: _passwordController,
-                obscureText: true,
-                decoration: InputDecoration(
-                  labelText: _loadedMode == 'password'
-                      ? 'New password (optional)'
-                      : 'Gallery password',
-                  hintText: _loadedMode == 'password'
-                      ? 'Leave blank to keep current password'
-                      : 'Required',
-                  border: const OutlineInputBorder(),
+              Text(
+                'Password-protected galleries block viewing and downloads until the guest unlocks the gallery.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 14),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _faceSearchEnabled,
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _faceSearchEnabled = value),
+                title: const Text('Face recognition'),
+                subtitle: const Text(
+                  'Allow guests to build personal galleries and use the face-delivery QR.',
                 ),
               ),
-            ],
-            const SizedBox(height: 12),
-            Text(
-              'Password-protected galleries block viewing and downloads until the guest unlocks the gallery.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 14),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _faceSearchEnabled,
-              onChanged: _saving
-                  ? null
-                  : (value) => setState(() => _faceSearchEnabled = value),
-              title: const Text('Face recognition'),
-              subtitle: const Text(
-                'Allow guests to build personal galleries and use the face-delivery QR.',
-              ),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _guestNotificationsEnabled,
-              onChanged: _saving
-                  ? null
-                  : (value) =>
-                        setState(() => _guestNotificationsEnabled = value),
-              title: const Text('Automatic match alerts'),
-              subtitle: const Text(
-                'Send a personal gallery link when this event finds a registered guest.',
-              ),
-            ),
-            if (_guestNotificationsEnabled) ...[
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                value: _emailNotificationsEnabled,
+                value: _guestNotificationsEnabled,
                 onChanged: _saving
                     ? null
                     : (value) =>
-                          setState(() => _emailNotificationsEnabled = value),
-                title: const Text('Email delivery'),
+                          setState(() => _guestNotificationsEnabled = value),
+                title: const Text('Automatic match alerts'),
+                subtitle: const Text(
+                  'Send a personal gallery link when this event finds a registered guest.',
+                ),
               ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _whatsappNotificationsEnabled,
-                onChanged: _saving
-                    ? null
-                    : (value) =>
-                          setState(() => _whatsappNotificationsEnabled = value),
-                title: const Text('WhatsApp delivery'),
-              ),
+              if (_guestNotificationsEnabled) ...[
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _emailNotificationsEnabled,
+                  onChanged: _saving
+                      ? null
+                      : (value) =>
+                            setState(() => _emailNotificationsEnabled = value),
+                  title: const Text('Email delivery'),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _whatsappNotificationsEnabled,
+                  onChanged: _saving
+                      ? null
+                      : (value) => setState(
+                          () => _whatsappNotificationsEnabled = value,
+                        ),
+                  title: const Text('WhatsApp delivery'),
+                ),
+              ],
             ],
-            if (_storeAvailable) ...[
+            if (widget.storeOnly && !_storeLoading && !_storeAvailable)
+              const Padding(
+                padding: EdgeInsets.all(12),
+                child: Text(
+                  'Store settings are unavailable for this event or account.',
+                ),
+              ),
+            if (widget.storeOnly && _storeAvailable) ...[
               const Divider(height: 28),
               Text(
                 'Store',
@@ -1896,145 +1864,255 @@ class _GalleryPrivacySectionState extends State<_GalleryPrivacySection> {
                 ),
               ],
             ],
-            const Divider(height: 28),
-            Text(
-              'Store preview watermark',
-              style: Theme.of(
-                context,
-              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Preview files are resized and watermarked. Paid customers receive the original full-resolution file without this watermark.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            if ((_branding['watermarkUrl']?.toString().isNotEmpty ?? false))
-              Container(
-                height: 90,
-                width: double.infinity,
-                margin: const EdgeInsets.only(bottom: 10),
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.all(8),
-                child: ImageLoader.loadImage(
-                  _branding['watermarkUrl'].toString(),
-                  fit: BoxFit.contain,
-                ),
+            if (!widget.storeOnly) ...[
+              const Divider(height: 28),
+              Text(
+                'Store preview watermark',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
               ),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _uploadingWatermark ? null : _pickWatermark,
-                    icon: _uploadingWatermark
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.branding_watermark_outlined),
-                    label: Text(
-                      _branding['watermarkUrl'] == null
-                          ? 'Upload watermark'
-                          : 'Replace watermark',
+              const SizedBox(height: 6),
+              Text(
+                'Preview files are resized and watermarked. Paid customers receive the original full-resolution file without this watermark.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 12),
+              if ((_branding['watermarkUrl']?.toString().isNotEmpty ?? false))
+                Container(
+                  height: 90,
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 10),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.all(8),
+                  child: ImageLoader.loadImage(
+                    _branding['watermarkUrl'].toString(),
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _uploadingWatermark ? null : _pickWatermark,
+                      icon: _uploadingWatermark
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.branding_watermark_outlined),
+                      label: Text(
+                        _branding['watermarkUrl'] == null
+                            ? 'Upload watermark'
+                            : 'Replace watermark',
+                      ),
                     ),
                   ),
-                ),
-                if (_branding['watermarkUrl'] != null) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: 'Remove watermark',
-                    onPressed: _saving
-                        ? null
-                        : () => setState(() {
-                            _branding = {..._branding}..remove('watermarkUrl');
-                          }),
-                    icon: const Icon(Icons.delete_outline),
-                  ),
+                  if (_branding['watermarkUrl'] != null) ...[
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: 'Remove watermark',
+                      onPressed: _saving
+                          ? null
+                          : () => setState(() {
+                              _branding = {..._branding}
+                                ..remove('watermarkUrl');
+                            }),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ],
                 ],
-              ],
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _watermarkPosition,
-              decoration: const InputDecoration(
-                labelText: 'Watermark position',
-                border: OutlineInputBorder(),
               ),
-              items: const [
-                DropdownMenuItem(value: 'top_left', child: Text('Top left')),
-                DropdownMenuItem(
-                  value: 'top_center',
-                  child: Text('Top center'),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: _watermarkPosition,
+                decoration: const InputDecoration(
+                  labelText: 'Watermark position',
+                  border: OutlineInputBorder(),
                 ),
-                DropdownMenuItem(value: 'top_right', child: Text('Top right')),
-                DropdownMenuItem(value: 'center', child: Text('Center')),
-                DropdownMenuItem(
-                  value: 'bottom_left',
-                  child: Text('Bottom left'),
-                ),
-                DropdownMenuItem(
-                  value: 'bottom_center',
-                  child: Text('Bottom center'),
-                ),
-                DropdownMenuItem(
-                  value: 'bottom_right',
-                  child: Text('Bottom right'),
-                ),
-                DropdownMenuItem(value: 'tile', child: Text('Tile')),
-              ],
-              onChanged: _saving
-                  ? null
-                  : (value) => setState(
-                      () => _watermarkPosition = value ?? 'bottom_right',
-                    ),
-            ),
-            const SizedBox(height: 12),
-            Text('Opacity ${(_watermarkOpacity * 100).round()}%'),
-            Slider(
-              value: _watermarkOpacity.clamp(0.05, 1),
-              min: 0.05,
-              max: 1,
-              divisions: 19,
-              onChanged: _saving
-                  ? null
-                  : (value) => setState(() => _watermarkOpacity = value),
-            ),
-            Text('Size ${_watermarkScale.round()}% of preview width'),
-            Slider(
-              value: _watermarkScale.clamp(5, 80),
-              min: 5,
-              max: 80,
-              divisions: 15,
-              onChanged: _saving
-                  ? null
-                  : (value) => setState(() => _watermarkScale = value),
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: _saving ? null : _save,
-                icon: _saving
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.lock_outline),
-                label: Text(_saving ? 'Saving...' : 'Save gallery access'),
+                items: const [
+                  DropdownMenuItem(value: 'top_left', child: Text('Top left')),
+                  DropdownMenuItem(
+                    value: 'top_center',
+                    child: Text('Top center'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'top_right',
+                    child: Text('Top right'),
+                  ),
+                  DropdownMenuItem(value: 'center', child: Text('Center')),
+                  DropdownMenuItem(
+                    value: 'bottom_left',
+                    child: Text('Bottom left'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'bottom_center',
+                    child: Text('Bottom center'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'bottom_right',
+                    child: Text('Bottom right'),
+                  ),
+                  DropdownMenuItem(value: 'tile', child: Text('Tile')),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(
+                        () => _watermarkPosition = value ?? 'bottom_right',
+                      ),
               ),
-            ),
+              const SizedBox(height: 12),
+              Text('Opacity ${(_watermarkOpacity * 100).round()}%'),
+              Slider(
+                value: _watermarkOpacity.clamp(0.05, 1),
+                min: 0.05,
+                max: 1,
+                divisions: 19,
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _watermarkOpacity = value),
+              ),
+              Text('Size ${_watermarkScale.round()}% of preview width'),
+              Slider(
+                value: _watermarkScale.clamp(5, 80),
+                min: 5,
+                max: 80,
+                divisions: 15,
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _watermarkScale = value),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _saving ? null : _save,
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.lock_outline),
+                  label: Text(_saving ? 'Saving...' : 'Save gallery access'),
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
+}
+
+class EventGalleryPrivacyPage extends StatelessWidget {
+  const EventGalleryPrivacyPage({
+    super.key,
+    required this.eventId,
+    required this.eventTitle,
+  });
+
+  final String eventId;
+  final String eventTitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Album & Photo Privacy',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+        children: [
+          Text(
+            eventTitle,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: AppColors.mutedForeground,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _GalleryPrivacySection(eventId: eventId),
+        ],
+      ),
+    );
+  }
+}
+
+class EventStoreSettingsPage extends StatelessWidget {
+  const EventStoreSettingsPage({
+    super.key,
+    required this.eventId,
+    required this.eventTitle,
+  });
+
+  final String eventId;
+  final String eventTitle;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Store settings')),
+    body: ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+      children: [
+        Text(
+          eventTitle,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: AppColors.mutedForeground,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _GalleryPrivacySection(eventId: eventId, storeOnly: true),
+      ],
+    ),
+  );
+}
+
+/// Reuses the event's existing photographer search and invitation API.
+class EventPhotographerInvitesPage extends StatelessWidget {
+  const EventPhotographerInvitesPage({
+    super.key,
+    required this.eventId,
+    required this.eventTitle,
+  });
+
+  final String eventId;
+  final String eventTitle;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Invite photographers')),
+    body: SafeArea(
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        children: [
+          Text(
+            eventTitle,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 5),
+          const Text(
+            'Find photographers and invite them to collaborate on this album.',
+            style: TextStyle(color: AppColors.mutedForeground, fontSize: 12),
+          ),
+          const SizedBox(height: 14),
+          _InvitePhotographersSection(eventId: eventId),
+        ],
+      ),
+    ),
+  );
 }
 
 class _InvitePhotographersSection extends StatefulWidget {
@@ -2070,6 +2148,7 @@ class _InvitePhotographersSectionState
         },
       );
       final data = response.data['data'] as List? ?? [];
+      if (!mounted) return;
       setState(() {
         _photographers = data
             .map(
@@ -2079,9 +2158,9 @@ class _InvitePhotographersSectionState
             .toList();
       });
     } catch (e) {
-      // handle error
+      // Preserve the existing search flow when the network is unavailable.
     } finally {
-      setState(() => _isSearching = false);
+      if (mounted) setState(() => _isSearching = false);
     }
   }
 
@@ -2180,9 +2259,10 @@ class _InvitePhotographersSectionState
 }
 
 class _EventAlbumsSection extends StatefulWidget {
-  const _EventAlbumsSection({required this.eventId});
+  const _EventAlbumsSection({required this.eventId, required this.eventTitle});
 
   final String eventId;
+  final String eventTitle;
 
   @override
   State<_EventAlbumsSection> createState() => _EventAlbumsSectionState();
@@ -2229,16 +2309,18 @@ class _EventAlbumsSectionState extends State<_EventAlbumsSection> {
     );
   }
 
-  void _openAlbum(AlbumModel album) {
-    Navigator.of(context).push(
+  Future<void> _openAlbum(AlbumModel album) async {
+    await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => EventGalleryPage(
+        builder: (_) => AlbumManagementPage(
           eventId: widget.eventId,
+          eventTitle: widget.eventTitle,
           albumId: album.id,
           albumTitle: album.title,
         ),
       ),
     );
+    if (mounted) await _loadAlbums();
   }
 
   Future<void> _deleteAlbum(AlbumModel album) async {
@@ -2313,9 +2395,13 @@ class _EventAlbumsSectionState extends State<_EventAlbumsSection> {
               child: ListTile(
                 leading: const Icon(Icons.photo_album_outlined),
                 title: Text(album.title),
-                subtitle: album.description == null
-                    ? null
-                    : Text(album.description!),
+                subtitle: Text(
+                  album.description?.isNotEmpty == true
+                      ? '${album.imagesCount} photos · ${album.description}'
+                      : '${album.imagesCount} photos',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 trailing: Wrap(
                   spacing: 4,
                   children: [

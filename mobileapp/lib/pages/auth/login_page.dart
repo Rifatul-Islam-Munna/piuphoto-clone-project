@@ -78,7 +78,7 @@ class _LoginPageState extends State<LoginPage> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 28, 20, 32),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 440),
               child: Column(
@@ -111,7 +111,7 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 42),
+                  const SizedBox(height: 22),
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -122,7 +122,7 @@ class _LoginPageState extends State<LoginPage> {
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: const Text(
-                      'STUDIO ACCESS',
+                      'YOUR PHOTO WORKSPACE',
                       style: TextStyle(
                         color: AppColors.primary,
                         fontSize: 10.5,
@@ -132,7 +132,7 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  Text('Welcome back', style: theme.textTheme.displaySmall),
+                  Text('Welcome back', style: theme.textTheme.headlineMedium),
                   const SizedBox(height: 10),
                   Text(
                     'Sign in to manage live events, galleries and photographer uploads from one workspace.',
@@ -140,20 +140,13 @@ class _LoginPageState extends State<LoginPage> {
                       color: AppColors.mutedForeground,
                     ),
                   ),
-                  const SizedBox(height: 30),
+                  const SizedBox(height: 16),
                   Container(
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: AppColors.card,
                       borderRadius: BorderRadius.circular(AppRadius.xl),
                       border: Border.all(color: AppColors.border),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.035),
-                          blurRadius: 30,
-                          offset: const Offset(0, 14),
-                        ),
-                      ],
                     ),
                     child: Column(
                       children: [

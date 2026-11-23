@@ -234,10 +234,9 @@ class _InvitationsPageState extends State<InvitationsPage> {
 
   Widget _joinCodeCard() {
     return AppSectionCard(
-      title: 'Join event with code',
+      title: 'Join an event',
       icon: Icons.group_add_outlined,
-      subtitle:
-          'Paste the code shared by the Event Planner to join as a photographer.',
+      subtitle: 'Enter a code or invitation link to join a shoot.',
       children: [
         TextField(
           controller: _joinCodeController,
@@ -256,10 +255,10 @@ class _InvitationsPageState extends State<InvitationsPage> {
             if (!_joiningByCode) _joinWithCode();
           },
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 9),
         SizedBox(
           width: double.infinity,
-          height: 50,
+          height: 44,
           child: FilledButton.icon(
             onPressed: _joiningByCode ? null : _joinWithCode,
             icon: _joiningByCode
@@ -291,22 +290,18 @@ class _InvitationsPageState extends State<InvitationsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 82,
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Invitations'),
-            SizedBox(height: 3),
-            Text(
-              'Join shoots and manage assignments',
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w500,
-                color: AppColors.mutedForeground,
-              ),
-            ),
-          ],
+        title: const Text(
+          'Invitations',
+          style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh invitations',
+            onPressed: _refresh,
+            icon: const Icon(Icons.refresh_rounded, size: 21),
+          ),
+          const SizedBox(width: 5),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
@@ -340,11 +335,74 @@ class _InvitationsPageState extends State<InvitationsPage> {
               valueListenable: ActiveEventStorage.activeEvent,
               builder: (context, activeEvent, _) {
                 return ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
                   itemCount: invitations.length + 1,
-                  separatorBuilder: (_, _) => const SizedBox(height: 12),
+                  separatorBuilder: (_, _) => const SizedBox(height: 9),
                   itemBuilder: (context, index) {
-                    if (index == 0) return _joinCodeCard();
+                    if (index == 0) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _joinCodeCard(),
+                          const SizedBox(height: 18),
+                          Row(
+                            children: [
+                              const Expanded(
+                                child: Text(
+                                  'Your invitations',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '${invitations.length} invitations',
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: AppColors.mutedForeground,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (invitations.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.only(top: 34),
+                              child: Center(
+                                child: Column(
+                                  children: [
+                                    Icon(
+                                      Icons.mail_outline_rounded,
+                                      size: 42,
+                                      color: AppColors.mutedForeground,
+                                    ),
+                                    SizedBox(height: 8),
+                                    Text(
+                                      'No invitations yet',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    SizedBox(height: 4),
+                                    Text(
+                                      'Join with a code or wait for an invitation.',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: AppColors.mutedForeground,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
+                    }
                     final invitation = invitations[index - 1];
                     final event = invitation.event;
                     final isActive =
@@ -353,24 +411,15 @@ class _InvitationsPageState extends State<InvitationsPage> {
                     final isDeleting = _deletingIds.contains(invitation.id);
 
                     return Container(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: AppColors.card,
-                        borderRadius: BorderRadius.circular(AppRadius.xl),
+                        borderRadius: BorderRadius.circular(12),
                         border: Border.all(
                           color: isActive
                               ? AppColors.secondary.withValues(alpha: 0.45)
                               : AppColors.border,
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(
-                              alpha: isActive ? 0.055 : 0.025,
-                            ),
-                            blurRadius: 22,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -379,8 +428,8 @@ class _InvitationsPageState extends State<InvitationsPage> {
                             children: [
                               AppIconTile(
                                 icon: Icons.event_outlined,
-                                size: 42,
-                                iconSize: 21,
+                                size: 38,
+                                iconSize: 20,
                               ),
                               const SizedBox(width: 12),
                               Expanded(
@@ -389,8 +438,8 @@ class _InvitationsPageState extends State<InvitationsPage> {
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w800,
                                     color: AppColors.foreground,
                                   ),
                                 ),
@@ -412,20 +461,20 @@ class _InvitationsPageState extends State<InvitationsPage> {
                             ],
                           ),
                           if (event?.description?.isNotEmpty ?? false) ...[
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 7),
                             Text(
                               event!.description!,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 13,
-                                height: 1.45,
+                                fontSize: 11.5,
+                                height: 1.35,
                                 color: AppColors.mutedForeground,
                               ),
                             ),
                           ],
                           if (invitation.inviterName != null) ...[
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 7),
                             const Divider(height: 1),
                             AppInfoRow(
                               icon: Icons.person_outline,
@@ -437,7 +486,7 @@ class _InvitationsPageState extends State<InvitationsPage> {
                           if (invitation.isPending)
                             SizedBox(
                               width: double.infinity,
-                              height: 50,
+                              height: 42,
                               child: FilledButton(
                                 onPressed: isAccepting
                                     ? null
@@ -457,7 +506,7 @@ class _InvitationsPageState extends State<InvitationsPage> {
                           else if (invitation.isAccepted)
                             SizedBox(
                               width: double.infinity,
-                              height: 50,
+                              height: 42,
                               child: FilledButton.tonal(
                                 onPressed: isActive
                                     ? null

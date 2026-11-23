@@ -25,32 +25,20 @@ class _PlansPageState extends State<PlansPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 82,
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Plans & billing'),
-            SizedBox(height: 3),
-            Text(
-              'Storage, delivery tools and credits',
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w500,
-                color: AppColors.mutedForeground,
-              ),
-            ),
-          ],
+        title: const Text(
+          'Plans & billing',
+          style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
         ),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildBillingToggle(),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             _buildPlansSection(),
-            const SizedBox(height: 32),
+            const SizedBox(height: 18),
             _buildAddonsSection(),
           ],
         ),
@@ -386,22 +374,13 @@ class _ToggleButton extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 14),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
         decoration: BoxDecoration(
           color: isSelected ? AppColors.card : Colors.transparent,
           borderRadius: BorderRadius.circular(13),
           border: Border.all(
             color: isSelected ? AppColors.border : Colors.transparent,
           ),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.035),
-                    blurRadius: 12,
-                    offset: const Offset(0, 5),
-                  ),
-                ]
-              : null,
         ),
         child: Text(
           label,
@@ -451,28 +430,19 @@ class _PlanCard extends StatelessWidget {
     final tierColor = _getTierColor(title);
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 9),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppColors.card,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
+        borderRadius: BorderRadius.circular(12),
         border: isPopular
             ? Border.all(color: AppColors.primary, width: 1.6)
             : Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: isPopular
-                ? AppColors.primary.withValues(alpha: 0.18)
-                : AppColors.primary.withValues(alpha: 0.06),
-            blurRadius: 22,
-            offset: const Offset(0, 10),
-          ),
-        ],
       ),
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: tierColor.withValues(alpha: 0.1),
               border: Border(bottom: BorderSide(color: AppColors.border)),
@@ -481,8 +451,8 @@ class _PlanCard extends StatelessWidget {
               children: [
                 AppIconTile(
                   icon: Icons.workspace_premium,
-                  size: 46,
-                  iconSize: 23,
+                  size: 38,
+                  iconSize: 20,
                   background: tierColor.withValues(alpha: 0.18),
                   foreground: tierColor,
                 ),
@@ -522,13 +492,15 @@ class _PlanCard extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 2,
+                        crossAxisAlignment: WrapCrossAlignment.end,
                         children: [
                           Text(
                             '\$$price',
                             style: TextStyle(
-                              fontSize: 24,
+                              fontSize: 21,
                               fontWeight: FontWeight.w800,
                               color: tierColor,
                               letterSpacing: -0.5,
@@ -565,7 +537,7 @@ class _PlanCard extends StatelessWidget {
           ),
           if (allItems.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
               child: Column(
                 children: allItems
                     .map(
@@ -598,10 +570,10 @@ class _PlanCard extends StatelessWidget {
               ),
             ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             child: SizedBox(
               width: double.infinity,
-              height: 50,
+              height: 44,
               child: FilledButton(
                 onPressed: onBuy,
                 style: FilledButton.styleFrom(
@@ -653,28 +625,19 @@ class _DefaultPlanCard extends StatelessWidget {
     final tierColor = _getTierColor(title);
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 9),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppColors.card,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
+        borderRadius: BorderRadius.circular(12),
         border: isPopular
             ? Border.all(color: AppColors.primary, width: 1.6)
             : Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: isPopular
-                ? AppColors.primary.withValues(alpha: 0.18)
-                : AppColors.primary.withValues(alpha: 0.06),
-            blurRadius: 22,
-            offset: const Offset(0, 10),
-          ),
-        ],
       ),
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: tierColor.withValues(alpha: 0.1),
               border: Border(bottom: BorderSide(color: AppColors.border)),
@@ -683,8 +646,8 @@ class _DefaultPlanCard extends StatelessWidget {
               children: [
                 AppIconTile(
                   icon: Icons.workspace_premium,
-                  size: 46,
-                  iconSize: 23,
+                  size: 38,
+                  iconSize: 20,
                   background: tierColor.withValues(alpha: 0.18),
                   foreground: tierColor,
                 ),
@@ -724,8 +687,10 @@ class _DefaultPlanCard extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 2,
+                        crossAxisAlignment: WrapCrossAlignment.end,
                         children: [
                           Text(
                             '\$${price.toStringAsFixed(price.truncateToDouble() == price ? 0 : 2)}',
@@ -752,12 +717,12 @@ class _DefaultPlanCard extends StatelessWidget {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(12),
             child: Column(
               children: features
                   .map(
                     (f) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.only(bottom: 5),
                       child: Row(
                         children: [
                           Icon(Icons.check_circle, size: 18, color: tierColor),
@@ -776,10 +741,10 @@ class _DefaultPlanCard extends StatelessWidget {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             child: SizedBox(
               width: double.infinity,
-              height: 50,
+              height: 44,
               child: FilledButton(
                 onPressed: onBuy,
                 style: FilledButton.styleFrom(

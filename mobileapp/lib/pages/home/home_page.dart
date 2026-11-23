@@ -228,7 +228,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               slivers: [
                 _buildAppBar(context, user, isPhotographer),
                 SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
                   sliver: SliverList(
                     delegate: SliverChildListDelegate([
                       if (_isRefreshingProfile)
@@ -255,91 +255,44 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     dynamic user,
     bool isPhotographer,
   ) {
-    final isLoggedIn = user != null;
-    final displayName = isLoggedIn ? user.displayLabel.toString() : 'Airpix';
-    final subtitle = !isLoggedIn
-        ? 'Live photo delivery'
-        : isPhotographer
-        ? 'Photographer workspace'
-        : 'Event planner · ${user.credits ?? 0} credits';
-
     return SliverAppBar(
       pinned: true,
-      toolbarHeight: 82,
+      toolbarHeight: 58,
       backgroundColor: AppColors.background,
       surfaceTintColor: Colors.transparent,
       scrolledUnderElevation: 0,
       automaticallyImplyLeading: false,
-      titleSpacing: 20,
-      title: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: AppColors.darkSection,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(
-              Icons.camera_alt_rounded,
-              color: Colors.white,
-              size: 21,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 16.5,
-                    height: 1.1,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.35,
-                    color: AppColors.foreground,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.mutedForeground,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (isLoggedIn) ...[
-            const SizedBox(width: 8),
-            Container(
-              width: 39,
-              height: 39,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: AppColors.cream,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.border),
-              ),
+      titleSpacing: 14,
+      title: Text(
+        isPhotographer
+            ? 'Studio'
+            : user == null
+            ? 'Airpix'
+            : 'Overview',
+        style: const TextStyle(
+          fontSize: 19,
+          fontWeight: FontWeight.w800,
+          color: AppColors.foreground,
+        ),
+      ),
+      actions: [
+        if (user != null)
+          Padding(
+            padding: const EdgeInsets.only(right: 14),
+            child: CircleAvatar(
+              radius: 17,
+              backgroundColor: AppColors.cream,
               child: Text(
                 user.avatarText.toString(),
                 style: const TextStyle(
                   color: AppColors.primary,
+                  fontSize: 13,
                   fontWeight: FontWeight.w800,
-                  fontSize: 14,
                 ),
               ),
             ),
-          ],
-        ],
-      ),
+          ),
+      ],
     );
   }
 
@@ -354,7 +307,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildPhotographerWorkspaceHero(context, activeEvent),
-            const SizedBox(height: 18),
+            const SizedBox(height: 9),
             AppPrimaryActionCard(
               icon: activeEvent == null
                   ? Icons.event_available_outlined
@@ -376,21 +329,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 }
               },
             ),
-            const SizedBox(height: 26),
+            const SizedBox(height: 16),
             _buildSectionTitle(context, 'Today'),
-            const SizedBox(height: 12),
+            const SizedBox(height: 9),
             _buildStatsRow(activeEvent),
-            const SizedBox(height: 26),
+            const SizedBox(height: 16),
             _buildSectionTitle(context, 'Active event'),
-            const SizedBox(height: 12),
+            const SizedBox(height: 9),
             _buildEventCard(context, activeEvent),
-            const SizedBox(height: 26),
+            const SizedBox(height: 16),
             _buildSectionTitle(context, 'Quick tools'),
-            const SizedBox(height: 12),
+            const SizedBox(height: 9),
             _buildActionsGrid(context, activeEvent),
-            const SizedBox(height: 26),
+            const SizedBox(height: 16),
             _buildSectionTitle(context, 'Camera connection help'),
-            const SizedBox(height: 12),
+            const SizedBox(height: 9),
             _buildHowItWorks(context),
           ],
         );
@@ -398,80 +351,73 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  /// Photographer identity panel — the studio cockpit for a shoot day.
+  /// Compact studio status row, matching the Albums card hierarchy.
   Widget _buildPhotographerWorkspaceHero(
     BuildContext context,
     dynamic activeEvent,
   ) {
-    final user = UserStorage.currentUser.value;
-    final name = user?.displayLabel ?? 'Photographer';
-
-    return AppGradientHero(
-      padding: const EdgeInsets.all(20),
+    final name = UserStorage.currentUser.value?.displayLabel ?? 'Photographer';
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.camera_roll_outlined,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 13),
+              const AppIconTile(icon: Icons.camera_roll_outlined, size: 40),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
                       'Photographer studio',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        height: 1.15,
+                        fontSize: 14,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 2),
                     Text(
                       name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.85),
-                        fontSize: 12.5,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.mutedForeground,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
-              AppGlassPill(
-                label: activeEvent == null ? 'Idle' : 'On shoot',
+              const SizedBox(width: 6),
+              AppPill(
+                label: activeEvent == null ? 'Ready' : 'Live',
                 icon: activeEvent == null
-                    ? Icons.pause_circle_outline
+                    ? Icons.schedule_rounded
                     : Icons.radio_button_checked,
+                color: activeEvent == null
+                    ? AppColors.secondary
+                    : AppColors.success,
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 9),
           Text(
             activeEvent == null
-                ? 'Pick or create an event to start shooting, syncing and delivering photos live.'
-                : 'Shooting ${activeEvent.title} — photos sync and deliver while the event runs.',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.88),
-              fontSize: 12.5,
-              height: 1.5,
+                ? 'Choose an album or invitation to start transferring photos.'
+                : 'Current album: ${activeEvent.title}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 11.5,
+              color: AppColors.mutedForeground,
+              height: 1.3,
             ),
           ),
         ],
@@ -490,7 +436,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildPlannerWorkspaceHeader(context, activeEvent),
-            const SizedBox(height: 18),
+            const SizedBox(height: 9),
             AppPrimaryActionCard(
               icon: activeEvent == null
                   ? Icons.add_circle_outline_rounded
@@ -504,17 +450,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               actionLabel: activeEvent == null ? 'Create' : 'Manage',
               onTap: () => context.router.root.push(const EventsRoute()),
             ),
-            const SizedBox(height: 26),
+            const SizedBox(height: 16),
             _buildSectionTitle(context, 'Workspace shortcuts'),
-            const SizedBox(height: 12),
+            const SizedBox(height: 9),
             _buildUserQuickActions(context),
-            const SizedBox(height: 28),
+            const SizedBox(height: 16),
             _buildSectionTitle(context, 'Plans'),
-            const SizedBox(height: 12),
+            const SizedBox(height: 9),
             _buildPlansSection(context),
-            const SizedBox(height: 26),
+            const SizedBox(height: 16),
             _buildSectionTitle(context, 'Extra credits'),
-            const SizedBox(height: 12),
+            const SizedBox(height: 9),
             _buildAddonsSection(context),
           ],
         );
@@ -522,7 +468,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  /// Planner identity panel — event management workspace.
+  /// Event planner overview follows the same compact Albums card language.
   Widget _buildPlannerWorkspaceHeader(
     BuildContext context,
     dynamic activeEvent,
@@ -530,85 +476,64 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final user = UserStorage.currentUser.value;
     final name = user?.displayLabel ?? 'Event planner';
     final credits = user?.credits ?? 0;
-
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: AppColors.card,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
         border: Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.035),
-            blurRadius: 22,
-            offset: const Offset(0, 10),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const AppIconTile(
-                icon: Icons.event_available_outlined,
-                size: 46,
-                iconSize: 23,
-              ),
-              const SizedBox(width: 13),
+              const AppIconTile(icon: Icons.event_available_outlined, size: 40),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
                       'Event planner workspace',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.foreground,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 2),
                     Text(
                       name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 12.5,
+                        fontSize: 11,
                         color: AppColors.mutedForeground,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              AppPill(label: 'Planner', icon: Icons.workspace_premium_outlined),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
+              const SizedBox(width: 6),
               AppPill(
                 label: '$credits credits',
                 icon: Icons.toll_outlined,
-                color: AppColors.tertiary,
-              ),
-              AppPill(
-                label: activeEvent == null
-                    ? 'No active event'
-                    : activeEvent.title,
-                icon: activeEvent == null
-                    ? Icons.event_busy_outlined
-                    : Icons.event_available_outlined,
-                color: activeEvent == null
-                    ? AppColors.mutedForeground
-                    : AppColors.secondary,
+                color: AppColors.secondary,
               ),
             ],
+          ),
+          const SizedBox(height: 9),
+          Text(
+            activeEvent == null
+                ? 'No active event'
+                : 'Current event: ${activeEvent.title}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 11.5,
+              color: AppColors.mutedForeground,
+              height: 1.3,
+            ),
           ),
         ],
       ),
@@ -802,14 +727,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       color: AppColors.primary,
                     ),
                     const SizedBox(width: 5),
-                    Text(
-                      hasEvent
-                          ? 'Delivery workspace connected'
-                          : 'Not connected',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.mutedForeground,
+                    Expanded(
+                      child: Text(
+                        hasEvent
+                            ? 'Delivery workspace connected'
+                            : 'Not connected',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.mutedForeground,
+                        ),
                       ),
                     ),
                   ],
@@ -826,26 +755,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final hasPlannerAccess =
         UserStorage.currentUser.value?.hasPlannerAccess ?? false;
     final isDisabled = activeEvent == null && !hasPlannerAccess;
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 2,
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      childAspectRatio: 1.3,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _ActionTile(
           icon: Icons.photo_library_outlined,
-          title: 'Gallery',
-          subtitle: 'Review uploaded media',
+          title: 'Albums',
+          subtitle: 'Manage albums and upload photos',
           color: AppColors.secondary,
           isDisabled: isDisabled,
           onTap: isDisabled
               ? null
-              : activeEvent == null
-              ? () => context.router.root.push(const EventsRoute())
-              : () => context.router.root.push(const EventImagesRoute()),
+              : () => context.router.root.push(const EventsRoute()),
         ),
+        const SizedBox(height: 8),
         _ActionTile(
           icon: Icons.camera_alt_outlined,
           title: 'Camera',
@@ -854,6 +777,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           isDisabled: false,
           onTap: () => context.router.root.push(const CameraRoute()),
         ),
+        const SizedBox(height: 8),
         _ActionTile(
           icon: Icons.qr_code_scanner_rounded,
           title: 'Scan QR',
@@ -864,6 +788,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             context,
           ).push(MaterialPageRoute(builder: (_) => const EventQrScanPage())),
         ),
+        const SizedBox(height: 8),
         _ActionTile(
           icon: Icons.workspace_premium_outlined,
           title: 'Plans',
@@ -1541,8 +1466,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 2,
+                        crossAxisAlignment: WrapCrossAlignment.end,
                         children: [
                           Text(
                             '\$${price.toStringAsFixed(2)}',
@@ -1888,14 +1815,8 @@ class _StatTile extends StatelessWidget {
   }
 }
 
+/// Compact navigation row shared with Studio's quick tools.
 class _ActionTile extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final Color color;
-  final bool isDisabled;
-  final VoidCallback? onTap;
-
   const _ActionTile({
     required this.icon,
     required this.title,
@@ -1905,61 +1826,73 @@ class _ActionTile extends StatelessWidget {
     this.onTap,
   });
 
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final bool isDisabled;
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final tint = isDisabled ? AppColors.mutedForeground : color;
     return Material(
-      color: Colors.transparent,
+      color: AppColors.card,
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        onTap: isDisabled ? null : onTap,
+        borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
           decoration: BoxDecoration(
             color: AppColors.card,
-            borderRadius: BorderRadius.circular(AppRadius.lg),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(color: AppColors.border),
-            boxShadow: isDisabled
-                ? null
-                : [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.025),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Row(
             children: [
               AppIconTile(
                 icon: icon,
-                size: 42,
-                iconSize: 21,
-                background: tint.withValues(alpha: isDisabled ? 0.08 : 0.13),
+                size: 38,
+                iconSize: 20,
+                background: tint.withValues(alpha: isDisabled ? .08 : .13),
                 foreground: tint,
               ),
-              const SizedBox(height: 11),
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.foreground,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        height: 1.3,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.mutedForeground,
-                ),
+              const SizedBox(width: 6),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 19,
+                color: isDisabled
+                    ? AppColors.border
+                    : AppColors.mutedForeground,
               ),
             ],
           ),

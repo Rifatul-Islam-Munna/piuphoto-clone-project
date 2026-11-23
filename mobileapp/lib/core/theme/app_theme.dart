@@ -79,8 +79,8 @@ class AppRadius {
 
   static const double sm = 12;
   static const double md = 16;
-  static const double lg = 22;
-  static const double xl = 28;
+  static const double lg = 14;
+  static const double xl = 18;
 }
 
 class AppSpacing {
@@ -164,10 +164,11 @@ class AppTheme {
         scrolledUnderElevation: 0,
         centerTitle: false,
         surfaceTintColor: Colors.transparent,
-        titleSpacing: 20,
+        titleSpacing: 16,
+        toolbarHeight: 58,
         titleTextStyle: TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
+          fontSize: 19,
+          fontWeight: FontWeight.w800,
           color: AppColors.foreground,
           letterSpacing: -0.45,
         ),
@@ -179,10 +180,10 @@ class AppTheme {
           disabledBackgroundColor: AppColors.muted,
           disabledForegroundColor: AppColors.mutedForeground,
           elevation: 0,
-          minimumSize: const Size(64, 52),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
+          minimumSize: const Size(64, 46),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.md),
+            borderRadius: BorderRadius.circular(12),
           ),
           textStyle: const TextStyle(
             fontSize: 14,
@@ -198,10 +199,10 @@ class AppTheme {
           disabledBackgroundColor: AppColors.muted,
           disabledForegroundColor: AppColors.mutedForeground,
           elevation: 0,
-          minimumSize: const Size(64, 52),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
+          minimumSize: const Size(64, 46),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.md),
+            borderRadius: BorderRadius.circular(12),
           ),
           textStyle: const TextStyle(
             fontSize: 14,
@@ -223,10 +224,10 @@ class AppTheme {
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.secondary,
           side: const BorderSide(color: AppColors.secondary),
-          minimumSize: const Size(64, 52),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
+          minimumSize: const Size(64, 46),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.md),
+            borderRadius: BorderRadius.circular(12),
           ),
           textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         ),
@@ -254,8 +255,8 @@ class AppTheme {
           fontWeight: FontWeight.w500,
         ),
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 16,
+          horizontal: 13,
+          vertical: 12,
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
@@ -281,6 +282,12 @@ class AppTheme {
           ),
         ),
       ),
+      listTileTheme: const ListTileThemeData(
+        dense: true,
+        minVerticalPadding: 6,
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        iconColor: AppColors.mutedForeground,
+      ),
       chipTheme: ChipThemeData(
         backgroundColor: AppColors.muted,
         side: BorderSide.none,
@@ -290,7 +297,7 @@ class AppTheme {
           fontWeight: FontWeight.w600,
           color: AppColors.foreground,
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       ),
       dividerTheme: const DividerThemeData(
         color: AppColors.border,
@@ -392,16 +399,16 @@ class AppTheme {
           letterSpacing: -0.8,
         ),
         titleLarge: TextStyle(
-          fontSize: 18,
+          fontSize: 16,
           height: 1.2,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w800,
           color: AppColors.foreground,
           letterSpacing: -0.35,
         ),
         titleMedium: TextStyle(
-          fontSize: 15,
+          fontSize: 14,
           height: 1.25,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w700,
           color: AppColors.foreground,
           letterSpacing: -0.1,
         ),

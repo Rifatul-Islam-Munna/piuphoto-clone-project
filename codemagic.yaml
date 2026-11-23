@@ -18,7 +18,6 @@ workflows:
     triggering:
       cancel_previous_builds: true
       events:
-        - push
         - tag
       branch_patterns:
         - pattern: main

@@ -45,7 +45,7 @@ class AppSectionCard extends StatelessWidget {
     required this.children,
     this.subtitle,
     this.trailing,
-    this.padding = const EdgeInsets.fromLTRB(16, 15, 16, 12),
+    this.padding = const EdgeInsets.fromLTRB(12, 12, 12, 10),
   });
 
   final String title;
@@ -87,7 +87,7 @@ class AppSectionCard extends StatelessWidget {
                 ?trailing,
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 9),
             ...children,
           ],
         ),
@@ -112,7 +112,7 @@ class AppInfoRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 11),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
           Icon(icon, size: 20, color: AppColors.mutedForeground),
@@ -157,7 +157,7 @@ class AppStatTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final content = Container(
-      padding: const EdgeInsets.fromLTRB(15, 14, 15, 15),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -167,13 +167,13 @@ class AppStatTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AppIconTile(icon: icon, size: 34, iconSize: 18),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
           Text(
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontSize: 22,
+              fontSize: 19,
               height: 1,
               fontWeight: FontWeight.w800,
               color: AppColors.foreground,
@@ -235,25 +235,16 @@ class AppActionCard extends StatelessWidget {
         onTap: disabled ? null : onTap,
         borderRadius: BorderRadius.circular(AppRadius.lg),
         child: Container(
-          padding: const EdgeInsets.all(15),
+          padding: const EdgeInsets.all(11),
           decoration: BoxDecoration(
             color: disabled ? AppColors.muted : AppColors.card,
             borderRadius: BorderRadius.circular(AppRadius.lg),
             border: Border.all(color: AppColors.border),
-            boxShadow: disabled
-                ? null
-                : [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.025),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
           ),
           child: Row(
             children: [
-              AppIconTile(icon: icon, size: 42, iconSize: 21),
-              const SizedBox(width: 13),
+              AppIconTile(icon: icon, size: 38, iconSize: 20),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -293,7 +284,7 @@ class AppActionCard extends StatelessWidget {
   }
 }
 
-/// High-emphasis action used for the single most important task on a screen.
+/// Compact primary action using the same bordered row language as Albums.
 class AppPrimaryActionCard extends StatelessWidget {
   const AppPrimaryActionCard({
     super.key,
@@ -313,71 +304,59 @@ class AppPrimaryActionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.transparent,
+      color: AppColors.card,
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
+        borderRadius: BorderRadius.circular(12),
         child: Ink(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.fromLTRB(11, 12, 10, 12),
           decoration: BoxDecoration(
-            gradient: AppGradients.brand,
-            borderRadius: BorderRadius.circular(AppRadius.xl),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.primary.withValues(alpha: 0.18),
-                blurRadius: 24,
-                offset: const Offset(0, 12),
-              ),
-            ],
+            color: AppColors.card,
+            border: Border.all(color: AppColors.border),
+            borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
             children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                child: Icon(icon, color: Colors.white, size: 24),
-              ),
-              const SizedBox(width: 14),
+              AppIconTile(icon: icon, size: 38, iconSize: 20),
+              const SizedBox(width: 11),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
+                        fontSize: 14,
                         fontWeight: FontWeight.w800,
-                        letterSpacing: -0.25,
+                        color: AppColors.foreground,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 3),
                     Text(
                       subtitle,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.82),
-                        fontSize: 12,
+                      style: const TextStyle(
+                        fontSize: 11,
                         height: 1.35,
+                        color: AppColors.mutedForeground,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 8,
+                  horizontal: 10,
+                  vertical: 9,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(999),
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -385,16 +364,16 @@ class AppPrimaryActionCard extends StatelessWidget {
                     Text(
                       actionLabel,
                       style: const TextStyle(
-                        color: AppColors.primaryDark,
-                        fontSize: 11.5,
+                        fontSize: 11,
+                        color: Colors.white,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 3),
                     const Icon(
-                      Icons.arrow_forward_rounded,
-                      color: AppColors.primaryDark,
-                      size: 15,
+                      Icons.chevron_right_rounded,
+                      color: Colors.white,
+                      size: 16,
                     ),
                   ],
                 ),
@@ -434,7 +413,7 @@ class AppCategoryChip extends StatelessWidget {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
             color: selected ? color : AppColors.card,
             borderRadius: BorderRadius.circular(999),
@@ -660,16 +639,16 @@ class AppEmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 26),
       decoration: BoxDecoration(
-        color: AppColors.surfaceWarm,
+        color: AppColors.card,
         borderRadius: BorderRadius.circular(AppRadius.xl),
         border: Border.all(color: AppColors.border),
       ),
       child: Column(
         children: [
-          AppIconTile(icon: icon, size: 56, iconSize: 26),
-          const SizedBox(height: 14),
+          AppIconTile(icon: icon, size: 48, iconSize: 24),
+          const SizedBox(height: 8),
           Text(
             title,
             textAlign: TextAlign.center,

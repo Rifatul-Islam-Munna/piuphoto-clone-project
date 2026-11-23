@@ -2,6 +2,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/router/app_router.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/models/event_image_model.dart';
@@ -221,36 +222,18 @@ class _EventImagesPageState extends State<EventImagesPage> {
 
         return Scaffold(
           appBar: AppBar(
-            toolbarHeight: 82,
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Uploaded media'),
-                const SizedBox(height: 3),
-                Text(
-                  activeEvent?.title ?? 'No active event',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.mutedForeground,
-                  ),
-                ),
-              ],
+            title: const Text(
+              'Uploaded media',
+              style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
             ),
             actions: [
               if (activeEvent != null)
-                IconButton.filledTonal(
+                IconButton(
                   tooltip: 'Refresh',
                   onPressed: () => _refresh(activeEvent),
-                  icon: const Icon(Icons.refresh_rounded, size: 20),
-                  style: IconButton.styleFrom(
-                    backgroundColor: AppColors.muted,
-                    foregroundColor: AppColors.foreground,
-                  ),
+                  icon: const Icon(Icons.refresh_rounded, size: 21),
                 ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 4),
             ],
           ),
           body: activeEvent == null
@@ -296,7 +279,7 @@ class _EventImagesPageState extends State<EventImagesPage> {
                     return Column(
                       children: [
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
+                          padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
                           child: SingleChildScrollView(
                             scrollDirection: Axis.horizontal,
                             child: Row(
@@ -353,10 +336,15 @@ class _EventImagesPageState extends State<EventImagesPage> {
                                   ),
                                   itemCount: filteredImages.length,
                                   gridDelegate:
-                                      const SliverGridDelegateWithFixedCrossAxisCount(
-                                        crossAxisCount: 2,
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount:
+                                            MediaQuery.sizeOf(context).width <
+                                                520
+                                            ? 3
+                                            : 4,
                                         crossAxisSpacing: 5,
                                         mainAxisSpacing: 5,
+                                        childAspectRatio: 0.88,
                                       ),
                                   itemBuilder: (context, index) {
                                     final image = filteredImages[index];
@@ -471,6 +459,23 @@ class _EventImagesPageState extends State<EventImagesPage> {
                       ],
                     );
                   },
+                ),
+          bottomNavigationBar: activeEvent == null
+              ? null
+              : SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () =>
+                            context.router.root.push(const UploadRoute()),
+                        icon: const Icon(Icons.cloud_upload_outlined),
+                        label: const Text('Upload photos'),
+                      ),
+                    ),
+                  ),
                 ),
         );
       },

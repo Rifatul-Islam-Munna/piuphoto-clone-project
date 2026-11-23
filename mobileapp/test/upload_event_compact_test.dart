@@ -35,7 +35,9 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: UploadPage()));
       await tester.pumpAndSettle();
 
-      final name = find.text('Solo Workspace');
+      // The album name appears in the top bar and in the compact picker.
+      // Assert alignment against the picker itself, not both text instances.
+      final name = find.widgetWithText(OutlinedButton, 'Solo Workspace');
       final create = find.byTooltip('Create event & activate');
       final gallery = find.byTooltip('Gallery QR');
       final face = find.byTooltip('Face QR');

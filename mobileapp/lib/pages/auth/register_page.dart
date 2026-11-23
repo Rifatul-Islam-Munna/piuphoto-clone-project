@@ -68,7 +68,7 @@ class _RegisterPageState extends State<RegisterPage> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 440),
               child: Column(
@@ -95,10 +95,10 @@ class _RegisterPageState extends State<RegisterPage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 30),
+                  const SizedBox(height: 18),
                   Text(
                     'Build your workspace',
-                    style: theme.textTheme.displaySmall,
+                    style: theme.textTheme.headlineMedium,
                   ),
                   const SizedBox(height: 10),
                   Text(
@@ -107,7 +107,7 @@ class _RegisterPageState extends State<RegisterPage> {
                       color: AppColors.mutedForeground,
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 16),
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(5),
@@ -132,7 +132,7 @@ class _RegisterPageState extends State<RegisterPage> {
                       selected: {_role},
                       showSelectedIcon: false,
                       style: ButtonStyle(
-                        minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
+                        minimumSize: const WidgetStatePropertyAll(Size(0, 44)),
                         shape: WidgetStatePropertyAll(
                           RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(13),
@@ -187,9 +187,9 @@ class _RegisterPageState extends State<RegisterPage> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 22),
+                  const SizedBox(height: 16),
                   Container(
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: AppColors.card,
                       borderRadius: BorderRadius.circular(AppRadius.xl),

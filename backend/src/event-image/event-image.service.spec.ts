@@ -232,10 +232,10 @@ describe('EventImageService upload idempotency', () => {
 });
 
 describe('EventImageService camera upload confirmation', () => {
-  function makeService() {
+  function makeService(autoEnhanceImages = true) {
     const eventId = new Types.ObjectId();
     const userId = new Types.ObjectId();
-    const event = { _id: eventId, userId, autoEnhanceImages: true };
+    const event = { _id: eventId, userId, autoEnhanceImages };
     const original = { _id: new Types.ObjectId(), eventId, isPublished: true };
     const enhanced = { _id: new Types.ObjectId(), eventId, isPublished: true };
     const model = {
@@ -289,6 +289,17 @@ describe('EventImageService camera upload confirmation', () => {
     expect(fixture.publish).toHaveBeenCalledWith(
       fixture.dto.eventId, 'photo.ai', expect.objectContaining({ imageId: String(fixture.enhanced._id) }),
     );
+  });
+
+  it('keeps originals only when the event enhancement switch is off', async () => {
+    const fixture = makeService(false);
+    const result = await fixture.service.create(
+      { ...fixture.dto, isEnhanced: false },
+      String(fixture.userId),
+    );
+    expect(result).toMatchObject({ data: fixture.original });
+    expect(fixture.model.create).toHaveBeenCalledTimes(1);
+    expect(fixture.enhance).not.toHaveBeenCalled();
   });
 
   it('does not start another enhancement when confirmation is retried', async () => {

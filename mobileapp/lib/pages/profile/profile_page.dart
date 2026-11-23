@@ -169,22 +169,16 @@ class _ProfilePageState extends State<ProfilePage> {
     return user.isSubscriber == true ? 'Active plan' : 'Free plan';
   }
 
-  Widget _avatar(UserModel user, {double size = 92}) {
+  Widget _avatar(UserModel user, {double size = 62}) {
     final profileUrl = user.profileImage?['url']?.toString();
     return Container(
       width: size,
       height: size,
-      padding: const EdgeInsets.all(3),
+      padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.cream,
         shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.18),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        border: Border.all(color: AppColors.border),
       ),
       child: ClipOval(
         child: _selectedProfileImagePath != null
@@ -222,21 +216,9 @@ class _ProfilePageState extends State<ProfilePage> {
 
         return Scaffold(
           appBar: AppBar(
-            toolbarHeight: 82,
-            title: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Profile'),
-                SizedBox(height: 3),
-                Text(
-                  'Account, contact and workspace',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.mutedForeground,
-                  ),
-                ),
-              ],
+            title: const Text(
+              'Profile',
+              style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
             ),
             actions: [
               if (user != null)
@@ -264,7 +246,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   },
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
                     children: [
                       _ProfileHero(
                         user: user,
@@ -274,17 +256,17 @@ class _ProfilePageState extends State<ProfilePage> {
                         saving: _saving,
                         onPhotoTap: _pickProfileImage,
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 9),
                       if (_editing)
                         _buildEditor(user)
                       else ...[
                         _buildAccountSummary(user),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 9),
                         _buildContactCard(user),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 9),
                         _buildPlanCard(user),
                       ],
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 12),
                       if (!_editing)
                         OutlinedButton.icon(
                           onPressed: () => _toggleEditing(user),
@@ -312,7 +294,7 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _buildEditor(UserModel user) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -398,7 +380,7 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _buildAccountSummary(UserModel user) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
         child: Row(
           children: [
             Expanded(
@@ -513,124 +495,81 @@ class _ProfileHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      clipBehavior: Clip.antiAlias,
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        gradient: AppGradients.studio,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.12),
-            blurRadius: 28,
-            offset: const Offset(0, 14),
-          ),
-        ],
+        color: AppColors.card,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(12),
       ),
-      child: Stack(
+      child: Row(
         children: [
-          Positioned(
-            right: -34,
-            top: -50,
-            child: Container(
-              width: 150,
-              height: 150,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.08),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-          Positioned(
-            left: 70,
-            bottom: -66,
-            child: Container(
-              width: 132,
-              height: 132,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.07),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(22),
-            child: Row(
-              children: [
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    avatar,
-                    if (editing)
-                      Positioned(
-                        right: -2,
-                        bottom: -2,
-                        child: IconButton.filled(
-                          tooltip: 'Change profile photo',
-                          onPressed: saving ? null : onPhotoTap,
-                          style: IconButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: AppColors.primary,
-                            side: BorderSide(
-                              color: Colors.white.withValues(alpha: 0.9),
-                              width: 2,
-                            ),
-                          ),
-                          icon: const Icon(
-                            Icons.photo_camera_outlined,
-                            size: 19,
-                          ),
-                        ),
-                      ),
-                  ],
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              avatar,
+              if (editing)
+                Positioned(
+                  right: -8,
+                  bottom: -8,
+                  child: IconButton.filledTonal(
+                    tooltip: 'Change profile photo',
+                    onPressed: saving ? null : onPhotoTap,
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppColors.cream,
+                      foregroundColor: AppColors.primary,
+                      padding: const EdgeInsets.all(5),
+                      minimumSize: const Size(32, 32),
+                    ),
+                    icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                  ),
                 ),
-                const SizedBox(width: 18),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        user.displayLabel,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 23,
-                          height: 1.1,
-                          fontWeight: FontWeight.w800,
-                        ),
+            ],
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  user.displayLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.foreground,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  user.email ?? '',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    color: AppColors.mutedForeground,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.accentSoft,
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                    child: Text(
+                      roleLabel,
+                      style: const TextStyle(
+                        color: AppColors.primary,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
                       ),
-                      const SizedBox(height: 7),
-                      Text(
-                        user.email ?? '',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.82),
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 11,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.17),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.28),
-                          ),
-                        ),
-                        child: Text(
-                          roleLabel,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ],
@@ -657,14 +596,14 @@ class _SectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 15, 16, 8),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
         child: Column(
           children: [
             Row(
               children: [
                 Container(
-                  width: 36,
-                  height: 36,
+                  width: 32,
+                  height: 32,
                   decoration: BoxDecoration(
                     color: AppColors.cream,
                     borderRadius: BorderRadius.circular(10),
@@ -703,7 +642,7 @@ class _InfoRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 11),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
           Icon(icon, size: 20, color: AppColors.mutedForeground),
@@ -746,7 +685,7 @@ class _SummaryItem extends StatelessWidget {
     return Column(
       children: [
         Icon(icon, color: AppColors.primary, size: 21),
-        const SizedBox(height: 7),
+        const SizedBox(height: 4),
         Text(
           value,
           maxLines: 1,
