@@ -11,6 +11,8 @@ import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/pages/event_gallery/album_library_page.dart';
+import 'package:mobileapp/pages/event_gallery/album_management_page.dart';
+import 'package:mobileapp/pages/event_gallery/album_media_tile.dart';
 import 'package:mobileapp/pages/event_gallery/album_settings_page.dart';
 import 'package:mobileapp/pages/events/events_page.dart';
 import 'package:mobileapp/pages/upload/upload_page.dart';
@@ -41,6 +43,114 @@ void main() {
     UserStorage.currentUser.value = null;
     DioHelper.dio.close(force: true);
     await getIt.reset();
+  });
+
+  testWidgets('Album photo names are clean and both viewer gestures work', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.binding.setSurfaceSize(null);
+    });
+
+    backend.images = [
+      {
+        '_id': 'image-1',
+        'imageUrl': 'https://storage.example.test/c8b0-a3ff-97bd-3982.jpg',
+        'mediaType': 'photo',
+        'isPublished': true,
+        'createdAt': '2026-11-22T10:00:00Z',
+      },
+      {
+        '_id': 'image-2',
+        'imageUrl': 'https://storage.example.test/92ca-1282-8fed-0192.jpg',
+        'mediaType': 'photo',
+        'isPublished': false,
+        'createdAt': '2026-11-21T10:00:00Z',
+      },
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        scaffoldMessengerKey: AppToast.messengerKey,
+        home: const AlbumManagementPage(
+          eventId: '507f1f77bcf86cd799439011',
+          eventTitle: 'Wedding shoot',
+          albumTitle: 'Wedding shoot',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull, reason: 'Initial album layout');
+
+    expect(find.text('Photo 1'), findsOneWidget);
+    expect(find.text('Photo 2'), findsOneWidget);
+    expect(find.textContaining('c8b0-a3ff'), findsNothing);
+    expect(find.byTooltip('View full screen'), findsNWidgets(2));
+
+    // The visible expand button opens full-screen without selecting the photo.
+    await tester.tap(find.byKey(const ValueKey('view-photo-image-1')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull, reason: 'Full-screen photo view');
+    expect(find.byType(AlbumPhotoViewerPage), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(AlbumPhotoViewerPage),
+        matching: find.text('Photo 1'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byType(InteractiveViewer), findsOneWidget);
+    await tester.tap(find.byTooltip('Close photo'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull, reason: 'After close photo view');
+    expect(find.textContaining('Photo Selected'), findsNothing);
+
+    // Regular taps retain the existing photo selection and bottom toolbar.
+    await tester.tap(find.byKey(const ValueKey('album-media-image-1')));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'After first single selection',
+    );
+    expect(find.text('1 Photo Selected'), findsOneWidget);
+
+    // Double tapping another thumbnail views it without adding to selection.
+    final tile = find.byKey(const ValueKey('album-media-image-2'));
+    await tester.tap(tile);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tap(tile);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'After double-tap second photo',
+    );
+    expect(find.byType(AlbumPhotoViewerPage), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(AlbumPhotoViewerPage),
+        matching: find.text('Photo 2'),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byTooltip('Close photo'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('1 Photo Selected'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // Verify the selection footer stays usable on smaller phones too.
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull, reason: '320px phone layout');
   });
 
   testWidgets('existing events appear as albums without Album documents', (
@@ -319,6 +429,7 @@ class _AlbumLibraryAdapter implements HttpClientAdapter {
   String? lastEnhancementEventId;
   Map<String, dynamic> savedStoreSettings = {};
   final eventImageQueries = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> images = [];
 
   @override
   Future<ResponseBody> fetch(
@@ -408,7 +519,7 @@ class _AlbumLibraryAdapter implements HttpClientAdapter {
 
     if (path == '/eventImage/get-all' && options.method == 'GET') {
       eventImageQueries.add(Map<String, dynamic>.from(options.queryParameters));
-      return _json({'data': [], 'totalPages': 0});
+      return _json({'data': images, 'totalPages': 1});
     }
 
     if (path == '/album/get-all' && options.method == 'GET') {

@@ -12,6 +12,7 @@ import 'package:mobileapp/models/album_model.dart';
 import 'package:mobileapp/models/event_image_model.dart';
 import 'package:mobileapp/models/event_invitation_model.dart';
 import 'package:mobileapp/pages/event_gallery/album_analytics_page.dart';
+import 'package:mobileapp/pages/event_gallery/album_media_tile.dart';
 import 'package:mobileapp/pages/event_gallery/album_settings_page.dart';
 import 'package:mobileapp/pages/event_gallery/workflow_management_page.dart';
 import 'package:mobileapp/pages/upload/event_live_preview_page.dart';
@@ -248,6 +249,16 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
         : '';
     if (name.contains('.')) return name;
     return 'event-image-${image.id}.jpg';
+  }
+
+  void _openPhotoViewer(EventImageModel image, String label) {
+    if (image.mediaType.toLowerCase() == 'video') return;
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) =>
+            AlbumPhotoViewerPage(imageUrl: image.imageUrl, label: label),
+      ),
+    );
   }
 
   void _toggleSelection(EventImageModel image) {
@@ -1247,32 +1258,47 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
 
   Widget _buildMediaTabs() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
         children: [
-          _mediaTabButton(
-            label: 'Photos',
-            count: _photoCount,
-            selected: _mediaTab == _AlbumMediaTab.photos,
-            onTap: () => setState(() => _mediaTab = _AlbumMediaTab.photos),
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: _mediaTabButton(
+                    label: 'Photos',
+                    count: _photoCount,
+                    selected: _mediaTab == _AlbumMediaTab.photos,
+                    onTap: () =>
+                        setState(() => _mediaTab = _AlbumMediaTab.photos),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: _mediaTabButton(
+                    label: 'Videos',
+                    count: _videoCount,
+                    selected: _mediaTab == _AlbumMediaTab.videos,
+                    onTap: () =>
+                        setState(() => _mediaTab = _AlbumMediaTab.videos),
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(width: 18),
-          _mediaTabButton(
-            label: 'Videos',
-            count: _videoCount,
-            selected: _mediaTab == _AlbumMediaTab.videos,
-            onTap: () => setState(() => _mediaTab = _AlbumMediaTab.videos),
-          ),
-          const Spacer(),
           IconButton(
             tooltip: 'Sort',
             visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            padding: EdgeInsets.zero,
             onPressed: _showSortOptions,
             icon: const Icon(Icons.sort_rounded, size: 21),
           ),
           IconButton(
             tooltip: 'Filter',
             visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            padding: EdgeInsets.zero,
             onPressed: _showFilterOptions,
             icon: const Icon(Icons.filter_alt_outlined, size: 20),
           ),
@@ -1296,6 +1322,8 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
           children: [
             Text(
               '$label($count)',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: selected ? AppColors.primary : AppColors.foreground,
                 fontSize: 14,
@@ -1393,103 +1421,14 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
               );
             }
             final image = images[index];
-            final selected = _selectedIds.contains(image.id);
             final isVideo = image.mediaType.toLowerCase() == 'video';
-            return InkWell(
-              onTap: () => _toggleSelection(image),
-              onLongPress: () => _toggleSelection(image),
-              borderRadius: BorderRadius.circular(8),
-              child: Column(
-                children: [
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          if (isVideo)
-                            const ColoredBox(
-                              color: Color(0xFF202124),
-                              child: Center(
-                                child: Icon(
-                                  Icons.play_circle_outline_rounded,
-                                  color: Colors.white,
-                                  size: 38,
-                                ),
-                              ),
-                            )
-                          else
-                            ImageLoader.loadImage(image.imageUrl),
-                          if (selected)
-                            DecoratedBox(
-                              decoration: BoxDecoration(
-                                color: AppColors.primary.withValues(alpha: .18),
-                                border: Border.all(
-                                  color: AppColors.primary,
-                                  width: 2,
-                                ),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                          Positioned(
-                            top: 7,
-                            right: 7,
-                            child: Container(
-                              width: 24,
-                              height: 24,
-                              decoration: BoxDecoration(
-                                color: selected
-                                    ? AppColors.primary
-                                    : Colors.black.withValues(alpha: .28),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 1.4,
-                                ),
-                              ),
-                              child: Icon(
-                                selected ? Icons.check : Icons.circle_outlined,
-                                color: Colors.white,
-                                size: 15,
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            left: 7,
-                            bottom: 7,
-                            child: Icon(
-                              image.isPublished
-                                  ? Icons.check_circle
-                                  : Icons.lock,
-                              color: image.isPublished
-                                  ? const Color(0xFF34C759)
-                                  : Colors.white,
-                              size: 18,
-                              shadows: const [
-                                Shadow(color: Colors.black54, blurRadius: 5),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  Container(
-                    height: 25,
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Text(
-                      _filenameFor(image),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: AppColors.mutedForeground,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+            final label = '${isVideo ? 'Video' : 'Photo'} ${index + 1}';
+            return AlbumMediaTile(
+              image: image,
+              label: label,
+              selected: _selectedIds.contains(image.id),
+              onSelect: () => _toggleSelection(image),
+              onOpen: () => _openPhotoViewer(image, label),
             );
           },
         );
@@ -1526,14 +1465,18 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
                     }),
                     icon: const Icon(Icons.close_rounded),
                   ),
-                  Text(
-                    '${_selectedIds.length} Photo Selected',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      '${_selectedIds.length} Photo Selected',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
-                  const Spacer(),
                   TextButton(
                     onPressed: _selectAllVisible,
                     child: Text(
