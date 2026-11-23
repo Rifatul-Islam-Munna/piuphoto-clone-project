@@ -99,6 +99,35 @@ describe('R2 image storage', () => {
     expect(send.mock.calls[0][0].input.Bucket).toBe('photos');
   });
 
+  it('prefers BUCKET over a stale bucket suffix and uses the direct public URL', async () => {
+    await initialize({
+      BUCKET: ' airpix ',
+      STORAGE_BUCKET_NAME: 'gallarista',
+      STORAGE_PUBLIC_URL: 'https://pub-455fef85d2d74e608a2dbc4c2e2a5fbe.r2.dev/',
+    });
+    expect(send.mock.calls[0][0].input.Bucket).toBe('airpix');
+    const publicUrl = await upload();
+    expect(publicUrl).toBe('https://pub-455fef85d2d74e608a2dbc4c2e2a5fbe.r2.dev/photo%20with%20spaces.jpg');
+    const put = send.mock.calls.find(([command]) => command instanceof PutObjectCommand)[0];
+    expect(put.input).toMatchObject({ Bucket: 'airpix', Key: 'photo with spaces.jpg', ContentType: 'image/jpeg' });
+    send.mockResolvedValueOnce({ Body: Readable.from(bytes) });
+    const stream = await service.openStoredUrl(publicUrl);
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    expect(Buffer.concat(chunks)).toEqual(bytes);
+    expect(send.mock.calls.at(-1)[0].input).toEqual({ Bucket: 'airpix', Key: 'photo with spaces.jpg' });
+    await service.deleteService('photo with spaces.jpg');
+    expect(send.mock.calls.at(-1)[0].input).toEqual({ Bucket: 'airpix', Key: 'photo with spaces.jpg' });
+  });
+
+  it('presigns to airpix and publishes the object at the public bucket URL', async () => {
+    await initialize({ BUCKET: 'airpix', STORAGE_PUBLIC_URL: 'https://pub-455fef85d2d74e608a2dbc4c2e2a5fbe.r2.dev' });
+    const ticket = await service.presignUpload({ fileName: 'camera.jpg', size: 1234 }, 'https://api.example.test');
+    expect(new URL(ticket.uploadUrl).pathname).toBe('/airpix/' + ticket.key);
+    expect(ticket.url).toBe('https://pub-455fef85d2d74e608a2dbc4c2e2a5fbe.r2.dev/' + ticket.key);
+    expect(ticket.url).not.toContain('/airpix/');
+  });
+
   it('uploads the full stream with its size/type and returns a stable, signed image URL', async () => {
     await initialize();
     send.mockImplementation(async (command) => {

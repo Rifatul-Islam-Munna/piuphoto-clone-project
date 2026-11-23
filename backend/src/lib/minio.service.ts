@@ -43,11 +43,14 @@ export class MinioService implements OnModuleInit, OnModuleDestroy {
       storageUrl || this.configService.getOrThrow<string>('MINIO_URL'),
     );
     const bucketInUrl = decodeURIComponent(endpoint.pathname.replace(/^\/+|\/+$/g, ''));
+    // Explicit BUCKET overrides an outdated bucket suffix in STORAGE_S3_URL.
     this.bucketName = isR2
-      ? this.configService.get<string>('STORAGE_BUCKET_NAME')?.trim() || bucketInUrl
+      ? this.configService.get<string>('BUCKET')?.trim()
+        || this.configService.get<string>('STORAGE_BUCKET_NAME')?.trim()
+        || bucketInUrl
       : this.configService.get<string>('MINIO_BUCKET_NAME') || 'piuphoto-public-bucket';
     if (!this.bucketName || this.bucketName.includes('/')) {
-      throw new Error('Set STORAGE_BUCKET_NAME or include one bucket in STORAGE_S3_URL.');
+      throw new Error('Set BUCKET, STORAGE_BUCKET_NAME or include one bucket in STORAGE_S3_URL.');
     }
     if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
       throw new Error('Storage endpoint must be an HTTP(S) URL without credentials, query, or fragment.');

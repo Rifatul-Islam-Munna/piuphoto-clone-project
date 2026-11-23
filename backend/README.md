@@ -29,11 +29,20 @@
 
 ### Cloudflare R2 image storage
 
-Set `STORAGE_S3_URL`, `STORAGE_ACCESS_KEY`, and `STORAGE_SECRET_KEY` in `.env`.
-The URL may include the bucket, for example
-`https://<account-id>.eu.r2.cloudflarestorage.com/gallarista`, or use
-`STORAGE_BUCKET_NAME` with an account-level endpoint. Keep the jurisdiction
-hostname shown in Cloudflare for your bucket. R2 takes priority over `MINIO_*`.
+Set `STORAGE_S3_URL` (your Cloudflare R2 S3 endpoint), `STORAGE_ACCESS_KEY`,
+and `STORAGE_SECRET_KEY` in `.env`. For this deployment, set:
+
+```env
+BUCKET=airpix
+STORAGE_PUBLIC_URL=https://pub-455fef85d2d74e608a2dbc4c2e2a5fbe.r2.dev
+```
+
+`BUCKET` is the preferred explicit R2 bucket name; `STORAGE_BUCKET_NAME`
+remains a supported fallback. The bucket suffix in `STORAGE_S3_URL` is
+used only if neither variable is configured. Prefer the account/region
+S3 endpoint without a bucket suffix, and never append `/airpix` to
+`STORAGE_PUBLIC_URL`. The public domain must be enabled for the `airpix`
+bucket in the Cloudflare R2 dashboard. R2 takes priority over `MINIO_*`.
 Startup checks the bucket and creates it if missing; creation requires bucket
 admin permission. Existing buckets only need object read/write access.
 
@@ -75,8 +84,8 @@ External API clients can request `POST /v1/upload/presign` using `x-api-key`,
 including `eventId` and `idempotencyKey` alongside the file metadata, upload to
 R2, then register the permanent URL through `POST /v1/upload`.
 
-The R2 bucket must allow browser CORS for your frontend origin, method `PUT`,
-and header `Content-Type`. The current `gallarista` bucket already allows these.
+The `airpix` bucket must allow browser CORS for your frontend origin, method `PUT`,
+and header `Content-Type`. Configure its own CORS rules in Cloudflare as needed.
 See [Cloudflare presigned URL docs](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
 and [R2 CORS docs](https://developers.cloudflare.com/r2/buckets/cors/).
 
