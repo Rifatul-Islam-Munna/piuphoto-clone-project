@@ -11,6 +11,7 @@ import 'package:mobileapp/core/storage/user_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/models/user_model.dart';
 import 'package:mobileapp/pages/event_gallery/album_library_page.dart';
+import 'package:mobileapp/pages/event_gallery/album_ai_settings_page.dart';
 import 'package:mobileapp/pages/event_gallery/album_management_page.dart';
 import 'package:mobileapp/pages/event_gallery/album_media_tile.dart';
 import 'package:mobileapp/pages/event_gallery/album_settings_page.dart';
@@ -393,6 +394,131 @@ void main() {
     },
   );
 
+  testWidgets(
+    'Album AI settings save and reload without changing event defaults',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.binding.setSurfaceSize(null);
+      });
+      const eventId = '507f1f77bcf86cd799439011';
+      const albumId = '507f1f77bcf86cd799439012';
+      backend.autoEnhanceImages = true;
+      backend.albums = [
+        {'_id': albumId, 'title': 'Indoor session'},
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          scaffoldMessengerKey: AppToast.messengerKey,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).push<bool>(
+                    MaterialPageRoute(
+                      builder: (_) => const AlbumAiSettingsPage(
+                        eventId: eventId,
+                        albumId: albumId,
+                        albumTitle: 'Indoor session',
+                      ),
+                    ),
+                  ),
+                  child: const Text('Open retouch'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open retouch'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.widgetWithText(SwitchListTile, 'Use event defaults'),
+      );
+      await tester.pumpAndSettle();
+      Future<void> reveal(Finder target) async {
+        if (target.evaluate().isEmpty) {
+          await tester.scrollUntilVisible(
+            target,
+            240,
+            scrollable: find.byType(Scrollable).first,
+          );
+        }
+        await tester.ensureVisible(target);
+        await tester.pumpAndSettle();
+      }
+
+      final preset = find.byKey(const ValueKey('ai-preset-low_light'));
+      await reveal(preset);
+      await tester.tap(preset);
+      await tester.pumpAndSettle();
+      final details = find.byKey(const Key('retouch-preset-details'));
+      await reveal(details);
+      await tester.tap(details);
+      await tester.pumpAndSettle();
+      final blemish = find.byKey(const ValueKey('retouch-female-blemish'));
+      await reveal(blemish);
+      tester.widget<Slider>(blemish).onChanged!(31);
+      await tester.pumpAndSettle();
+      await reveal(details);
+      await tester.tap(details);
+      await tester.pumpAndSettle();
+      final prompt = find.byKey(const Key('album-ai-prompt'));
+      await reveal(prompt);
+      await tester.enterText(
+        prompt,
+        'Recover highlights and keep faces natural',
+      );
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
+      final display = find.byKey(const ValueKey('ai-gallery-enhanced_only'));
+      await reveal(display);
+      await tester.tap(display);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('save-album-ai-settings')));
+      await tester.pumpAndSettle();
+      expect(backend.albumAiUpdates, 1);
+      expect(backend.eventUpdateRequests, 0);
+      expect(backend.albums.single['aiPreset'], 'low_light');
+      expect(backend.albums.single['aiAdjustments']['female']['blemish'], 31);
+      expect(backend.albums.single['aiAdjustments']['photo']['noise'], 95);
+      expect(backend.albums.single['aiGalleryMode'], 'enhanced_only');
+      expect(
+        backend.albums.single['aiPrompt'],
+        'Recover highlights and keep faces natural',
+      );
+      expect(backend.autoEnhanceImages, isTrue);
+      await tester.tap(find.text('Open retouch'));
+      await tester.pumpAndSettle();
+      await reveal(preset);
+      expect(tester.widget<ChoiceChip>(preset).selected, isTrue);
+      await reveal(details);
+      await tester.tap(details);
+      await tester.pumpAndSettle();
+      await reveal(blemish);
+      expect(tester.widget<Slider>(blemish).value, 31);
+      await reveal(details);
+      await tester.tap(details);
+      await tester.pumpAndSettle();
+      await reveal(prompt);
+      expect(
+        tester.widget<TextField>(prompt).controller?.text,
+        'Recover highlights and keep faces natural',
+      );
+      await reveal(display);
+      expect(
+        find.descendant(
+          of: display,
+          matching: find.byIcon(Icons.radio_button_checked),
+        ),
+        findsOneWidget,
+      );
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+    },
+  );
+
   testWidgets('Privacy screen no longer duplicates the store form', (
     tester,
   ) async {
@@ -425,6 +551,8 @@ class _AlbumLibraryAdapter implements HttpClientAdapter {
   int storeSettingsReads = 0;
   int storeSettingsWrites = 0;
   int enhancementUpdates = 0;
+  int albumAiUpdates = 0;
+  List<Map<String, dynamic>> albums = [];
   bool autoEnhanceImages = false;
   String? lastEnhancementEventId;
   Map<String, dynamic> savedStoreSettings = {};
@@ -524,7 +652,15 @@ class _AlbumLibraryAdapter implements HttpClientAdapter {
 
     if (path == '/album/get-all' && options.method == 'GET') {
       albumListRequests++;
-      return _json({'data': []});
+      return _json({'data': albums});
+    }
+
+    if (path == '/album/update' && options.method == 'PATCH') {
+      final id = options.queryParameters['id'];
+      final album = albums.firstWhere((row) => row['_id'] == id);
+      album.addAll(Map<String, dynamic>.from(options.data as Map));
+      albumAiUpdates++;
+      return _json({'data': album});
     }
 
     return _json({'message': 'Not found'}, 404);

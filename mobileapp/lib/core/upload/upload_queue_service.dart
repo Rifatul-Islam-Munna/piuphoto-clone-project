@@ -312,6 +312,8 @@ class UploadQueueService {
     String? previewUrl,
     String? localPath,
     String? eventImageId,
+    String? enhancementStatus,
+    bool? isEnhanced,
   }) async {
     if (_isCancelled(transferId) && status != TransferLedgerStatus.cancelled) {
       return;
@@ -328,6 +330,9 @@ class UploadQueueService {
       error: error,
       imageUrl: imageUrl,
       previewUrl: previewUrl,
+      eventImageId: eventImageId,
+      enhancementStatus: enhancementStatus,
+      isEnhanced: isEnhanced,
       localPath: localPath,
     );
     final item = TransferLedgerStorage.find(transferId);
@@ -985,6 +990,8 @@ class UploadQueueService {
         imageUrl: imageUrl,
         previewUrl: createdData['previewUrl']?.toString(),
         eventImageId: eventImageId,
+        enhancementStatus: createdData['enhancementStatus']?.toString(),
+        isEnhanced: createdData['isEnhanced'] == true,
       );
     } finally {
       if (identical(_activeUploads[transferId], active)) {

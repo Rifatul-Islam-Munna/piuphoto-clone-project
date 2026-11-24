@@ -1,7 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsMongoId, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
-export class CreateAlbumDto {
+import { AiSettingsDto } from '../ai-settings.dto';
+
+export class CreateAlbumDto extends AiSettingsDto {
   @ApiProperty({ example: 'Wedding Highlights' })
   @IsString()
   @IsNotEmpty()
@@ -18,7 +20,7 @@ export class CreateAlbumDto {
   eventId: string;
 }
 
-export class UpdateAlbumDto {
+export class UpdateAlbumDto extends AiSettingsDto {
   @ApiPropertyOptional({ example: 'Wedding Highlights' })
   @IsString()
   @IsOptional()

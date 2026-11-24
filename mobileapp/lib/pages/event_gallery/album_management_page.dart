@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -27,7 +29,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 enum _AlbumMediaTab { photos, videos }
 
-enum _AlbumVisibilityFilter { all, live, hidden }
+enum _AlbumVisibilityFilter { all, enhanced, live, hidden }
 
 enum _AlbumSortOrder { newest, oldest }
 
@@ -59,6 +61,8 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
   int _page = 1;
   bool _hasMore = false;
   bool _loadingMore = false;
+  bool _refreshingEnhancement = false;
+  Timer? _enhancementRefresh;
   late String _albumTitle = widget.albumTitle;
   String _albumDescription = '';
   bool _loading = true;
@@ -67,6 +71,7 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
   String? _error;
   _AlbumMediaTab _mediaTab = _AlbumMediaTab.photos;
   _AlbumVisibilityFilter _visibilityFilter = _AlbumVisibilityFilter.all;
+  String? _configuredGalleryMode;
   _AlbumSortOrder _sortOrder = _AlbumSortOrder.newest;
 
   @override
@@ -79,6 +84,7 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
 
   @override
   void dispose() {
+    _enhancementRefresh?.cancel();
     _gridController.removeListener(_handleGridScroll);
     _gridController.dispose();
     super.dispose();
@@ -94,8 +100,33 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
     }
   }
 
-  Future<void> _load() async {
-    if (mounted) {
+  // Refresh only while the current first page contains in-flight AI work.
+  // No permanent polling, loading overlay, selection loss, or extra requests
+  // while the user is scrolling through a paginated album.
+  void _scheduleEnhancementRefresh() {
+    _enhancementRefresh?.cancel();
+    if (!mounted || !_images.any((image) => image.enhancementInProgress))
+      return;
+    _enhancementRefresh = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      if (_loading ||
+          _loadingMore ||
+          _refreshingEnhancement ||
+          _selectionMode ||
+          _page != 1 ||
+          _busy ||
+          ModalRoute.of(context)?.isCurrent != true) {
+        _scheduleEnhancementRefresh();
+        return;
+      }
+      unawaited(_load(silent: true));
+    });
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (_refreshingEnhancement) return;
+    if (silent) _refreshingEnhancement = true;
+    if (mounted && !silent) {
       setState(() {
         _loading = true;
         _error = null;
@@ -129,18 +160,25 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
         _page = 1;
         _hasMore = totalPages > 1;
         _loadingMore = false;
-        _selectedIds.clear();
-        _selectionMode = false;
+        if (!silent) {
+          _selectedIds.clear();
+          _selectionMode = false;
+        }
       });
     } catch (_) {
-      if (mounted) setState(() => _error = 'Could not load this event.');
+      if (mounted && !silent)
+        setState(() => _error = 'Could not load this event.');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      _refreshingEnhancement = false;
+      if (mounted) {
+        if (!silent) setState(() => _loading = false);
+        _scheduleEnhancementRefresh();
+      }
     }
   }
 
   Future<void> _loadMore() async {
-    if (_loading || _loadingMore || !_hasMore) return;
+    if (_loading || _loadingMore || _refreshingEnhancement || !_hasMore) return;
     final nextPage = _page + 1;
     setState(() => _loadingMore = true);
     try {
@@ -195,8 +233,28 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
       final albums = data
           .map((item) => AlbumModel.fromJson(Map<String, dynamic>.from(item)))
           .toList();
+      final currentAlbum = albums
+          .where((album) => album.id == widget.albumId)
+          .firstOrNull;
+      String? mode = currentAlbum?.aiGalleryMode;
+      if (mode == null) {
+        final eventResponse = await DioHelper.get(
+          '/event/get-one',
+          queryParameters: {'id': widget.eventId},
+        );
+        final event = eventResponse.data['data'];
+        if (event is Map) mode = event['aiGalleryMode']?.toString();
+      }
       if (!mounted) return;
       setState(() {
+        if (mode != _configuredGalleryMode) {
+          _configuredGalleryMode = mode;
+          _visibilityFilter = mode == 'enhanced_only'
+              ? _AlbumVisibilityFilter.enhanced
+              : _AlbumVisibilityFilter.all;
+          _selectedIds.clear();
+          _selectionMode = false;
+        }
         _albums
           ..clear()
           ..addAll(albums);
@@ -217,6 +275,7 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
       if (_mediaTab == _AlbumMediaTab.photos && isVideo) return false;
       return switch (_visibilityFilter) {
         _AlbumVisibilityFilter.all => true,
+        _AlbumVisibilityFilter.enhanced => isVideo || image.isEnhanced,
         _AlbumVisibilityFilter.live => image.isPublished,
         _AlbumVisibilityFilter.hidden => !image.isPublished,
       };
@@ -341,11 +400,12 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
         ),
       ),
     );
-    if (updated == null || !mounted) return;
-    setState(() {
-      _albumTitle = updated['title'] ?? _albumTitle;
-      _albumDescription = updated['description'] ?? _albumDescription;
-    });
+    if (!mounted) return;
+    if (updated != null)
+      setState(() {
+        _albumTitle = updated['title'] ?? _albumTitle;
+        _albumDescription = updated['description'] ?? _albumDescription;
+      });
     await _loadAlbums();
   }
 
@@ -354,6 +414,7 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
       MaterialPageRoute(
         builder: (_) => WorkflowManagementPage(
           eventId: widget.eventId,
+          albumId: widget.albumId,
           eventTitle: widget.eventTitle,
           albumTitle: _albumTitle,
           onOpenPhotoManagement: () {
@@ -423,6 +484,7 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
               ListTile(
                 title: Text(switch (filter) {
                   _AlbumVisibilityFilter.all => 'All photos',
+                  _AlbumVisibilityFilter.enhanced => 'AI enhanced only',
                   _AlbumVisibilityFilter.live => 'Published photos',
                   _AlbumVisibilityFilter.hidden => 'Hidden photos',
                 }),
@@ -1387,6 +1449,18 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
+              if (_hasMore)
+                TextButton(
+                  onPressed: _loadingMore ? null : _loadMore,
+                  child: Text(_loadingMore ? 'Loading...' : 'Load more photos'),
+                ),
+              if (_visibilityFilter == _AlbumVisibilityFilter.enhanced)
+                TextButton(
+                  onPressed: () => setState(
+                    () => _visibilityFilter = _AlbumVisibilityFilter.all,
+                  ),
+                  child: const Text('View all originals'),
+                ),
               FilledButton.icon(
                 onPressed: _showAlbumUploadMethodSheet,
                 icon: const Icon(Icons.cloud_upload_outlined),
@@ -1703,11 +1777,12 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
               children: [
                 Expanded(
                   child: Text(
-                    _visibilityFilter == _AlbumVisibilityFilter.all
-                        ? 'All photos'
-                        : _visibilityFilter == _AlbumVisibilityFilter.live
-                        ? 'Published photos'
-                        : 'Hidden photos',
+                    switch (_visibilityFilter) {
+                      _AlbumVisibilityFilter.all => 'All photos',
+                      _AlbumVisibilityFilter.enhanced => 'AI enhanced only',
+                      _AlbumVisibilityFilter.live => 'Published photos',
+                      _AlbumVisibilityFilter.hidden => 'Hidden photos',
+                    },
                     style: const TextStyle(
                       color: AppColors.primary,
                       fontSize: 13,

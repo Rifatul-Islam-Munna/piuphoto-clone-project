@@ -13,6 +13,7 @@ void main() {
     WidgetTester tester, {
     required VoidCallback onSelect,
     required VoidCallback onView,
+    EventImageModel image = photo,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -22,7 +23,7 @@ void main() {
               width: 120,
               height: 150,
               child: AlbumMediaTile(
-                image: photo,
+                image: image,
                 label: 'Photo 1',
                 selected: false,
                 onSelect: onSelect,
@@ -46,6 +47,29 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(viewed, 1);
     expect(selected, 0);
+  });
+
+  testWidgets('AI state is distinct from publication state', (tester) async {
+    const enhanced = EventImageModel(
+      id: 'enhanced-1',
+      imageUrl: 'https://example.test/a.png',
+      isEnhanced: true,
+      isPublished: false,
+    );
+    await mountTile(tester, image: enhanced, onSelect: () {}, onView: () {});
+    expect(find.text('AI enhanced'), findsOneWidget);
+    expect(find.byIcon(Icons.auto_awesome_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.lock), findsOneWidget);
+
+    const failed = EventImageModel(
+      id: 'original-1',
+      imageUrl: 'https://example.test/a.jpg',
+      enhancementStatus: 'failed',
+      isPublished: true,
+    );
+    await mountTile(tester, image: failed, onSelect: () {}, onView: () {});
+    expect(find.text('AI failed'), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle), findsOneWidget);
   });
 
   testWidgets('double tapping opens viewer while single tapping selects', (

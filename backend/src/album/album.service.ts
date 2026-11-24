@@ -40,6 +40,11 @@ export class AlbumService {
     const album = await this.albumModel.create({
       title: dto.title,
       description: dto.description,
+      autoEnhanceImages: dto.autoEnhanceImages,
+      aiPreset: dto.aiPreset,
+      aiPrompt: dto.aiPrompt,
+      aiAdjustments: dto.aiAdjustments,
+      aiGalleryMode: dto.aiGalleryMode,
       eventId: this.toObjectId(dto.eventId),
       userId: this.toObjectId(String(event.userId)),
     });
@@ -98,7 +103,7 @@ export class AlbumService {
       .sort({ createdAt: -1 })
       .lean();
 
-    return { data: await this.withImageCounts(data), totalItems: data.length };
+    return { data: await this.withImageCounts(data.map(({ aiPrompt, aiAdjustments, ...album }) => album)), totalItems: data.length };
   }
 
   private async withImageCounts<T extends { _id: unknown }>(albums: T[]) {
@@ -143,7 +148,7 @@ export class AlbumService {
 
     await this.getOwnedEvent(String(album.eventId), userId, role);
     const updated = await this.albumModel
-      .findByIdAndUpdate(id, { $set: dto }, { new: true })
+      .findByIdAndUpdate(id, { $set: dto }, { new: true, runValidators: true })
       .lean();
 
     return { message: 'Album updated successfully', data: updated };

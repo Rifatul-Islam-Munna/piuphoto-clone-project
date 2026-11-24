@@ -1,6 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
+import { AI_PRESETS, AI_GALLERY_MODES } from '../../album/ai-settings';
+import type { AiPreset, AiGalleryMode } from '../../album/ai-settings';
+
 export type EventDocument = HydratedDocument<Event>;
 
 @Schema({ timestamps: true, autoIndex: true, virtuals: true })
@@ -28,6 +31,19 @@ export class Event {
 
   @Prop({ default: false })
   autoEnhanceImages: boolean;
+
+  @Prop({ type: String, enum: AI_PRESETS })
+  aiPreset?: AiPreset;
+
+  @Prop({ type: String, trim: true, maxlength: 1000 })
+  aiPrompt?: string;
+
+  @Prop({ type: Object })
+  aiAdjustments?: import('../../album/retouch-adjustments').RetouchAdjustments;
+
+  @Prop({ type: String, enum: AI_GALLERY_MODES })
+  aiGalleryMode?: AiGalleryMode;
+
 
   @Prop({ default: true })
   autoPublishImages: boolean;

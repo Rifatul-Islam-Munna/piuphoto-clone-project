@@ -377,6 +377,7 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
             eventId: this.objectId(query.eventId),
             isPublished: { $ne: false },
             ...(albumId ? { albumId: this.objectId(albumId) } : {}),
+            ...await this.galleryAccess.publishedVersionFilter(query.eventId, albumId),
           })
           .populate('albumId', 'title description')
           .populate('userTakenBy', 'name')

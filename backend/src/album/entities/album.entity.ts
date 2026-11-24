@@ -1,6 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
+import { AI_PRESETS, AI_GALLERY_MODES } from '../ai-settings';
+import type { AiPreset, AiGalleryMode } from '../ai-settings';
+
 export type AlbumDocument = HydratedDocument<Album>;
 
 @Schema({ timestamps: true, autoIndex: true })
@@ -32,6 +35,21 @@ export class Album {
     index: true,
   })
   galleryVisibility: 'inherit' | 'public' | 'private' | 'password' | 'facial';
+
+  @Prop({ type: Boolean })
+  autoEnhanceImages?: boolean;
+
+  @Prop({ type: String, enum: AI_PRESETS })
+  aiPreset?: AiPreset;
+
+  @Prop({ type: String, trim: true, maxlength: 1000 })
+  aiPrompt?: string;
+
+  @Prop({ type: Object })
+  aiAdjustments?: import('../retouch-adjustments').RetouchAdjustments;
+
+  @Prop({ type: String, enum: AI_GALLERY_MODES })
+  aiGalleryMode?: AiGalleryMode;
 
   @Prop({ select: false, trim: true })
   galleryPasswordHash?: string;

@@ -8,6 +8,8 @@ import {
   IsIn,
 } from 'class-validator';
 
+import { AiSettingsDto } from '../../album/ai-settings.dto';
+
 class ImageDto {
   @ApiPropertyOptional({
     example: 'https://minio.example.com/bucket/image.jpg',
@@ -22,7 +24,7 @@ class ImageDto {
   publicId?: string;
 }
 
-export class CreateEventDto {
+export class CreateEventDto extends AiSettingsDto {
   @ApiProperty({ example: 'Community Iftar' })
   @IsString()
   @IsNotEmpty()
@@ -47,11 +49,6 @@ export class CreateEventDto {
   @IsOptional()
   isPublished?: boolean;
 
-  @ApiPropertyOptional({ example: false, default: false })
-  @IsBoolean()
-  @IsOptional()
-  autoEnhanceImages?: boolean;
-
   @ApiPropertyOptional({ example: true, default: true })
   @IsBoolean()
   @IsOptional()
@@ -68,7 +65,7 @@ export class CreateEventDto {
   publishPolicy?: 'auto_upload' | 'auto_ai' | 'manual';
 }
 
-export class UpdateEventDto {
+export class UpdateEventDto extends AiSettingsDto {
   @ApiPropertyOptional({ example: 'Community Iftar' })
   @IsString()
   @IsOptional()
@@ -92,11 +89,6 @@ export class UpdateEventDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
-
-  @ApiPropertyOptional({ example: false, default: false })
-  @IsBoolean()
-  @IsOptional()
-  autoEnhanceImages?: boolean;
 
   @ApiPropertyOptional({ example: true, default: true })
   @IsBoolean()

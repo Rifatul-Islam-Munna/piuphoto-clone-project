@@ -5,6 +5,8 @@ class EventImageModel {
     this.previewUrl,
     this.viewUrl,
     this.isEnhanced = false,
+    this.enhancementStatus,
+    this.enhancementMessage,
     this.isPublished = true,
     this.mediaType = 'photo',
     this.createdAt,
@@ -21,6 +23,18 @@ class EventImageModel {
       previewUrl?.isNotEmpty == true ? previewUrl! : imageUrl;
   String get fullViewUrl => viewUrl?.isNotEmpty == true ? viewUrl! : displayUrl;
   final bool isEnhanced;
+  final String? enhancementStatus;
+  final String? enhancementMessage;
+  bool get enhancementInProgress =>
+      enhancementStatus == 'pending' || enhancementStatus == 'processing';
+  String get enhancementLabel {
+    if (isEnhanced) return 'AI enhanced';
+    if (enhancementInProgress) return 'AI processing';
+    if (enhancementStatus == 'failed') return 'AI failed';
+    if (enhancementStatus == 'skipped') return 'AI skipped';
+    return 'Original';
+  }
+
   final bool isPublished;
   final String mediaType;
   final String? createdAt;
@@ -38,6 +52,8 @@ class EventImageModel {
       previewUrl: json['previewUrl']?.toString(),
       viewUrl: json['viewUrl']?.toString(),
       isEnhanced: json['isEnhanced'] == true,
+      enhancementStatus: json['enhancementStatus']?.toString(),
+      enhancementMessage: json['enhancementMessage']?.toString(),
       isPublished: json['isPublished'] != false,
       mediaType: json['mediaType']?.toString() ?? 'photo',
       createdAt: json['createdAt']?.toString(),

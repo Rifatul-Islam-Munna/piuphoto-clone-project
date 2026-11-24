@@ -1,3 +1,18 @@
+plugins {
+    id("org.jetbrains.kotlin.android") apply false
+}
+
+// The AVIF plugin targets Java 11, but Flutter's Kotlin integration can
+// default to the JDK running Gradle (21). Keep both compiler targets equal.
+project(":flutter_avif_android") {
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
+        compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+        // flutter_avif_android 3.1.0 ships the same plugin class in Java and
+        // Kotlin. Its original Android build uses the Java implementation.
+        exclude("**/FlutterAvifPlugin.kt")
+    }
+}
+
 allprojects {
     repositories {
         google()

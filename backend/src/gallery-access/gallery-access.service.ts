@@ -5,6 +5,7 @@ import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { Album, AlbumDocument } from '../album/entities/album.entity';
+import { resolveAiSettings } from '../album/ai-settings';
 import { EventMemberService } from '../event-member/event-member.service';
 import { Event, EventDocument } from '../event/entities/event.entity';
 import {
@@ -99,6 +100,30 @@ export class GalleryAccessService {
     return createHash('sha256').update(token).digest('hex');
   }
 
+  // Presentation filtering is separate from publication and access control.
+  // It is applied before pagination, face-search result delivery and ZIP selection.
+  async publishedVersionFilter(eventId: string, albumId?: string): Promise<Record<string, any>> {
+    const eventObjectId = this.objectId(eventId);
+    const event = await this.eventModel.findById(eventObjectId).select('aiGalleryMode').lean();
+    const mode = event?.aiGalleryMode;
+    const alwaysVisible = [{ isEnhanced: true }, { mediaType: 'video' }];
+    if (albumId) {
+      const album = await this.albumModel.findOne({ _id: this.objectId(albumId), eventId: eventObjectId }).select('aiGalleryMode').lean();
+      return resolveAiSettings(event ?? {}, album).aiGalleryMode === 'enhanced_only'
+        ? { $or: alwaysVisible }
+        : {};
+    }
+    const albums = await this.albumModel.find({
+      eventId: eventObjectId,
+      aiGalleryMode: { $in: [mode === 'enhanced_only' ? 'both' : 'enhanced_only'] },
+    }).select('_id').lean();
+    const ids = albums.map(album => album._id);
+    if (mode === 'enhanced_only') {
+      return { $or: [...alwaysVisible, { albumId: { $in: ids } }] };
+    }
+    return ids.length ? { $or: [...alwaysVisible, { albumId: { $nin: ids } }] } : {};
+  }
+
   async protectStoreOriginals(
     eventId: string,
     rows: Array<Record<string, any>>,
@@ -129,7 +154,7 @@ export class GalleryAccessService {
       for (const key of Object.keys(safe)) if (key.startsWith('imagor') || ['thumbnailUrl', 'previewUrl', 'viewUrl', 'originalUrl', 'originalObjectKey'].includes(key)) delete safe[key];
       return {
         ...safe,
-        imageUrl: `/store/public/preview?eventId=${encodeURIComponent(eventId)}&imageId=${encodeURIComponent(storeImageId)}`,
+        imageUrl: `/store/public/preview?eventId=${encodeURIComponent(eventId)}&imageId=${encodeURIComponent(String(image._id))}`,
         storeImageId,
         purchaseRequired: true,
       };

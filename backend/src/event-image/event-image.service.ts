@@ -48,6 +48,9 @@ import { GuestGalleryService } from '../guest-gallery/guest-gallery.service';
 import { MediaAiService } from './media-ai.service';
 import { deliveryRows, withDelivery } from './image-delivery';
 import { ImagorCacheService } from './imagor-cache.service';
+import { EnhancementOutputService } from './enhancement-output.service';
+import { IDENTITY_GUARD, presetInstructions, publicationForUpload, resolveAiSettings } from '../album/ai-settings';
+import type { AiSettings } from '../album/ai-settings';
 import { RetouchWorkflowService } from '../retouch-workflow/retouch-workflow.service';
 import { WorkflowWebhookPublisherService } from '../external-api/workflow-webhook-publisher.service';
 
@@ -90,6 +93,7 @@ export class EventImageService {
     private readonly mediaAiService: MediaAiService,
     private readonly retouchWorkflowService: RetouchWorkflowService,
     private readonly workflowWebhooks: WorkflowWebhookPublisherService,
+    private readonly enhancementOutput: EnhancementOutputService,
     @Optional() private readonly imagorCache?: ImagorCacheService,
   ) {}
 
@@ -152,7 +156,7 @@ export class EventImageService {
 
     const event = await this.eventModel
       .findById(eventId)
-      .select('userId title autoEnhanceImages autoPublishImages requireReview publishPolicy')
+      .select('userId title autoEnhanceImages autoPublishImages requireReview publishPolicy aiPreset aiPrompt aiAdjustments aiGalleryMode')
       .lean();
 
     if (!event) {
@@ -184,6 +188,13 @@ export class EventImageService {
     return policy as 'auto_upload' | 'auto_ai' | 'manual';
   }
 
+  private async resolveEnhancementSettings(event: AiSettings, albumId?: string) {
+    const album = albumId && Types.ObjectId.isValid(albumId)
+      ? await this.albumModel.findById(albumId).select('autoEnhanceImages aiPreset aiPrompt aiAdjustments aiGalleryMode').lean()
+      : null;
+    return resolveAiSettings(event, album);
+  }
+
   private queuePhotoAutomation(eventImage: EventImageDocument) {
     if (eventImage.mediaType === 'video') return;
     this.queueFaceIndex(eventImage);
@@ -201,15 +212,14 @@ export class EventImageService {
 
   private defaultEnhancePrompt() {
     return [
-      'Subtle professional event photo enhancement.',
-      'Preserve the original image as much as possible.',
-      'Keep the same person identity, facial structure, skin texture, body shape, age, pose, clothing, hairstyle, background, scene, perspective, crop, composition, lighting direction, and event context.',
-      'Only make gentle corrections to color, white balance, exposure, contrast, dynamic range, noise, sharpness, and clarity.',
-      'Retain natural pores, realistic skin texture, original proportions, and authentic camera look.',
-      'Do not over-smooth skin, over-sharpen faces, reshape the body, enlarge eyes, alter facial features, remove important details, or create plastic AI skin.',
-      'Do not add new people, objects, text, logos, watermarks, accessories, makeup, jewelry, background elements, or change outfit colors.',
-      'If any beautification is requested, apply it very lightly and naturally.',
-      'Output should look like the same original photo, only gently polished by a professional editor.',
+      'Act as a senior professional photographer and colorist performing a careful, non-destructive RAW-style finishing pass on this exact capture, whether it is a portrait, group, indoor event, landscape, product, animal, sport or difficult low-light photo.',
+      'First diagnose the image: exposure distribution, white balance, mixed lighting, backlighting, harsh flash, clipped highlights, deep shadows, flat contrast, color casts, sensor noise, haze, compression artifacts, softness and mild motion blur. Prioritize the actual defects instead of applying a generic beauty filter.',
+      'Make a clear, visible improvement wherever genuine defects exist. Raise excessively dark exposure and lift shadow detail without washing out blacks. Restrain excessive brightness and recover existing highlight detail without turning whites gray. Balance uneven light locally; retain the original mood and lighting direction.',
+      'Correct unwanted yellow, green, magenta and blue casts. Use accurate whites and realistic skin and object colors. Improve midtone separation, tonal depth and tasteful vibrance without oversaturation, excessive HDR or a fake cinematic look.',
+      'Reduce noise, chromatic speckles, haze and compression artifacts while retaining fine texture. Restore recoverable edge clarity and mild blur without ringing, halos or oversharpening. Do not fabricate details that are missing from the source.',
+      'Give ordinary or difficult captures the clean, balanced, realistic finish of a skilled professional editor. Apply corrections across the entire photograph, including non-human subjects and backgrounds. On already good areas, make only necessary refinements. Maintain the original crop, aspect ratio, perspective, scene and all people.',
+      'Portrait work is secondary and always restrained: correct light falling on faces, keep pores and natural skin texture, and limit any cleanup to permitted temporary blemishes. Never beautify by redrawing, replacing, reshaping, aging or de-aging faces or bodies.',
+      'Follow the selected preset and adjustment limits. Treat zero-strength corrections as disabled. Identity and source fidelity take priority over all stylistic choices, and a faithful imperfect face is preferable to an invented perfect face.',
     ].join(' ');
   }
 
@@ -222,15 +232,15 @@ export class EventImageService {
       {
         match: ['colour enhancement', 'color enhancement'],
         text: [
-          'Apply only subtle color enhancement.',
-          'Improve white balance, skin tone accuracy, and tonal richness softly.',
+          'Prioritize visibly improved color balance and tonal separation.',
+          'Correct color casts, improve skin tone accuracy, and restore rich natural colors.',
           'Keep original colors realistic and faithful to the scene.',
         ].join(' '),
       },
       {
         match: ['skin beautification'],
         text: [
-          'Apply very light skin cleanup only.',
+          'Apply visible but natural cleanup of temporary blemishes and uneven skin tone.',
           'Reduce temporary blemishes and uneven tone gently while preserving pores, wrinkles, fine texture, and natural detail.',
           'Do not create smooth plastic skin.',
         ].join(' '),
@@ -238,15 +248,15 @@ export class EventImageService {
       {
         match: ['facial beautification'],
         text: [
-          'Apply very subtle facial beautification only.',
+          'Prioritize natural facial retouching while preserving identity.',
           'Keep the same face shape, eyes, nose, lips, jawline, expression, and identity.',
-          'Only reduce minor distraction softly without changing facial structure.',
+          'Reduce distracting blemishes and uneven illumination without changing facial structure.',
         ].join(' '),
       },
       {
         match: ['body beautification'],
         text: [
-          'Apply very subtle body refinement only if clearly needed.',
+          'Do not modify body shape or proportions. Only improve photographic lighting, color and recoverable detail.',
           'Do not change body shape, weight, proportions, pose, or clothing fit in any noticeable way.',
           'Preserve the real appearance of the subject.',
         ].join(' '),
@@ -268,15 +278,14 @@ export class EventImageService {
 
     return [
       'User requested these extra enhancement notes.',
-      'Follow them only in a subtle, realistic, preserve-original way:',
+      'Apply these corrections visibly and realistically while preserving the subject and scene:',
       value,
     ].join(' ');
   }
 
   private buildEnhancePrompt(prompt?: string) {
     const base = this.defaultEnhancePrompt();
-    const modePrompt = this.enhanceModePrompt(prompt);
-    return modePrompt ? `${base} ${modePrompt}` : base;
+    return [base, prompt?.trim(), IDENTITY_GUARD].filter(Boolean).join('\n');
   }
 
   private async enhanceImage(imageUrl: string, prompt?: string) {
@@ -315,6 +324,7 @@ export class EventImageService {
       throw new HttpException('FAL returned no enhanced image', 500);
     }
 
+    if (enhancedUrl === imageUrl) throw new HttpException('AI returned the original image unchanged', 502);
     return enhancedUrl;
   }
 
@@ -555,6 +565,18 @@ export class EventImageService {
     }
   }
 
+  private async markEnhancement(sourceId: string | Types.ObjectId | undefined, status: EventImage['enhancementStatus'], message?: string) {
+    if (!sourceId) return;
+    try {
+      await this.eventImageModel.updateOne({ _id: sourceId }, {
+        $set: { enhancementStatus: status, enhancementMessage: message || '' },
+      });
+    } catch {
+      // Status persistence must not turn a successfully saved result into a refund.
+      this.logger.warn('Could not update AI enhancement status');
+    }
+  }
+
   private async tryEnhanceForOwner(
     imageUrl: string,
     eventId: string,
@@ -564,14 +586,24 @@ export class EventImageService {
     prompt?: string,
     isPublished = true,
     sourceEventImageId?: string,
+    settings?: AiSettings,
   ): Promise<
     EventImageDocument | { requestId: string; status: string } | null
   > {
     const meta = await this.getOwnerPlanMeta(ownerId);
     const customPrompt = prompt?.trim();
-    const finalPrompt = meta.hasCustomEnhancer ? customPrompt : undefined;
+    const effective = settings ?? await this.resolveEnhancementSettings(
+      await this.eventModel.findById(eventId).select('autoEnhanceImages aiPreset aiPrompt aiAdjustments aiGalleryMode').lean() ?? {},
+      albumId,
+    );
+    // Album settings are owner-managed. Keep the existing subscription gate
+    // for arbitrary per-upload overrides; never let one replace the preset.
+    const finalPrompt = presetInstructions(effective, meta.hasCustomEnhancer ? this.enhanceModePrompt(customPrompt) : undefined);
 
-    if (meta.credits < 3) return null;
+    if (meta.credits < 3) {
+      await this.markEnhancement(sourceEventImageId, 'skipped', 'Not enough AI credits');
+      return null;
+    }
 
     const chargedUser = await this.userModel
       .findOneAndUpdate(
@@ -582,9 +614,13 @@ export class EventImageService {
       .select('_id')
       .lean();
 
-    if (!chargedUser) return null;
+    if (!chargedUser) {
+      await this.markEnhancement(sourceEventImageId, 'skipped', 'Not enough AI credits');
+      return null;
+    }
 
     try {
+      await this.markEnhancement(sourceEventImageId, 'processing');
       if (this.useFalWebhook()) {
         return await this.submitEnhancementWebhook(imageUrl, finalPrompt, {
           eventId,
@@ -596,8 +632,9 @@ export class EventImageService {
         });
       }
 
-      const enhancedUrl = await this.enhanceImage(imageUrl, finalPrompt);
-      return await this.eventImageModel.create({
+      const outputUrl = await this.enhanceImage(imageUrl, finalPrompt);
+      const enhancedUrl = await this.enhancementOutput.save(imageUrl, outputUrl, sourceEventImageId);
+      const enhancedImage = await this.eventImageModel.create({
         eventId: this.toObjectId(eventId),
         imageUrl: enhancedUrl,
         userTakenBy: this.toObjectId(uploaderId),
@@ -608,7 +645,10 @@ export class EventImageService {
           : undefined,
         isPublished,
       });
+      await this.markEnhancement(sourceEventImageId, 'completed');
+      return enhancedImage;
     } catch (error) {
+      await this.markEnhancement(sourceEventImageId, 'failed', 'AI enhancement failed. Please retry.');
       await this.userModel.findByIdAndUpdate(ownerId, { $inc: { credits: 3 } });
       throw error;
     }
@@ -623,7 +663,7 @@ export class EventImageService {
     );
   }
 
-  async handleFalWebhook(type: string, webhook: FalWebhookDto) {
+  async handleFalWebhook(type: string, webhook: FalWebhookDto): Promise<{ received: boolean; ignored?: boolean; duplicate?: boolean; failed?: boolean; saved?: boolean; eventImageId?: string }> {
     if (type !== 'puiphoto') {
       this.logger.log(
         `fal-webhook-ignored type=${type} requestId=${webhook.request_id}`,
@@ -642,7 +682,7 @@ export class EventImageService {
       return { received: true, ignored: true };
     }
 
-    if (job.status === FalEnhancementJobStatus.COMPLETED) {
+    if (job.status === FalEnhancementJobStatus.COMPLETED || job.status === FalEnhancementJobStatus.FAILED) {
       return { received: true, duplicate: true };
     }
 
@@ -663,6 +703,7 @@ export class EventImageService {
       );
 
       if (failedJob) {
+        await this.markEnhancement(job.sourceEventImageId, 'failed', 'AI enhancement failed. Please retry.');
         await this.userModel.findByIdAndUpdate(job.ownerId, {
           $inc: { credits: job.creditsCharged },
         });
@@ -679,13 +720,13 @@ export class EventImageService {
 
     const enhancedUrl = webhook.payload?.images?.[0]?.url;
     if (!enhancedUrl) {
-      throw new HttpException('FAL webhook returned no enhanced image', 400);
+      return this.handleFalWebhook(type, { request_id: webhook.request_id, status: 'ERROR', error: 'FAL returned no enhanced photo' });
     }
     try {
       const imageUrl = new URL(enhancedUrl);
       if (!['http:', 'https:'].includes(imageUrl.protocol)) throw new Error();
     } catch {
-      throw new HttpException('FAL webhook returned an invalid image URL', 400);
+      return this.handleFalWebhook(type, { request_id: webhook.request_id, status: 'ERROR', error: 'FAL returned an invalid image URL' });
     }
 
     let eventImage = await this.eventImageModel.findOne({
@@ -693,16 +734,30 @@ export class EventImageService {
     });
 
     if (!eventImage) {
-      eventImage = await this.eventImageModel.create({
-        eventId: job.eventId,
-        imageUrl: enhancedUrl,
-        userTakenBy: job.uploaderId,
-        albumId: job.albumId,
-        isEnhanced: true,
-        enhancedFromId: job.sourceEventImageId,
-        isPublished: job.isPublished !== false,
-        falRequestId: webhook.request_id,
-      });
+      let storedUrl = enhancedUrl;
+      try {
+        if (enhancedUrl === job.sourceImageUrl) throw new HttpException('AI returned the original image unchanged', 502);
+        storedUrl = await this.enhancementOutput.save(job.sourceImageUrl, enhancedUrl, job.sourceEventImageId ? String(job.sourceEventImageId) : undefined, webhook.request_id);
+      } catch (error) {
+        this.logger.warn('AI result could not be stored or was unchanged');
+        return this.handleFalWebhook(type, { request_id: webhook.request_id, status: 'ERROR', error: 'AI returned no usable enhanced photo' });
+      }
+      try {
+        eventImage = await this.eventImageModel.create({
+          eventId: job.eventId,
+          imageUrl: storedUrl,
+          userTakenBy: job.uploaderId,
+          albumId: job.albumId,
+          isEnhanced: true,
+          enhancedFromId: job.sourceEventImageId,
+          isPublished: job.isPublished !== false,
+          falRequestId: webhook.request_id,
+        });
+      } catch (error) {
+        if ((error as { code?: number }).code !== 11000) throw error;
+        eventImage = await this.eventImageModel.findOne({ falRequestId: webhook.request_id });
+        if (!eventImage) throw error;
+      }
       this.queuePhotoAutomation(eventImage);
       this.emitGallery(String(job.eventId), {
         type: 'photo.enhanced',
@@ -718,6 +773,7 @@ export class EventImageService {
         $unset: { error: '' },
       },
     );
+    await this.markEnhancement(job.sourceEventImageId, 'completed');
     void this.workflowWebhooks.publish(String(job.eventId), 'photo.ai', {
       imageId: String(eventImage._id),
       sourceEventImageId: job.sourceEventImageId ? String(job.sourceEventImageId) : undefined,
@@ -854,9 +910,8 @@ export class EventImageService {
     );
 
     const publishPolicy = await this.resolvePublishPolicy(event, createEventImageDto.albumId);
-    const publishOriginal = !event.requireReview &&
-      (createEventImageDto.isEnhanced ? publishPolicy !== 'manual' : publishPolicy === 'auto_upload');
-    const publishEnhanced = !event.requireReview && publishPolicy === 'auto_ai';
+    const aiSettings = await this.resolveEnhancementSettings(event, createEventImageDto.albumId);
+    const { original: publishOriginal, enhanced: publishEnhanced } = publicationForUpload(publishPolicy, event.requireReview, aiSettings, createEventImageDto.isEnhanced);
     let eventImage: EventImageDocument;
     try {
       eventImage = await this.eventImageModel.create({
@@ -867,6 +922,7 @@ export class EventImageService {
           ? this.toObjectId(createEventImageDto.albumId)
           : undefined,
         isEnhanced: createEventImageDto.isEnhanced ?? false,
+        enhancementStatus: aiSettings.autoEnhanceImages && !createEventImageDto.isEnhanced && this.inferMediaType(createEventImageDto.imageUrl, createEventImageDto.mediaType) === 'photo' ? 'pending' : undefined,
         mediaType: this.inferMediaType(createEventImageDto.imageUrl, createEventImageDto.mediaType),
         isPublished: publishOriginal,
         clientTransferId: createEventImageDto.clientTransferId,
@@ -910,7 +966,7 @@ export class EventImageService {
 
     let enhancedImage: EventImageDocument | null = null;
     let enhancementJob: { requestId: string; status: string } | null = null;
-    if (event.autoEnhanceImages && !createEventImageDto.isEnhanced && createEventImageDto.mediaType !== 'video') {
+    if (aiSettings.autoEnhanceImages && !createEventImageDto.isEnhanced && this.inferMediaType(createEventImageDto.imageUrl, createEventImageDto.mediaType) === 'photo') {
       const enhance = async () => {
         try {
           const enhancement = await this.tryEnhanceForOwner(
@@ -922,6 +978,7 @@ export class EventImageService {
             createEventImageDto.enhancePrompt,
             publishEnhanced,
             String(eventImage._id),
+            aiSettings,
           );
           if (enhancement && this.isEnhancementJobResult(enhancement)) {
             enhancementJob = enhancement;
@@ -932,7 +989,8 @@ export class EventImageService {
             void this.workflowWebhooks.publish(createEventImageDto.eventId, 'photo.ai', { imageId: String(enhancedImage._id), sourceEventImageId: String(eventImage._id) });
           }
         } catch (error) {
-          this.logger.error('image-enhance-failed', error);
+          await this.markEnhancement(String(eventImage._id), 'failed', 'AI enhancement failed. Please retry.');
+          this.logger.error('image-enhance-failed', error instanceof Error ? error.message : 'AI request failed');
         }
       };
       if (createEventImageDto.clientTransferId) {
@@ -984,9 +1042,8 @@ export class EventImageService {
     );
 
     const publishPolicy = await this.resolvePublishPolicy(event, createEventImagesBatchDto.albumId);
-    const publishOriginal = !event.requireReview &&
-      (createEventImagesBatchDto.isEnhanced ? publishPolicy !== 'manual' : publishPolicy === 'auto_upload');
-    const publishEnhanced = !event.requireReview && publishPolicy === 'auto_ai';
+    const aiSettings = await this.resolveEnhancementSettings(event, createEventImagesBatchDto.albumId);
+    const { original: publishOriginal, enhanced: publishEnhanced } = publicationForUpload(publishPolicy, event.requireReview, aiSettings, createEventImagesBatchDto.isEnhanced);
     const docs = createEventImagesBatchDto.imageUrls.map((imageUrl) => ({
       eventId: this.toObjectId(createEventImagesBatchDto.eventId),
       imageUrl,
@@ -995,6 +1052,7 @@ export class EventImageService {
         ? this.toObjectId(createEventImagesBatchDto.albumId)
         : undefined,
       isEnhanced: createEventImagesBatchDto.isEnhanced ?? false,
+      enhancementStatus: aiSettings.autoEnhanceImages && !createEventImagesBatchDto.isEnhanced && this.inferMediaType(imageUrl, createEventImagesBatchDto.mediaType) === 'photo' ? 'pending' as const : undefined,
       mediaType: this.inferMediaType(imageUrl, createEventImagesBatchDto.mediaType),
       isPublished: publishOriginal,
     }));
@@ -1017,10 +1075,10 @@ export class EventImageService {
 
     let enhancedImages: EventImageDocument[] = [];
     let enhancementJobs: Array<{ requestId: string; status: string }> = [];
-    if (event.autoEnhanceImages && !createEventImagesBatchDto.isEnhanced && createEventImagesBatchDto.mediaType !== 'video') {
+    if (aiSettings.autoEnhanceImages && !createEventImagesBatchDto.isEnhanced && createEventImagesBatchDto.mediaType !== 'video') {
       const results = await Promise.allSettled(
         createEventImagesBatchDto.imageUrls.map((imageUrl, index) =>
-          this.tryEnhanceForOwner(
+          this.inferMediaType(imageUrl, createEventImagesBatchDto.mediaType) === 'video' ? Promise.resolve(null) : this.tryEnhanceForOwner(
             imageUrl,
             createEventImagesBatchDto.eventId,
             String(userId),
@@ -1029,14 +1087,16 @@ export class EventImageService {
             createEventImagesBatchDto.enhancePrompt,
             publishEnhanced,
             eventImages[index] ? String(eventImages[index]._id) : undefined,
+            aiSettings,
           ),
         ),
       );
 
       const enhancements = results
-        .map((result) => {
+        .map((result, index) => {
           if (result.status === 'rejected') {
-            this.logger.error('image-enhance-failed', result.reason);
+            void this.markEnhancement(eventImages[index]?._id, 'failed', 'AI enhancement failed. Please retry.');
+            this.logger.error('image-enhance-failed', result.reason instanceof Error ? result.reason.message : 'AI request failed');
             return null;
           }
           return result.value;
@@ -1159,7 +1219,7 @@ export class EventImageService {
         _id: { $in: ids.map((id) => this.toObjectId(id)) },
         ...(query.eventId ? { eventId: this.toObjectId(query.eventId) } : {}),
         ...(query.albumId ? { albumId: this.toObjectId(query.albumId) } : {}),
-        ...(publicAccess ? { isPublished: { $ne: false } } : {}),
+        ...(publicAccess ? { isPublished: { $ne: false }, ...(query.eventId ? await this.galleryAccessService.publishedVersionFilter(query.eventId, query.albumId) : {}) } : {}),
       })
       .populate('eventId', 'title description image')
       .populate('albumId', 'title description')
@@ -1250,7 +1310,7 @@ export class EventImageService {
     if (!eventId || !Types.ObjectId.isValid(eventId)) throw new HttpException('Invalid event id', 400);
     await this.galleryAccessService.assertFacialBlurPreview(eventId, albumId);
     const data = await this.eventImageModel.find({ eventId: this.toObjectId(eventId), isPublished: { $ne: false },
-      mediaType: { $ne: 'video' }, ...(albumId ? { albumId: this.toObjectId(albumId) } : {}) })
+      mediaType: { $ne: 'video' }, ...(albumId ? { albumId: this.toObjectId(albumId) } : {}), ...await this.galleryAccessService.publishedVersionFilter(eventId, albumId) })
       .select('_id createdAt').sort({ createdAt: -1 }).limit(250).lean();
     return { data: data.map((image) => ({ _id: String(image._id) })), totalItems: data.length };
   }
@@ -1259,7 +1319,7 @@ export class EventImageService {
     if (![id, eventId].every(Types.ObjectId.isValid)) throw new HttpException('Invalid preview id', 400);
     await this.galleryAccessService.assertFacialBlurPreview(eventId, albumId);
     const row = await this.eventImageModel.findOne({ _id: this.toObjectId(id), eventId: this.toObjectId(eventId),
-      isPublished: { $ne: false }, mediaType: { $ne: 'video' }, ...(albumId ? { albumId: this.toObjectId(albumId) } : {}) })
+      isPublished: { $ne: false }, mediaType: { $ne: 'video' }, ...(albumId ? { albumId: this.toObjectId(albumId) } : {}), ...await this.galleryAccessService.publishedVersionFilter(eventId, albumId) })
       .select('imageUrl').lean();
     if (!row) throw new HttpException('Preview not found', 404);
     const response = await axios.get<ArrayBuffer>(row.imageUrl, { responseType: 'arraybuffer', timeout: 30000, maxContentLength: 50 * 1024 * 1024 });
@@ -1290,6 +1350,7 @@ export class EventImageService {
         eventId: this.toObjectId(eventId),
         isPublished: { $ne: false },
         ...(albumId ? { albumId: this.toObjectId(albumId) } : {}),
+        ...await this.galleryAccessService.publishedVersionFilter(eventId, albumId),
       })
       .populate('eventId', 'title description image')
       .populate('albumId', 'title description')
@@ -1488,6 +1549,9 @@ export class EventImageService {
       existing.albumId ? String(existing.albumId) : undefined,
     );
 
+    const albumId = existing.albumId ? String(existing.albumId) : undefined;
+    const aiSettings = await this.resolveEnhancementSettings(event, albumId);
+    const policy = await this.resolvePublishPolicy(event, albumId);
     const enhancedImage = await this.tryEnhanceForOwner(
       existing.imageUrl,
       String(existing.eventId),
@@ -1495,8 +1559,9 @@ export class EventImageService {
       String(event.userId),
       existing.albumId ? String(existing.albumId) : undefined,
       prompt,
-      !event.requireReview && ((await this.resolvePublishPolicy(event, existing.albumId ? String(existing.albumId) : undefined)) === 'auto_ai' || existing.isPublished !== false),
+      !event.requireReview && policy !== 'manual' && (policy === 'auto_ai' || existing.isPublished !== false || !!aiSettings.aiGalleryMode),
       String(existing._id),
+      aiSettings,
     );
 
     if (!enhancedImage) {
@@ -1514,10 +1579,32 @@ export class EventImageService {
     }
 
     return {
-      message: 'Image enhanced successfully',
-      data: enhancedImage,
+      message: this.isEnhancementJobResult(enhancedImage) ? 'AI enhancement queued' : 'Image enhanced successfully',
+      data: this.isEnhancementJobResult(enhancedImage) ? enhancedImage : withDelivery(enhancedImage),
       skipped: false,
     };
+  }
+
+  // Small authenticated status projection for upload monitors. No image bytes,
+  // AI requests or cache warming are performed by this endpoint.
+  async enhancementStatuses(eventId: string, ids: string, userId?: string, role?: string) {
+    if (typeof ids !== 'string' || ids.length > 2500) throw new HttpException('Invalid photo ids', 400);
+    const requested = [...new Set(ids.split(',').filter(Boolean))];
+    if (!requested.length || requested.length > 100 || requested.some(id => !Types.ObjectId.isValid(id))) {
+      throw new HttpException('Invalid photo ids', 400);
+    }
+    await this.assertCanUseEvent(eventId, userId, role);
+    const allowed = await this.eventMemberService.allowedAlbumIds(eventId, userId, role);
+    const rows = await this.eventImageModel.find({
+      eventId: this.toObjectId(eventId),
+      _id: { $in: requested.map(id => this.toObjectId(id)) },
+      ...(allowed ? { albumId: { $in: allowed.map(id => this.toObjectId(id)) } } : {}),
+    }).select('_id isEnhanced enhancementStatus').lean();
+    return { data: rows.map(row => ({
+      id: String(row._id),
+      isEnhanced: row.isEnhanced === true,
+      enhancementStatus: row.enhancementStatus || 'none',
+    })) };
   }
 
   async enhancementJobs(eventId: string, userId?: string, role?: string) {
@@ -1533,8 +1620,11 @@ export class EventImageService {
     if (!job) throw new HttpException('Enhancement job not found', 404);
     if (job.status !== FalEnhancementJobStatus.FAILED) throw new HttpException('Only failed enhancement jobs can be retried', 400);
     const event = await this.assertCanUseEvent(String(job.eventId), userId, role);
+    const albumId = job.albumId ? String(job.albumId) : undefined;
+    const aiSettings = await this.resolveEnhancementSettings(event, albumId);
+    const policy = await this.resolvePublishPolicy(event, albumId);
     const result = await this.tryEnhanceForOwner(job.sourceImageUrl, String(job.eventId), String(job.uploaderId), String(event.userId),
-      job.albumId ? String(job.albumId) : undefined, undefined, job.isPublished !== false, job.sourceEventImageId ? String(job.sourceEventImageId) : undefined);
+      albumId, undefined, !event.requireReview && policy !== 'manual' && (job.isPublished !== false || !!aiSettings.aiGalleryMode), job.sourceEventImageId ? String(job.sourceEventImageId) : undefined, aiSettings);
     if (result && !this.isEnhancementJobResult(result)) {
       this.queuePhotoAutomation(result);
       this.emitGallery(String(job.eventId), { type: 'photo.enhanced', imageId: String(result._id), isPublished: result.isPublished !== false });

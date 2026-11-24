@@ -7,6 +7,8 @@ import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
 import 'package:mobileapp/widgets/app_ui.dart';
+import 'package:mobileapp/widgets/ai_retouch_badge.dart';
+import 'package:mobileapp/pages/upload/transfer_ai_monitor.dart';
 
 enum TransferListFilter { all, uploaded, notUploaded }
 
@@ -36,7 +38,10 @@ class TransferListPage extends StatelessWidget {
   };
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      TransferAiMonitor(eventId: eventId, child: _buildPage(context));
+
+  Widget _buildPage(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -96,6 +101,11 @@ class TransferListPage extends StatelessWidget {
                     children: [
                       const SizedBox(height: 3),
                       Text('${_statusLabel(item.status)} · ${item.source}'),
+                      if (item.aiLabel != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 3),
+                          child: AiRetouchBadge(label: item.aiLabel!),
+                        ),
                       if (item.error?.isNotEmpty == true)
                         Text(
                           item.error!,

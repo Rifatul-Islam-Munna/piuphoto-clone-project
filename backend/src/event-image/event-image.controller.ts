@@ -188,6 +188,12 @@ export class EventImageController {
     );
   }
 
+  @Get('enhancement-status')
+  @UseGuards(AuthGuard)
+  enhancementStatuses(@Query('eventId') eventId: string, @Query('ids') ids: string, @Req() req: ExpressRequest) {
+    return this.eventImageService.enhancementStatuses(eventId, ids, req.user?.id, req.user?.role);
+  }
+
   @Get('enhancement-jobs')
   @UseGuards(AuthGuard)
   enhancementJobs(@Query() query: EnhancementJobsQueryDto, @Req() req: ExpressRequest) {

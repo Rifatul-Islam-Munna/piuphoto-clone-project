@@ -10,6 +10,8 @@ import 'package:mobileapp/core/upload/upload_queue_storage.dart';
 import 'package:mobileapp/pages/upload/camera_upload_preferences_sheet.dart';
 import 'package:mobileapp/pages/upload/manual_camera_staging.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
+import 'package:mobileapp/widgets/ai_retouch_badge.dart';
+import 'package:mobileapp/pages/upload/transfer_ai_monitor.dart';
 
 @immutable
 class CameraTransferSessionStatus {
@@ -899,7 +901,13 @@ class _CameraTransferPageState extends State<CameraTransferPage> {
   );
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => TransferAiMonitor(
+    eventId: widget.eventId,
+    enabled: widget.transfers == null,
+    child: _buildPage(context),
+  );
+
+  Widget _buildPage(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 68,
@@ -1418,24 +1426,30 @@ class _TransferGridTile extends StatelessWidget {
                     Positioned(
                       top: 4,
                       right: 4,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 5,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: badgeColor,
-                          borderRadius: BorderRadius.circular(5),
-                        ),
-                        child: Text(
-                          label,
-                          maxLines: 1,
-                          style: const TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
-                        ),
+                      left: 4,
+                      child: Align(
+                        alignment: Alignment.topRight,
+                        child: item.aiLabel != null
+                            ? AiRetouchBadge(label: item.aiLabel!)
+                            : Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: badgeColor,
+                                  borderRadius: BorderRadius.circular(5),
+                                ),
+                                child: Text(
+                                  label,
+                                  maxLines: 1,
+                                  style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
                       ),
                     ),
                     if (uploading && !uploaded)
@@ -1816,6 +1830,10 @@ class _TransferPhotoCard extends StatelessWidget {
                     ],
                   ],
                 ),
+                if (item.aiLabel != null) ...[
+                  const SizedBox(height: 4),
+                  AiRetouchBadge(label: item.aiLabel!),
+                ],
                 if ((uploading || finishing) && !cancelling) ...[
                   const SizedBox(height: 6),
                   LinearProgressIndicator(

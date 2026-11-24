@@ -1226,11 +1226,11 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     return '${event.id}|wireless|$imageUrl|$signature';
   }
 
-  Future<void> _createEventImages(
+  Future<Map<String, Map>> _createEventImages(
     EventSummary event,
     List<String> imageUrls,
   ) async {
-    await DioHelper.post(
+    final response = await DioHelper.post(
       '/eventImage/batch',
       data: {
         'eventId': event.id,
@@ -1239,6 +1239,12 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         if (_selectedAlbumId != null) 'albumId': _selectedAlbumId,
       },
     );
+    final rows = response.data is Map ? response.data['data'] : null;
+    return {
+      if (rows is List)
+        for (final row in rows.whereType<Map>())
+          if (row['imageUrl'] != null) row['imageUrl'].toString(): row,
+    };
   }
 
   Future<void> _loadAlbumsForEvent(EventSummary event) async {
@@ -2732,7 +2738,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             'Saving ${imageUrls.length} images to ${event.title}...';
       });
 
-      await _createEventImages(event, imageUrls);
+      final receipts = await _createEventImages(event, imageUrls);
       // Only count a photo as uploaded after the event registration succeeds.
       // This records manually selected photos in the same live transfer grid.
       try {
@@ -2754,6 +2760,10 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
               updatedAt: now + index,
               localPath: files[index].path,
               imageUrl: imageUrls[index],
+              eventImageId: receipts[imageUrls[index]]?['_id']?.toString(),
+              enhancementStatus:
+                  receipts[imageUrls[index]]?['enhancementStatus']?.toString(),
+              isEnhanced: receipts[imageUrls[index]]?['isEnhanced'] == true,
               fileSize: fileSizes[index],
               registrationStarted: true,
               progress: 100,
@@ -3830,6 +3840,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                   EventAutoEnhanceToggle(
                     key: ValueKey('manual-event-enhancement-${activeEvent.id}'),
                     eventId: activeEvent.id,
+                    albumId: _selectedAlbumId,
                   ),
                   const SizedBox(height: 10),
                 ],
@@ -4179,10 +4190,11 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
               ),
             ),
             onRepeatPickedSource: () => unawaited(_repeatSelectedSource()),
-            // The event-level switch is the source of truth for AI processing.
+            // The selected album's override takes precedence over the event default.
             enhancementControl: EventAutoEnhanceToggle(
               key: ValueKey('event-enhancement-${event.id}'),
               eventId: event.id,
+              albumId: _selectedAlbumId,
             ),
             onAddPickedPhotos: () => unawaited(_pickMoreFromTransferMonitor()),
             onClearPickedPhotos: _uploading ? null : _clearPickedPhotos,

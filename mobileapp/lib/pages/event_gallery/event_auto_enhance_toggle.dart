@@ -3,16 +3,17 @@ import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
-/// Edits the same event.autoEnhanceImages flag used while creating an event.
-/// This is a server-backed event preference, not a second local-only switch.
+/// Uses the album override when a real album is selected, otherwise the event default.
 class EventAutoEnhanceToggle extends StatefulWidget {
   const EventAutoEnhanceToggle({
     super.key,
     required this.eventId,
+    this.albumId,
     this.onValueChanged,
   });
 
   final String eventId;
+  final String? albumId;
   final ValueChanged<bool>? onValueChanged;
 
   @override
@@ -34,7 +35,9 @@ class _EventAutoEnhanceToggleState extends State<EventAutoEnhanceToggle> {
   @override
   void didUpdateWidget(covariant EventAutoEnhanceToggle oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.eventId != widget.eventId) {
+    if (oldWidget.eventId != widget.eventId ||
+        oldWidget.albumId != widget.albumId) {
+      _saving = false;
       _hasValue = false;
       _loading = true;
       _load();
@@ -43,6 +46,7 @@ class _EventAutoEnhanceToggleState extends State<EventAutoEnhanceToggle> {
 
   Future<void> _load() async {
     final eventId = widget.eventId;
+    final albumId = widget.albumId;
     if (mounted) setState(() => _loading = true);
     try {
       final response = await DioHelper.get(
@@ -51,19 +55,36 @@ class _EventAutoEnhanceToggleState extends State<EventAutoEnhanceToggle> {
       );
       final raw = response.data is Map ? response.data['data'] : null;
       if (raw is! Map) throw StateError('Missing event settings');
-      final enabled = raw['autoEnhanceImages'] == true;
-      if (!mounted || widget.eventId != eventId) return;
+      bool enabled = raw['autoEnhanceImages'] == true;
+      if (albumId != null) {
+        final response = await DioHelper.get(
+          '/album/get-all',
+          queryParameters: {'eventId': eventId},
+        );
+        final matches = (response.data['data'] as List).where(
+          (row) =>
+              row is Map && (row['_id'] ?? row['id']).toString() == albumId,
+        );
+        if (matches.isEmpty) throw StateError('Album not found');
+        final album = matches.first as Map;
+        if (album['autoEnhanceImages'] is bool) {
+          enabled = album['autoEnhanceImages'] == true;
+        }
+      }
+      if (!mounted || widget.eventId != eventId || widget.albumId != albumId) {
+        return;
+      }
       setState(() {
         _enabled = enabled;
         _hasValue = true;
       });
       widget.onValueChanged?.call(enabled);
     } catch (_) {
-      if (mounted && widget.eventId == eventId) {
+      if (mounted && widget.eventId == eventId && widget.albumId == albumId) {
         setState(() => _hasValue = false);
       }
     } finally {
-      if (mounted && widget.eventId == eventId) {
+      if (mounted && widget.eventId == eventId && widget.albumId == albumId) {
         setState(() => _loading = false);
       }
     }
@@ -72,14 +93,17 @@ class _EventAutoEnhanceToggleState extends State<EventAutoEnhanceToggle> {
   Future<void> _setEnabled(bool enabled) async {
     if (_loading || _saving || !_hasValue) return;
     final eventId = widget.eventId;
+    final albumId = widget.albumId;
     setState(() => _saving = true);
     try {
       await DioHelper.patch(
-        '/event/update',
-        queryParameters: {'id': eventId},
+        albumId == null ? '/event/update' : '/album/update',
+        queryParameters: {'id': albumId ?? eventId},
         data: {'autoEnhanceImages': enabled},
       );
-      if (!mounted || widget.eventId != eventId) return;
+      if (!mounted || widget.eventId != eventId || widget.albumId != albumId) {
+        return;
+      }
       setState(() => _enabled = enabled);
       widget.onValueChanged?.call(enabled);
       AppToast.success(
@@ -88,11 +112,11 @@ class _EventAutoEnhanceToggleState extends State<EventAutoEnhanceToggle> {
             : 'AI enhancement disabled for new photos',
       );
     } catch (_) {
-      if (mounted && widget.eventId == eventId) {
+      if (mounted && widget.eventId == eventId && widget.albumId == albumId) {
         AppToast.error('Could not save AI enhancement setting');
       }
     } finally {
-      if (mounted && widget.eventId == eventId) {
+      if (mounted && widget.eventId == eventId && widget.albumId == albumId) {
         setState(() => _saving = false);
       }
     }

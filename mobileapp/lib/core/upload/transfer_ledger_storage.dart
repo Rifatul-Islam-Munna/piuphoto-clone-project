@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:mobileapp/core/di/locator.dart';
+import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum TransferLedgerStatus {
@@ -39,6 +40,9 @@ class TransferLedgerItem {
     this.error,
     this.imageUrl,
     this.previewUrl,
+    this.eventImageId,
+    this.enhancementStatus,
+    this.isEnhanced = false,
   });
   final String id;
   final String eventId;
@@ -69,6 +73,20 @@ class TransferLedgerItem {
   final String? error;
   final String? imageUrl;
   final String? previewUrl;
+  final String? eventImageId;
+  final String? enhancementStatus;
+  final bool isEnhanced;
+  bool get aiPending =>
+      enhancementStatus == 'pending' || enhancementStatus == 'processing';
+  String? get aiLabel => isEnhanced
+      ? 'AI enhanced'
+      : switch (enhancementStatus) {
+          'pending' || 'processing' => 'AI processing',
+          'completed' => 'AI copy ready',
+          'failed' => 'AI failed',
+          'skipped' => 'AI skipped',
+          _ => null,
+        };
   String? get displayUrl =>
       previewUrl?.isNotEmpty == true ? previewUrl : imageUrl;
 
@@ -96,6 +114,9 @@ class TransferLedgerItem {
     String? error,
     String? imageUrl,
     String? previewUrl,
+    String? eventImageId,
+    String? enhancementStatus,
+    bool? isEnhanced,
     bool clearError = false,
   }) {
     return TransferLedgerItem(
@@ -120,6 +141,9 @@ class TransferLedgerItem {
       error: clearError ? null : (error ?? this.error),
       imageUrl: imageUrl ?? this.imageUrl,
       previewUrl: previewUrl ?? this.previewUrl,
+      eventImageId: eventImageId ?? this.eventImageId,
+      enhancementStatus: enhancementStatus ?? this.enhancementStatus,
+      isEnhanced: isEnhanced ?? this.isEnhanced,
     );
   }
 
@@ -145,6 +169,9 @@ class TransferLedgerItem {
     'error': error,
     'imageUrl': imageUrl,
     'previewUrl': previewUrl,
+    'eventImageId': eventImageId,
+    'enhancementStatus': enhancementStatus,
+    'isEnhanced': isEnhanced,
   };
   factory TransferLedgerItem.fromJson(Map<String, dynamic> json) {
     final statusName = json['status']?.toString() ?? 'queued';
@@ -179,6 +206,9 @@ class TransferLedgerItem {
       error: json['error']?.toString(),
       imageUrl: json['imageUrl']?.toString(),
       previewUrl: json['previewUrl']?.toString(),
+      eventImageId: json['eventImageId']?.toString(),
+      enhancementStatus: json['enhancementStatus']?.toString(),
+      isEnhanced: json['isEnhanced'] == true,
     );
   }
 }
@@ -241,6 +271,9 @@ class TransferLedgerStorage {
         localPath: item.localPath ?? existing.localPath,
         imageUrl: item.imageUrl ?? existing.imageUrl,
         previewUrl: item.previewUrl ?? existing.previewUrl,
+        eventImageId: item.eventImageId ?? existing.eventImageId,
+        enhancementStatus: item.enhancementStatus ?? existing.enhancementStatus,
+        isEnhanced: item.isEnhanced || existing.isEnhanced,
       );
     }
     next.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
@@ -303,6 +336,9 @@ class TransferLedgerStorage {
     String? error,
     String? imageUrl,
     String? previewUrl,
+    String? eventImageId,
+    String? enhancementStatus,
+    bool? isEnhanced,
     String? localPath,
   }) {
     return _mutate((current) {
@@ -323,11 +359,78 @@ class TransferLedgerStorage {
           error: error,
           imageUrl: imageUrl,
           previewUrl: previewUrl,
+          eventImageId: eventImageId,
+          enhancementStatus: enhancementStatus,
+          isEnhanced: isEnhanced,
           localPath: localPath,
           clearError: error == null,
         ),
       );
     });
+  }
+
+  static final _aiRequests = <String>{};
+
+  /// Poll only known, in-flight enhancements belonging to this event.
+  /// A status change never changes upload completion, publication or ordering.
+  static Future<void> refreshAiStatuses(String eventId) async {
+    if (!_aiRequests.add(eventId)) return;
+    try {
+      final pending = items.value
+          .where(
+            (item) =>
+                item.eventId == eventId &&
+                item.isUploaded &&
+                item.aiPending &&
+                item.eventImageId?.isNotEmpty == true,
+          )
+          .toList();
+      final ids = pending
+          .map((item) => item.eventImageId!)
+          .toSet()
+          .take(100)
+          .toList();
+      if (ids.isEmpty) return;
+      final response = await DioHelper.get(
+        '/eventImage/enhancement-status',
+        queryParameters: {'eventId': eventId, 'ids': ids.join(',')},
+      );
+      final data = response.data is Map ? response.data['data'] : null;
+      if (data is! List) return;
+      final statuses = <String, Map>{
+        for (final row in data.whereType<Map>())
+          if (row['id'] != null) row['id'].toString(): row,
+      };
+      // Missing rows may have been deleted or access revoked. Stop polling
+      // them without claiming that enhancement succeeded.
+      final queried = ids.toSet();
+      await _mutate((current) {
+        var changed = false;
+        final next = current.map((item) {
+          final id = item.eventImageId;
+          if (item.eventId != eventId ||
+              !item.aiPending ||
+              !queried.contains(id))
+            return item;
+          final row = statuses[id];
+          final status = row?['enhancementStatus']?.toString() ?? 'none';
+          final enhanced = row?['isEnhanced'] == true || item.isEnhanced;
+          if (status == item.enhancementStatus && enhanced == item.isEnhanced)
+            return item;
+          changed = true;
+          return item.copyWith(
+            enhancementStatus: status,
+            isEnhanced: enhanced,
+            updatedAt: item.updatedAt,
+          );
+        }).toList();
+        return changed ? next : current;
+      });
+    } catch (_) {
+      // Upload completion is independent from status refresh/network failures.
+    } finally {
+      _aiRequests.remove(eventId);
+    }
   }
 
   static Future<void> clearEvent(String eventId) {
@@ -339,7 +442,11 @@ class TransferLedgerStorage {
   static Future<void> _mutate(
     List<TransferLedgerItem> Function(List<TransferLedgerItem>) mutate,
   ) {
-    final operation = _writeChain.then((_) => _save(mutate(items.value)));
+    final operation = _writeChain.then((_) async {
+      final current = items.value;
+      final next = mutate(current);
+      if (!identical(current, next)) await _save(next);
+    });
     _writeChain = operation.then<void>(
       (_) {},
       onError: (Object error, StackTrace stackTrace) {},

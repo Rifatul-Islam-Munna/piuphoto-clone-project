@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobileapp/core/utils/image_loader.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
+import 'package:mobileapp/widgets/ai_retouch_badge.dart';
+import 'package:mobileapp/pages/upload/transfer_ai_monitor.dart';
 
 /// Always-visible overview on the Upload page. The full searchable/filterable
 /// photo grid lives in CameraTransferPage and uses this same persistent ledger.
@@ -20,7 +22,13 @@ class UploadTransferOverview extends StatelessWidget {
   final ValueListenable<List<TransferLedgerItem>>? transfers;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => TransferAiMonitor(
+    eventId: eventId,
+    enabled: transfers == null,
+    child: _buildOverview(context),
+  );
+
+  Widget _buildOverview(BuildContext context) {
     return ValueListenableBuilder<List<TransferLedgerItem>>(
       valueListenable: transfers ?? TransferLedgerStorage.items,
       builder: (context, all, _) {
@@ -121,26 +129,33 @@ class UploadTransferOverview extends StatelessWidget {
                           Positioned(
                             top: 3,
                             right: 3,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color:
-                                    item.status == TransferLedgerStatus.failed
-                                    ? palette.error
-                                    : Colors.black87,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                                vertical: 2,
-                              ),
-                              child: Text(
-                                label,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
+                            left: 3,
+                            child: Align(
+                              alignment: Alignment.topRight,
+                              child: item.aiLabel != null
+                                  ? AiRetouchBadge(label: item.aiLabel!)
+                                  : Container(
+                                      decoration: BoxDecoration(
+                                        color:
+                                            item.status ==
+                                                TransferLedgerStatus.failed
+                                            ? palette.error
+                                            : Colors.black87,
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 4,
+                                        vertical: 2,
+                                      ),
+                                      child: Text(
+                                        label,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
                             ),
                           ),
                           Positioned(

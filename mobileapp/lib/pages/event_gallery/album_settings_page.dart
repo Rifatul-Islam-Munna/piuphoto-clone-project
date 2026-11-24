@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/pages/event_gallery/album_branding_settings_page.dart';
+import 'package:mobileapp/pages/event_gallery/album_ai_settings_page.dart';
 import 'package:mobileapp/pages/event_gallery/event_auto_enhance_toggle.dart';
 import 'package:mobileapp/pages/event_gallery/upload_settings_page.dart';
 import 'package:mobileapp/pages/events/events_page.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
-class AlbumSettingsPage extends StatelessWidget {
+class AlbumSettingsPage extends StatefulWidget {
   const AlbumSettingsPage({
     super.key,
     required this.albumId,
@@ -24,6 +25,32 @@ class AlbumSettingsPage extends StatelessWidget {
   final String albumTitle;
   final String albumDescription;
   final VoidCallback onOpenWorkflow;
+
+  @override
+  State<AlbumSettingsPage> createState() => _AlbumSettingsPageState();
+}
+
+class _AlbumSettingsPageState extends State<AlbumSettingsPage> {
+  String? get albumId => widget.albumId;
+  String get eventId => widget.eventId;
+  String get eventTitle => widget.eventTitle;
+  String get albumTitle => widget.albumTitle;
+  String get albumDescription => widget.albumDescription;
+  VoidCallback get onOpenWorkflow => widget.onOpenWorkflow;
+  int _aiRevision = 0;
+
+  Future<void> _openAiSettings() async {
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => AlbumAiSettingsPage(
+          eventId: eventId,
+          albumId: albumId,
+          albumTitle: albumTitle,
+        ),
+      ),
+    );
+    if (mounted && saved == true) setState(() => _aiRevision++);
+  }
 
   Future<void> _openBasicInfo(BuildContext context) async {
     final updated = await Navigator.of(context).push<Map<String, String>>(
@@ -196,9 +223,17 @@ class AlbumSettingsPage extends StatelessWidget {
           ]),
           _sectionTitle('Workflow & upload'),
           _group([
-            // Same event-backed switch used on the live transfer screen.
-            // There is no separate per-upload enhancement setting.
-            EventAutoEnhanceToggle(eventId: eventId),
+            EventAutoEnhanceToggle(
+              key: ValueKey(_aiRevision),
+              eventId: eventId,
+              albumId: albumId,
+            ),
+            _tile(
+              icon: Icons.auto_awesome_rounded,
+              iconColor: AppColors.primary,
+              title: 'AI Retouch settings',
+              onTap: _openAiSettings,
+            ),
             _tile(
               icon: Icons.hub_outlined,
               iconColor: AppColors.primary,

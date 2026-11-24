@@ -1,9 +1,11 @@
-import { ForbiddenException, HttpException, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ForbiddenException, HttpException, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import axios from 'axios';
 import { createHash, createHmac, randomBytes } from 'crypto';
 import { Model, Types } from 'mongoose';
 import { EventMemberService } from '../event-member/event-member.service';
+import { GalleryAccessService } from '../gallery-access/gallery-access.service';
+import { deliveryRows } from '../event-image/image-delivery';
 import { Event, EventDocument } from '../event/entities/event.entity';
 import { EventImage, EventImageDocument } from '../event-image/entities/event-image.entity';
 import { CreateApiKeyDto, CreateApiWebhookDto } from './dto/external-api.dto';
@@ -28,6 +30,7 @@ export class ExternalApiService implements OnModuleInit,OnModuleDestroy {
     @InjectModel(Event.name) private readonly events:Model<EventDocument>,
     @InjectModel(EventImage.name) private readonly images:Model<EventImageDocument>,
     private readonly members:EventMemberService,
+    @Optional() private readonly galleryAccess?:GalleryAccessService,
   ){}
   onModuleInit(){ this.worker=setInterval(()=>void this.flush(),10000); this.worker.unref?.(); void this.flush(); }
   onModuleDestroy(){ if(this.worker) clearInterval(this.worker); }
@@ -98,5 +101,10 @@ export class ExternalApiService implements OnModuleInit,OnModuleDestroy {
     return {message:'Webhook delivery queued for retry',data};
   }
   async viewerEvent(eventId:string){ const event=await this.events.findById(eventId).select('title description image branding galleryVisibility gallerySlug').lean(); if(!event) throw new HttpException('Event not found',404); return {data:event}; }
-  async viewerImages(eventId:string,albumId?:string){ const data=await this.images.find({eventId:this.oid(eventId),isPublished:{$ne:false},...(albumId?{albumId:this.oid(albumId)}:{})}).select('_id imageUrl albumId isEnhanced mediaType createdAt').sort({createdAt:-1}).limit(1000).lean(); return {data,totalItems:data.length}; }
+  async viewerImages(eventId:string,albumId?:string){
+    const data=await this.images.find({eventId:this.oid(eventId),isPublished:{$ne:false},...(albumId?{albumId:this.oid(albumId)}:{}), ...await this.galleryAccess?.publishedVersionFilter(eventId,albumId)})
+      .sort({createdAt:-1}).limit(1000).lean();
+    const safe = await deliveryRows(this.images,data,albumId);
+    return {data:safe.map(row=>({_id:row._id,imageUrl:row.imageUrl,albumId:row.albumId,isEnhanced:row.isEnhanced,mediaType:row.mediaType,createdAt:(row as any).createdAt,thumbnailUrl:(row as any).thumbnailUrl,previewUrl:(row as any).previewUrl,viewUrl:(row as any).viewUrl})),totalItems:safe.length};
+  }
 }

@@ -33,6 +33,12 @@ export class EventImage {
   @Prop({ default: false, index: true })
   isEnhanced: boolean;
 
+  @Prop({ type: String, enum: ['pending', 'processing', 'completed', 'failed', 'skipped'], index: true })
+  enhancementStatus?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
+
+  @Prop({ type: String })
+  enhancementMessage?: string;
+
   @Prop({ type: Types.ObjectId, ref: 'EventImage', index: true })
   enhancedFromId?: Types.ObjectId;
 

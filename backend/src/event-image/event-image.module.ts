@@ -25,11 +25,14 @@ import {
 } from './entities/fal-enhancement-job.entity';
 import { MediaAiService } from './media-ai.service';
 import { ImagorCacheController, ImagorCacheService } from './imagor-cache.service';
+import { ImageModule } from '../image/image.module';
+import { EnhancementOutputService } from './enhancement-output.service';
 import { RetouchWorkflowModule } from '../retouch-workflow/retouch-workflow.module';
 import { WorkflowWebhookPublisherModule } from '../external-api/workflow-webhook-publisher.module';
 
 @Module({
   imports: [
+    ImageModule,
     EventMemberModule,
     TransferStatusModule,
     FaceSearchModule,
@@ -48,7 +51,7 @@ import { WorkflowWebhookPublisherModule } from '../external-api/workflow-webhook
     ]),
   ],
   controllers: [EventImageController, ImagorCacheController],
-  providers: [EventImageService, MediaAiService, ImagorCacheService],
+  providers: [EventImageService, MediaAiService, ImagorCacheService, EnhancementOutputService],
   exports: [EventImageService, MediaAiService],
 })
 export class EventImageModule {}

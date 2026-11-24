@@ -7,6 +7,7 @@ class WorkflowManagementPage extends StatefulWidget {
   const WorkflowManagementPage({
     super.key,
     required this.eventId,
+    this.albumId,
     required this.eventTitle,
     required this.albumTitle,
     required this.onOpenPhotoManagement,
@@ -14,6 +15,7 @@ class WorkflowManagementPage extends StatefulWidget {
   });
 
   final String eventId;
+  final String? albumId;
   final String eventTitle;
   final String albumTitle;
   final VoidCallback onOpenPhotoManagement;
@@ -44,9 +46,25 @@ class _WorkflowManagementPageState extends State<WorkflowManagementPage> {
       final event = raw is Map
           ? Map<String, dynamic>.from(raw)
           : <String, dynamic>{};
+      var enabled = event['autoEnhanceImages'] == true;
+      if (widget.albumId != null) {
+        final response = await DioHelper.get(
+          '/album/get-all',
+          queryParameters: {'eventId': widget.eventId},
+        );
+        final matches = (response.data['data'] as List).where(
+          (row) =>
+              row is Map &&
+              (row['_id'] ?? row['id']).toString() == widget.albumId,
+        );
+        if (matches.isEmpty) throw StateError('Album not found');
+        final album = matches.first as Map;
+        if (album['autoEnhanceImages'] is bool)
+          enabled = album['autoEnhanceImages'] == true;
+      }
       if (!mounted) return;
       setState(() {
-        _autoEnhanceImages = event['autoEnhanceImages'] == true;
+        _autoEnhanceImages = enabled;
       });
     } catch (_) {
       if (mounted) AppToast.error('Could not load workflow settings');
@@ -64,8 +82,8 @@ class _WorkflowManagementPageState extends State<WorkflowManagementPage> {
     });
     try {
       await DioHelper.patch(
-        '/event/update',
-        queryParameters: {'id': widget.eventId},
+        widget.albumId == null ? '/event/update' : '/album/update',
+        queryParameters: {'id': widget.albumId ?? widget.eventId},
         data: {'autoEnhanceImages': enabled},
       );
       AppToast.success(
@@ -219,7 +237,7 @@ class _WorkflowManagementPageState extends State<WorkflowManagementPage> {
                   icon: Icons.auto_awesome_outlined,
                   title: 'AI Retoucher',
                   subtitle:
-                      'Automatically keep the original photo and add an enhanced copy to the event.',
+                      'Automatically keep the original photo and add an enhanced copy to this album.',
                   trailing: SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     dense: true,

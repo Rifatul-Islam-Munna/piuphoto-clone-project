@@ -22,6 +22,7 @@ describe('EventImageService FAL webhook', () => {
     const eventImageModel = {
       findOne: jest.fn(),
       create: jest.fn(),
+      updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
     };
     const userModel = { findByIdAndUpdate: jest.fn() };
     const falEnhancementJobModel = {
@@ -43,6 +44,7 @@ describe('EventImageService FAL webhook', () => {
     const faceVectorService = { vectorsFromUrl: jest.fn().mockResolvedValue([]) };
     const qdrantFaceService = { upsertFaces: jest.fn().mockResolvedValue(undefined) };
 
+    const output = { save: jest.fn().mockResolvedValue('https://r2.example.com/enhanced.png') };
     const service = new EventImageService(
       eventImageModel as never,
       {} as never,
@@ -61,6 +63,7 @@ describe('EventImageService FAL webhook', () => {
       { queueAnalysis: jest.fn() } as never,
       { registerIncoming: jest.fn().mockResolvedValue(undefined) } as never,
       { publish: jest.fn().mockResolvedValue(0) } as never,
+      output as never,
     );
 
     return {
@@ -68,6 +71,7 @@ describe('EventImageService FAL webhook', () => {
       eventImageModel,
       userModel,
       falEnhancementJobModel,
+      output,
     };
   };
 
@@ -87,7 +91,7 @@ describe('EventImageService FAL webhook', () => {
   });
 
   it('saves enhanced image using pending job event context', async () => {
-    const { service, eventImageModel, falEnhancementJobModel } = makeService();
+    const { service, eventImageModel, falEnhancementJobModel, output } = makeService();
     const job = {
       _id: new Types.ObjectId(),
       requestId: 'fal-request-1',
@@ -95,6 +99,7 @@ describe('EventImageService FAL webhook', () => {
       uploaderId,
       ownerId,
       albumId,
+      sourceImageUrl: 'https://r2.example.com/original.jpg',
       status: FalEnhancementJobStatus.PENDING,
     };
     falEnhancementJobModel.findOne.mockReturnValue({
@@ -106,7 +111,7 @@ describe('EventImageService FAL webhook', () => {
       eventId,
       userTakenBy: uploaderId,
       albumId,
-      imageUrl: 'https://fal.media/enhanced.png',
+      imageUrl: 'https://r2.example.com/enhanced.png',
       isEnhanced: true,
     });
 
@@ -117,9 +122,10 @@ describe('EventImageService FAL webhook', () => {
       saved: true,
       eventImageId: String(eventImageId),
     });
+    expect(output.save).toHaveBeenCalledWith(job.sourceImageUrl, 'https://fal.media/enhanced.png', undefined, 'fal-request-1');
     expect(eventImageModel.create).toHaveBeenCalledWith({
       eventId,
-      imageUrl: 'https://fal.media/enhanced.png',
+      imageUrl: 'https://r2.example.com/enhanced.png',
       userTakenBy: uploaderId,
       albumId,
       isEnhanced: true,
@@ -182,6 +188,8 @@ describe('EventImageService FAL webhook', () => {
       'https://queue.fal.run/fal-ai/bytedance/seedream/v4/edit',
     );
     expect(callbackUrl.searchParams.get('type')).toBe('puiphoto');
+    expect((axios.post as jest.Mock).mock.calls[0][1].prompt).toContain('clear, visible improvement');
+    expect((axios.post as jest.Mock).mock.calls[0][1].prompt).not.toContain('Preserve the original image as much as possible');
     expect(falEnhancementJobModel.create).toHaveBeenCalledWith(
       expect.objectContaining({
         requestId: 'fal-request-1',
@@ -213,10 +221,12 @@ describe('EventImageService upload idempotency', () => {
       }),
     };
     const members = { assertCanUpload: jest.fn().mockResolvedValue(undefined) };
+    const output = { save: jest.fn().mockResolvedValue('https://r2.example.com/enhanced.png') };
     const service = new EventImageService(
       eventImageModel as never, eventModel as never, {} as never, {} as never,
       {} as never, {} as never, {} as never, { get: jest.fn() } as never,
       {} as never, {} as never, members as never, {} as never, {} as never,      {} as never, {} as never, {} as never, {} as never,
+      output as never,
     );
     const result = await service.create({
       eventId: String(eventId),
@@ -241,6 +251,7 @@ describe('EventImageService camera upload confirmation', () => {
     const model = {
       findOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }),
       create: jest.fn().mockResolvedValue(original),
+      updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
     };
     const publish = jest.fn().mockResolvedValue(0);
     const service = new EventImageService(
@@ -249,6 +260,7 @@ describe('EventImageService camera upload confirmation', () => {
       { assertCanUpload: jest.fn().mockResolvedValue(undefined) } as never,
       {} as never, {} as never, {} as never, {} as never, {} as never,
       { publish } as never,
+      { save: jest.fn() } as never,
     );
     jest.spyOn(service as any, 'assertCanUseEvent').mockResolvedValue(event);
     jest.spyOn(service as any, 'assertEventUploadLimit').mockResolvedValue(undefined);
@@ -329,6 +341,7 @@ describe('EventImageService camera upload confirmation', () => {
     fixture.rejectEnhancement(new Error('AI unavailable'));
     await expect(response).resolves.toMatchObject({ data: fixture.original });
     await new Promise(setImmediate);
-    expect(log).toHaveBeenCalledWith('image-enhance-failed', expect.any(Error));
+    expect(log).toHaveBeenCalledWith('image-enhance-failed', 'AI unavailable');
+    expect(fixture.model.updateOne).toHaveBeenCalledWith({ _id: String(fixture.original._id) }, { $set: { enhancementStatus: 'failed', enhancementMessage: expect.any(String) } });
   });
 });

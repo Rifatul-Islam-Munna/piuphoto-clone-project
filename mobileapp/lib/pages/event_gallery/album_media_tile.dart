@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/core/utils/image_loader.dart';
 import 'package:mobileapp/models/event_image_model.dart';
+import 'package:mobileapp/widgets/ai_retouch_badge.dart';
 
 /// One compact media thumbnail in the Album Management grid.
 ///
@@ -76,6 +77,22 @@ class AlbumMediaTile extends StatelessWidget {
                             borderRadius: BorderRadius.circular(8),
                           ),
                         ),
+                      if (!_isVideo)
+                        Positioned(
+                          top: 7,
+                          left: 7,
+                          right: 35,
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: AiRetouchBadge(
+                              label: image.enhancementLabel,
+                              message:
+                                  image.enhancementMessage?.isNotEmpty == true
+                                  ? image.enhancementMessage
+                                  : null,
+                            ),
+                          ),
+                        ),
                       Positioned(
                         top: 7,
                         right: 7,
@@ -99,15 +116,20 @@ class AlbumMediaTile extends StatelessWidget {
                       Positioned(
                         left: 7,
                         bottom: 7,
-                        child: Icon(
-                          image.isPublished ? Icons.check_circle : Icons.lock,
-                          color: image.isPublished
-                              ? const Color(0xFF34C759)
-                              : Colors.white,
-                          size: 18,
-                          shadows: const [
-                            Shadow(color: Colors.black54, blurRadius: 5),
-                          ],
+                        child: Tooltip(
+                          message: image.isPublished
+                              ? 'Published to gallery'
+                              : 'Hidden from gallery',
+                          child: Icon(
+                            image.isPublished ? Icons.check_circle : Icons.lock,
+                            color: image.isPublished
+                                ? const Color(0xFF34C759)
+                                : Colors.white,
+                            size: 18,
+                            shadows: const [
+                              Shadow(color: Colors.black54, blurRadius: 5),
+                            ],
+                          ),
                         ),
                       ),
                     ],
