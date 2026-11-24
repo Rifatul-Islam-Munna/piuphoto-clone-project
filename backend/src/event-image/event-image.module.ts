@@ -24,6 +24,7 @@ import {
   FalEnhancementJobSchema,
 } from './entities/fal-enhancement-job.entity';
 import { MediaAiService } from './media-ai.service';
+import { ImagorCacheController, ImagorCacheService } from './imagor-cache.service';
 import { RetouchWorkflowModule } from '../retouch-workflow/retouch-workflow.module';
 import { WorkflowWebhookPublisherModule } from '../external-api/workflow-webhook-publisher.module';
 
@@ -46,8 +47,8 @@ import { WorkflowWebhookPublisherModule } from '../external-api/workflow-webhook
       { name: FalEnhancementJob.name, schema: FalEnhancementJobSchema },
     ]),
   ],
-  controllers: [EventImageController],
-  providers: [EventImageService, MediaAiService],
+  controllers: [EventImageController, ImagorCacheController],
+  providers: [EventImageService, MediaAiService, ImagorCacheService],
   exports: [EventImageService, MediaAiService],
 })
 export class EventImageModule {}

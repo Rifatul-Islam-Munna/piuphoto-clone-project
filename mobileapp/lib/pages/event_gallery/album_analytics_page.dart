@@ -360,7 +360,7 @@ class _AlbumAnalyticsPageState extends State<AlbumAnalyticsPage> {
 
   Widget _popularPhoto(Map<String, dynamic> item) {
     final image = _map(item['image']);
-    final imageUrl = image['imageUrl']?.toString();
+    final imageUrl = (image['previewUrl'] ?? image['imageUrl'])?.toString();
     return Padding(
       padding: const EdgeInsets.only(bottom: 9),
       child: Row(

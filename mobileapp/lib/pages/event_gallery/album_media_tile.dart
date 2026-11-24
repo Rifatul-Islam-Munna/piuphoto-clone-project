@@ -60,7 +60,11 @@ class AlbumMediaTile extends StatelessWidget {
                           ),
                         )
                       else
-                        preview ?? ImageLoader.loadImage(image.imageUrl),
+                        preview ??
+                            ImageLoader.loadImage(
+                              image.displayUrl,
+                              fallbackUrl: image.imageUrl,
+                            ),
                       if (selected)
                         DecoratedBox(
                           decoration: BoxDecoration(
@@ -159,10 +163,12 @@ class AlbumPhotoViewerPage extends StatelessWidget {
   const AlbumPhotoViewerPage({
     super.key,
     required this.imageUrl,
+    this.originalUrl,
     required this.label,
   });
 
   final String imageUrl;
+  final String? originalUrl;
   final String label;
 
   @override
@@ -198,6 +204,7 @@ class AlbumPhotoViewerPage extends StatelessWidget {
           child: SizedBox.expand(
             child: ImageLoader.loadImage(
               imageUrl,
+              fallbackUrl: originalUrl,
               fit: BoxFit.contain,
               placeholder: const Center(
                 child: CircularProgressIndicator(color: Colors.white),

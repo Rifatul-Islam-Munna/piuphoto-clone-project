@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:mobileapp/core/utils/image_loader.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
@@ -1939,14 +1940,14 @@ class _PhotoPreview extends StatelessWidget {
     );
 
     Widget networkOrPlaceholder() {
-      if (!previewable || item.imageUrl?.isNotEmpty != true) {
+      if (!previewable || item.displayUrl?.isNotEmpty != true) {
         return placeholder();
       }
-      return Image.network(
-        item.imageUrl!,
+      return ImageLoader.loadImage(
+        item.displayUrl,
+        fallbackUrl: item.imageUrl,
         fit: BoxFit.cover,
-        cacheWidth: cacheWidth,
-        errorBuilder: (_, _, _) => placeholder(),
+        errorWidget: placeholder(),
       );
     }
 

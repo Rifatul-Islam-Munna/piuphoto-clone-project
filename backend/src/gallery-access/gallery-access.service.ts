@@ -124,8 +124,11 @@ export class GalleryAccessService {
           ? image.enhancedFromId
           : image._id,
       );
+      // Paid photos must never expose unrestricted cached or original URLs.
+      const safe = { ...image };
+      for (const key of Object.keys(safe)) if (key.startsWith('imagor') || ['thumbnailUrl', 'previewUrl', 'viewUrl', 'originalUrl', 'originalObjectKey'].includes(key)) delete safe[key];
       return {
-        ...image,
+        ...safe,
         imageUrl: `/store/public/preview?eventId=${encodeURIComponent(eventId)}&imageId=${encodeURIComponent(storeImageId)}`,
         storeImageId,
         purchaseRequired: true,

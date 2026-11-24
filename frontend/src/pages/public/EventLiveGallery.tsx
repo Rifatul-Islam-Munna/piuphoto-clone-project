@@ -130,6 +130,9 @@ type GalleryImage = {
   _id?: string;
   id?: string;
   imageUrl?: string;
+  thumbnailUrl?: string;
+  previewUrl?: string;
+  viewUrl?: string;
   isEnhanced?: boolean;
   mediaType?: "photo" | "video";
   userTakenBy?: { name?: string } | string;
@@ -228,25 +231,6 @@ const watermarkPositionClass = (position?: string) => {
       return "bottom-3 right-3";
   }
 };
-
-async function downloadImage(url: string, filename: string) {
-  try {
-    const response = await fetch(url, { mode: "cors" });
-    if (!response.ok) throw new Error("download failed");
-    const blob = await response.blob();
-    const localUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = localUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    // Mobile browsers may not have accepted the download yet.
-    window.setTimeout(() => URL.revokeObjectURL(localUrl), 60_000);
-  } catch {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
-}
 
 export default function EventLiveGallery() {
   const { eventId = "", albumId, imageId: routeImageId } = useParams();
@@ -830,7 +814,7 @@ export default function EventLiveGallery() {
       ? nativeDownloadUrl(baseUrl, {
           eventId, albumId, accessToken, guestToken,
           ids: nativeIds,
-          single: downloadable.length === 1,
+          single: false,
         })
       : "";
     // A real HTTP attachment works on iOS Safari without delayed synthetic
@@ -850,17 +834,6 @@ export default function EventLiveGallery() {
       toast.info("Your browser is opening the file download. On iPhone, check Files > Downloads.");
       return;
     }
-    if (downloadable.length === 1) {
-      const image = downloadable[0];
-      setDownloading(true);
-      void downloadImage(
-        assetUrl(image.imageUrl),
-        galleryFileName(assetUrl(image.imageUrl), imageId(image), image.mediaType, 0),
-      ).then(() => track("download"))
-        .finally(() => setDownloading(false));
-      return;
-    }
-
     const files = downloadable.map((image, index) => ({
       url: assetUrl(image.imageUrl),
       name: galleryFileName(
@@ -1338,7 +1311,7 @@ export default function EventLiveGallery() {
     ))
     ? nativeDownloadUrl(baseUrl, {
         eventId, albumId, accessToken, guestToken, ids: iosNativeIds,
-        single: iosNativeTargets.length === 1,
+        single: false,
       })
     : null;
   const iosDownloadLink = iosNativeUrl && iosNativeUrl.length < 7900 ? iosNativeUrl : null;
@@ -1809,7 +1782,8 @@ export default function EventLiveGallery() {
                         }}
                       >
                         <img
-                          src={assetUrl(image.imageUrl)}
+                          src={assetUrl(image.previewUrl || image.imageUrl)}
+                          onError={(event) => { const fallback = assetUrl(image.imageUrl); if (fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
                           alt={`Event photo ${index + 1}`}
                           loading="lazy"
                           decoding="async"
@@ -1869,7 +1843,7 @@ export default function EventLiveGallery() {
                         aria-label="Download original photo"
                         href={nativeDownloadUrl(baseUrl, {
                           eventId, albumId, accessToken, guestToken,
-                          ids: [id], single: true,
+                          ids: [id], single: false,
                         })}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -2099,7 +2073,7 @@ export default function EventLiveGallery() {
                     const directLink = /^[a-f0-9]{24}$/i.test(id)
                       ? nativeDownloadUrl(baseUrl, {
                           eventId, albumId, accessToken, guestToken,
-                          ids: [id], single: true,
+                          ids: [id], single: false,
                         })
                       : null;
                     return (
@@ -2109,7 +2083,8 @@ export default function EventLiveGallery() {
                       >
                         <div className="aspect-square bg-muted">
                           <img
-                            src={assetUrl(image.imageUrl)}
+                            src={assetUrl(image.thumbnailUrl || image.previewUrl || image.imageUrl)}
+                            onError={(event) => { const fallback = assetUrl(image.imageUrl); if (fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
                             alt={`Event photo ${index + 1}`}
                             loading="lazy"
                             className="h-full w-full object-cover"
@@ -2304,7 +2279,7 @@ export default function EventLiveGallery() {
       {focusedImage ? (
         <GalleryLightbox
           image={focusedImage}
-          imageUrl={assetUrl(focusedImage.imageUrl)}
+          imageUrl={assetUrl(focusedImage.viewUrl || focusedImage.imageUrl)}
           position={focusedIndex + 1}
           total={images.length}
           onClose={closeFocusedImage}
@@ -2544,6 +2519,7 @@ function GalleryLightbox({
       ) : (
         <img
           src={imageUrl}
+          onError={(event) => { const fallback = assetUrl(image.imageUrl); if (fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
           alt={`Event photo ${position}`}
           className="max-h-screen max-w-full object-contain"
         />

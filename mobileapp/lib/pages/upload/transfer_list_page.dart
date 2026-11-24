@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
+import 'package:mobileapp/core/utils/image_loader.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/upload_queue_service.dart';
@@ -152,16 +153,16 @@ class TransferListPage extends StatelessWidget {
       }
     }
 
-    if (previewable && item.imageUrl?.isNotEmpty == true) {
+    if (previewable && item.displayUrl?.isNotEmpty == true) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(9),
-        child: Image.network(
-          item.imageUrl!,
+        child: ImageLoader.loadImage(
+          item.displayUrl,
+          fallbackUrl: item.imageUrl,
           height: 56,
           width: 56,
           fit: BoxFit.cover,
-          cacheHeight: 180,
-          errorBuilder: (_, _, _) => fallback(),
+          errorWidget: fallback(),
         ),
       );
     }

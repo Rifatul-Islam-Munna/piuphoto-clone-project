@@ -38,6 +38,7 @@ class TransferLedgerItem {
     this.waitingForConnection = false,
     this.error,
     this.imageUrl,
+    this.previewUrl,
   });
   final String id;
   final String eventId;
@@ -67,6 +68,9 @@ class TransferLedgerItem {
   final bool waitingForConnection;
   final String? error;
   final String? imageUrl;
+  final String? previewUrl;
+  String? get displayUrl =>
+      previewUrl?.isNotEmpty == true ? previewUrl : imageUrl;
 
   bool get isUploaded =>
       status == TransferLedgerStatus.published ||
@@ -91,6 +95,7 @@ class TransferLedgerItem {
     String? localPath,
     String? error,
     String? imageUrl,
+    String? previewUrl,
     bool clearError = false,
   }) {
     return TransferLedgerItem(
@@ -114,6 +119,7 @@ class TransferLedgerItem {
       waitingForConnection: waitingForConnection ?? this.waitingForConnection,
       error: clearError ? null : (error ?? this.error),
       imageUrl: imageUrl ?? this.imageUrl,
+      previewUrl: previewUrl ?? this.previewUrl,
     );
   }
 
@@ -138,6 +144,7 @@ class TransferLedgerItem {
     'waitingForConnection': waitingForConnection,
     'error': error,
     'imageUrl': imageUrl,
+    'previewUrl': previewUrl,
   };
   factory TransferLedgerItem.fromJson(Map<String, dynamic> json) {
     final statusName = json['status']?.toString() ?? 'queued';
@@ -171,6 +178,7 @@ class TransferLedgerItem {
       waitingForConnection: json['waitingForConnection'] == true,
       error: json['error']?.toString(),
       imageUrl: json['imageUrl']?.toString(),
+      previewUrl: json['previewUrl']?.toString(),
     );
   }
 }
@@ -232,6 +240,7 @@ class TransferLedgerStorage {
             item.registrationStarted || existing.registrationStarted,
         localPath: item.localPath ?? existing.localPath,
         imageUrl: item.imageUrl ?? existing.imageUrl,
+        previewUrl: item.previewUrl ?? existing.previewUrl,
       );
     }
     next.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
@@ -293,6 +302,7 @@ class TransferLedgerStorage {
     bool waitingForConnection = false,
     String? error,
     String? imageUrl,
+    String? previewUrl,
     String? localPath,
   }) {
     return _mutate((current) {
@@ -312,6 +322,7 @@ class TransferLedgerStorage {
           waitingForConnection: waitingForConnection,
           error: error,
           imageUrl: imageUrl,
+          previewUrl: previewUrl,
           localPath: localPath,
           clearError: error == null,
         ),

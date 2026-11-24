@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:mobileapp/core/utils/image_loader.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 
 /// Always-visible overview on the Upload page. The full searchable/filterable
@@ -199,12 +200,12 @@ class UploadTransferOverview extends StatelessWidget {
     ].any(filename.endsWith)) {
       return placeholder();
     }
-    Widget network() => item.imageUrl?.isNotEmpty == true
-        ? Image.network(
-            item.imageUrl!,
+    Widget network() => item.displayUrl?.isNotEmpty == true
+        ? ImageLoader.loadImage(
+            item.displayUrl,
+            fallbackUrl: item.imageUrl,
             fit: BoxFit.cover,
-            cacheWidth: 280,
-            errorBuilder: (_, _, _) => placeholder(),
+            errorWidget: placeholder(),
           )
         : placeholder();
     if (item.localPath?.isNotEmpty == true) {

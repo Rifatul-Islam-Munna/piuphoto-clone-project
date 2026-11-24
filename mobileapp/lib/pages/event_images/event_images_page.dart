@@ -1,5 +1,6 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
+import 'package:mobileapp/core/utils/image_loader.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
 import 'package:mobileapp/core/router/app_router.dart';
@@ -368,19 +369,19 @@ class _EventImagesPageState extends State<EventImagesPage> {
                                                       ),
                                                     ),
                                                   )
-                                                : Image.network(
-                                                    image.imageUrl,
+                                                : ImageLoader.loadImage(
+                                                    image.displayUrl,
+                                                    fallbackUrl: image.imageUrl,
                                                     fit: BoxFit.cover,
-                                                    errorBuilder: (_, _, _) =>
-                                                        const ColoredBox(
-                                                          color: Colors.black12,
-                                                          child: Center(
-                                                            child: Icon(
-                                                              Icons
-                                                                  .broken_image_outlined,
-                                                            ),
-                                                          ),
+                                                    errorWidget: const ColoredBox(
+                                                      color: Colors.black12,
+                                                      child: Center(
+                                                        child: Icon(
+                                                          Icons
+                                                              .broken_image_outlined,
                                                         ),
+                                                      ),
+                                                    ),
                                                   ),
                                             Positioned(
                                               top: 8,

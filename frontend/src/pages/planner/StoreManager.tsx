@@ -36,6 +36,7 @@ type Album = { _id: string; title: string };
 type SalePhoto = {
   _id: string;
   imageUrl: string;
+  previewUrl?: string;
   isForSale?: boolean;
   albumId?: { _id: string; title?: string } | string;
 };
@@ -652,7 +653,7 @@ export default function StoreManager() {
                     className="overflow-hidden rounded-xl border"
                   >
                     <img
-                      src={photo.imageUrl}
+                      src={photo.previewUrl || photo.imageUrl}
                       className="aspect-[4/3] w-full object-cover"
                       loading="lazy"
                     />

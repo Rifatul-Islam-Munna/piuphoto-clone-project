@@ -2,6 +2,8 @@ class EventImageModel {
   const EventImageModel({
     required this.id,
     required this.imageUrl,
+    this.previewUrl,
+    this.viewUrl,
     this.isEnhanced = false,
     this.isPublished = true,
     this.mediaType = 'photo',
@@ -13,6 +15,11 @@ class EventImageModel {
 
   final String id;
   final String imageUrl;
+  final String? previewUrl;
+  final String? viewUrl;
+  String get displayUrl =>
+      previewUrl?.isNotEmpty == true ? previewUrl! : imageUrl;
+  String get fullViewUrl => viewUrl?.isNotEmpty == true ? viewUrl! : displayUrl;
   final bool isEnhanced;
   final bool isPublished;
   final String mediaType;
@@ -28,6 +35,8 @@ class EventImageModel {
     return EventImageModel(
       id: json['_id']?.toString() ?? json['id']?.toString() ?? '',
       imageUrl: json['imageUrl']?.toString() ?? '',
+      previewUrl: json['previewUrl']?.toString(),
+      viewUrl: json['viewUrl']?.toString(),
       isEnhanced: json['isEnhanced'] == true,
       isPublished: json['isPublished'] != false,
       mediaType: json['mediaType']?.toString() ?? 'photo',

@@ -11,6 +11,19 @@ export class EventImage {
   @Prop({ required: true, trim: true })
   imageUrl: string;
 
+  // Persistent, leased Imagor queue. Original imageUrl is never overwritten.
+  @Prop({ type: String, enum: ['pending', 'processing', 'ready', 'failed', 'unsupported'] })
+  imagorStatus?: string;
+  @Prop({ type: String }) imagorSource?: string;
+  @Prop({ type: String }) imagorSignature?: string;
+  @Prop({ type: String }) imagorConfig?: string;
+  @Prop({ type: String }) imagorLease?: string;
+  @Prop({ type: Date }) imagorNextAt?: Date;
+  @Prop({ type: Number }) imagorAttempts?: number;
+  @Prop({ type: String }) imagorSmallUrl?: string;
+  @Prop({ type: String }) imagorViewUrl?: string;
+  @Prop({ type: [String], default: undefined }) imagorTransformUrls?: string[];
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   userTakenBy: Types.ObjectId;
 
@@ -92,6 +105,7 @@ export class EventImage {
 export const EventImageSchema = SchemaFactory.createForClass(EventImage);
 
 EventImageSchema.index({ eventId: 1, createdAt: -1 });
+EventImageSchema.index({ imagorStatus: 1, imagorNextAt: 1, createdAt: 1 });
 EventImageSchema.index({ eventId: 1, userTakenBy: 1, createdAt: -1 });
 EventImageSchema.index({ eventId: 1, albumId: 1, createdAt: -1 });
 

@@ -47,6 +47,7 @@ type EventsResponse = {
 type ImageType = {
   _id: string;
   imageUrl: string;
+  previewUrl?: string;
   isEnhanced?: boolean;
   isPublished?: boolean;
   createdAt?: string;
@@ -229,7 +230,7 @@ export default function UserGallery() {
                     className="overflow-hidden rounded-lg border"
                   >
                     <img
-                      src={image.imageUrl}
+                      src={image.previewUrl || image.imageUrl}
                       alt="Event"
                       className="aspect-square w-full object-cover"
                     />

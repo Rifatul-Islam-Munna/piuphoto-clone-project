@@ -45,6 +45,15 @@ describe('native gallery ZIP authorization', () => {
     expect(storage.openStoredUrl).toHaveBeenCalledWith(publicRows[0].imageUrl, expect.any(AbortSignal));
   });
 
+  it('always archives original bytes even if a compressed preview and view are available', async () => {
+    const original = publicRows[0].imageUrl;
+    const { service, storage } = setup([{ ...publicRows[0], previewUrl: 'https://cache.example.test/photo.avif', viewUrl: 'https://cache.example.test/view.avif' }]);
+    const entries = await service.prepare({ eventId, ids: first });
+    await entries[0].open(new AbortController().signal);
+    expect(entries[0].name.endsWith('.jpg')).toBe(true);
+    expect(storage.openStoredUrl).toHaveBeenCalledWith(original, expect.any(AbortSignal));
+  });
+
   it('enforces paid originals even when an image ID was supplied', async () => {
     const { service } = setup([{ ...publicRows[0], purchaseRequired: true }]);
     await expect(service.prepare({ eventId, ids: first })).rejects.toThrow(ForbiddenException);

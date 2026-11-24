@@ -870,7 +870,8 @@ class _EventGalleryPageState extends State<EventGalleryPage> {
                       ClipRRect(
                         borderRadius: BorderRadius.circular(9),
                         child: ImageLoader.loadImage(
-                          image.imageUrl,
+                          image.displayUrl,
+                          fallbackUrl: image.imageUrl,
                           fit: BoxFit.cover,
                         ),
                       ),

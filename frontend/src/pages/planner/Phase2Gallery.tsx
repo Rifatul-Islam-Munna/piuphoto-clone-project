@@ -40,6 +40,9 @@ type AlbumType = { _id: string; title: string };
 type ImageType = {
   _id: string;
   imageUrl: string;
+  thumbnailUrl?: string;
+  previewUrl?: string;
+  viewUrl?: string;
   isEnhanced?: boolean;
   isPublished?: boolean;
   mediaType?: "photo" | "video";
@@ -564,7 +567,7 @@ export default function Phase2Gallery() {
                       {image.mediaType === "video" ? (
                         <video src={image.imageUrl} controls preload="metadata" className="h-full w-full object-cover" />
                       ) : (
-                        <img src={image.imageUrl} alt="" className="h-full w-full object-cover" />
+                        <img src={image.previewUrl || image.imageUrl} alt="" className="h-full w-full object-cover" />
                       )}
                       <label className="absolute left-3 top-3 rounded-full bg-background/90 p-2 shadow">
                         <Checkbox
@@ -716,8 +719,8 @@ export default function Phase2Gallery() {
             <div className="w-full max-w-5xl rounded-2xl bg-background p-4" onClick={(event) => event.stopPropagation()}>
               <div className="mb-3 flex items-center justify-between"><p className="font-semibold">Before / after</p><Button variant="ghost" onClick={() => setCompare(null)}>Close</Button></div>
               <div className="grid gap-3 md:grid-cols-2">
-                <div><p className="mb-2 text-xs font-semibold text-muted-foreground">ORIGINAL</p><img src={compare.before.imageUrl} alt="Original" className="max-h-[70vh] w-full rounded-xl object-contain" /></div>
-                <div><p className="mb-2 text-xs font-semibold text-muted-foreground">ENHANCED</p><img src={compare.after.imageUrl} alt="Enhanced" className="max-h-[70vh] w-full rounded-xl object-contain" /></div>
+                <div><p className="mb-2 text-xs font-semibold text-muted-foreground">ORIGINAL</p><img src={compare.before.viewUrl || compare.before.imageUrl} alt="Original" className="max-h-[70vh] w-full rounded-xl object-contain" /></div>
+                <div><p className="mb-2 text-xs font-semibold text-muted-foreground">ENHANCED</p><img src={compare.after.viewUrl || compare.after.imageUrl} alt="Enhanced" className="max-h-[70vh] w-full rounded-xl object-contain" /></div>
               </div>
             </div>
           </div>

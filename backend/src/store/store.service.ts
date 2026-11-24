@@ -29,6 +29,7 @@ import {
 } from '../event-image/entities/event-image.entity';
 import { NotificationService } from '../notification/notification.service';
 import { MinioService } from '../lib/minio.service';
+import { deliveryRows } from '../event-image/image-delivery';
 import { safePhotoEntryName } from '../gallery-download/gallery-download.service';
 import { streamPhotoZip } from '../gallery-download/stream-photo-zip';
 import { downloadAttachmentHeader } from './download-attachment-header';
@@ -1222,12 +1223,12 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
         isEnhanced: { $ne: true },
         mediaType: { $ne: 'video' },
       })
-      .select('_id imageUrl albumId isForSale createdAt')
+      .select('_id eventId imageUrl albumId isForSale createdAt mediaType imagorStatus imagorSource imagorSignature imagorConfig imagorSmallUrl imagorViewUrl')
       .populate('albumId', 'title')
       .sort({ createdAt: -1 })
       .limit(1000)
       .lean();
-    return { data, totalItems: data.length };
+    return { data: await deliveryRows(this.images, data), totalItems: data.length };
   }
   async updatePhotoSale(dto: StoreSaleDto, userId?: string, role?: string) {
     await this.members.assertCanManage(dto.eventId, userId, role);

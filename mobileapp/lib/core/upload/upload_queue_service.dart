@@ -241,6 +241,7 @@ class UploadQueueService {
         bytesTotal: fileSize > 0 ? fileSize : (previous?.bytesTotal ?? 0),
         registrationStarted: previous?.registrationStarted ?? false,
         imageUrl: previous?.imageUrl,
+        previewUrl: previous?.previewUrl,
         error: error,
       ),
     );
@@ -308,6 +309,7 @@ class UploadQueueService {
     bool waitingForConnection = false,
     String? error,
     String? imageUrl,
+    String? previewUrl,
     String? localPath,
     String? eventImageId,
   }) async {
@@ -325,6 +327,7 @@ class UploadQueueService {
       waitingForConnection: waitingForConnection,
       error: error,
       imageUrl: imageUrl,
+      previewUrl: previewUrl,
       localPath: localPath,
     );
     final item = TransferLedgerStorage.find(transferId);
@@ -924,34 +927,35 @@ class UploadQueueService {
       );
       final confirmationToken = CancelToken();
       final confirmationTimeout = cloudConfirmationTimeout;
-      final eventResponse = await DioHelper.post(
-        '/eventImage',
-        data: {
-          'eventId': event.id,
-          'clientTransferId': transferId,
-          'imageUrl': imageUrl,
-          'isEnhanced': isEnhanced,
-          'mediaType': _mediaType(filename),
-          'albumId': ?albumId,
-        },
-        cancelToken: confirmationToken,
-        options: Options(
-          sendTimeout: confirmationTimeout,
-          receiveTimeout: confirmationTimeout,
-        ),
-      ).timeout(
-        confirmationTimeout,
-        onTimeout: () {
-          // Bound the entire confirmation, including interceptors and stalled
-          // response streams. Keep the saved URL and transfer ID for a safe
-          // retry: cancelling HTTP does not undo a possible server commit.
-          confirmationToken.cancel('Cloud confirmation timed out');
-          throw TimeoutException(
-            'Cloud confirmation timed out. AirPix will retry.',
+      final eventResponse =
+          await DioHelper.post(
+            '/eventImage',
+            data: {
+              'eventId': event.id,
+              'clientTransferId': transferId,
+              'imageUrl': imageUrl,
+              'isEnhanced': isEnhanced,
+              'mediaType': _mediaType(filename),
+              'albumId': ?albumId,
+            },
+            cancelToken: confirmationToken,
+            options: Options(
+              sendTimeout: confirmationTimeout,
+              receiveTimeout: confirmationTimeout,
+            ),
+          ).timeout(
             confirmationTimeout,
+            onTimeout: () {
+              // Bound the entire confirmation, including interceptors and stalled
+              // response streams. Keep the saved URL and transfer ID for a safe
+              // retry: cancelling HTTP does not undo a possible server commit.
+              confirmationToken.cancel('Cloud confirmation timed out');
+              throw TimeoutException(
+                'Cloud confirmation timed out. AirPix will retry.',
+                confirmationTimeout,
+              );
+            },
           );
-        },
-      );
       final eventResponseData = eventResponse.data;
       final createdData = eventResponseData is Map
           ? eventResponseData['data']
@@ -979,6 +983,7 @@ class UploadQueueService {
             : TransferLedgerStatus.processing,
         progress: 100,
         imageUrl: imageUrl,
+        previewUrl: createdData['previewUrl']?.toString(),
         eventImageId: eventImageId,
       );
     } finally {

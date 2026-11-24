@@ -255,8 +255,11 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
     if (image.mediaType.toLowerCase() == 'video') return;
     Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) =>
-            AlbumPhotoViewerPage(imageUrl: image.imageUrl, label: label),
+        builder: (_) => AlbumPhotoViewerPage(
+          imageUrl: image.fullViewUrl,
+          originalUrl: image.imageUrl,
+          label: label,
+        ),
       ),
     );
   }
@@ -809,7 +812,8 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
                           ),
                           child: _images.isNotEmpty
                               ? ImageLoader.loadImage(
-                                  _images.first.imageUrl,
+                                  _images.first.displayUrl,
+                                  fallbackUrl: _images.first.imageUrl,
                                   fit: BoxFit.cover,
                                 )
                               : const Icon(

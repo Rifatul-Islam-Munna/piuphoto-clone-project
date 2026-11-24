@@ -6,6 +6,7 @@ import { Model, Types } from 'mongoose';
 import { EventMemberService } from '../event-member/event-member.service';
 import { Event, EventDocument } from '../event/entities/event.entity';
 import { EventImage, EventImageDocument } from '../event-image/entities/event-image.entity';
+import { withDelivery } from '../event-image/image-delivery';
 import { FalEnhancementJob, FalEnhancementJobDocument } from '../event-image/entities/fal-enhancement-job.entity';
 import { GuestFaceRegistration, GuestFaceRegistrationDocument } from '../guest-gallery/entities/guest-face-registration.entity';
 import { GuestNotification, GuestNotificationDocument } from '../guest-gallery/entities/guest-notification.entity';
@@ -64,9 +65,9 @@ export class AnalyticsService {
       {$addFields:{score:{$add:['$views',{$multiply:['$downloads',3]},{$multiply:['$shares',2]}]}}},
       {$sort:{score:-1}},{$limit:12},
     ]);
-    const topRows=topStats.length?await this.images.find({_id:{$in:topStats.map(row=>row._id)}}).select('_id imageUrl albumId userTakenBy').populate('albumId','title').populate('userTakenBy','name').lean():[];
+    const topRows=topStats.length?await this.images.find({_id:{$in:topStats.map(row=>row._id)}}).select('_id imageUrl albumId userTakenBy mediaType').populate('albumId','title').populate('userTakenBy','name').lean():[];
     const topMap=new Map(topRows.map(row=>[String(row._id),row]));
-    const popularPhotos=topStats.map(stat=>({imageId:String(stat._id),views:stat.views,downloads:stat.downloads,shares:stat.shares,score:stat.score,image:topMap.get(String(stat._id))}));    const counts=Object.fromEntries(eventCounts.map(x=>[x._id,x.count]));
+    const popularPhotos=topStats.map(stat=>({imageId:String(stat._id),views:stat.views,downloads:stat.downloads,shares:stat.shares,score:stat.score,image:withDelivery(topMap.get(String(stat._id)))}));    const counts=Object.fromEntries(eventCounts.map(x=>[x._id,x.count]));
     return {eventId:query.eventId,engagement:{...counts,uniqueViewers:uniqueViewers.filter(Boolean).length},photos:{captured:photoCounts,published:publishedCount},daily:daily.map(x=>({date:x._id,count:x.count})),photographers,retouch:{statuses:Object.fromEntries(retouchCounts.map(x=>[x._id,x.count])),averageTurnaroundMinutes:Math.round(((retouchTurnaround[0]?.avgMs||0)/60000)*10)/10},store:{revenue:paid[0]?.revenue||0,paidOrders:paid[0]?.orders||0,purchasedPhotos:paid[0]?.photos||0,statuses:Object.fromEntries(orderCounts.map(x=>[x._id,x.count]))},ai:Object.fromEntries(aiCounts.map(x=>[x._id,x.count])),guests:{activePersonalGalleries:guestCount,notifications:Object.fromEntries(notificationCounts.map(x=>[x._id,x.count]))},transfers:Object.fromEntries(transferCounts.map(x=>[x._id,x.count])),popularPhotos};
   }
 }

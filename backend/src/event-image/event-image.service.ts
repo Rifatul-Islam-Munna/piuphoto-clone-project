@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   MessageEvent,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
@@ -45,6 +46,8 @@ import {
 import { GalleryAccessService } from '../gallery-access/gallery-access.service';
 import { GuestGalleryService } from '../guest-gallery/guest-gallery.service';
 import { MediaAiService } from './media-ai.service';
+import { deliveryRows, withDelivery } from './image-delivery';
+import { ImagorCacheService } from './imagor-cache.service';
 import { RetouchWorkflowService } from '../retouch-workflow/retouch-workflow.service';
 import { WorkflowWebhookPublisherService } from '../external-api/workflow-webhook-publisher.service';
 
@@ -87,6 +90,7 @@ export class EventImageService {
     private readonly mediaAiService: MediaAiService,
     private readonly retouchWorkflowService: RetouchWorkflowService,
     private readonly workflowWebhooks: WorkflowWebhookPublisherService,
+    @Optional() private readonly imagorCache?: ImagorCacheService,
   ) {}
 
   private gallerySubject(eventId: string) {
@@ -836,7 +840,7 @@ export class EventImageService {
       if (existing) {
         return {
           message: 'Event image already received',
-          data: existing,
+          data: withDelivery(existing),
           enhancedData: null,
           enhancementJob: null,
           idempotent: true,
@@ -881,7 +885,7 @@ export class EventImageService {
         if (existing) {
           return {
             message: 'Event image already received',
-            data: existing,
+            data: withDelivery(existing),
             enhancedData: null,
             enhancementJob: null,
             idempotent: true,
@@ -943,8 +947,8 @@ export class EventImageService {
 
     return {
       message: 'Event image created successfully',
-      data: eventImage,
-      enhancedData: enhancedImage,
+      data: withDelivery(eventImage),
+      enhancedData: withDelivery(enhancedImage),
       enhancementJob,
     };
   }
@@ -1060,8 +1064,8 @@ export class EventImageService {
 
     return {
       message: 'Event images created successfully',
-      data: eventImages,
-      enhancedData: enhancedImages,
+      data: eventImages.map(image => withDelivery(image)),
+      enhancedData: enhancedImages.map(image => withDelivery(image)),
       enhancementJobs,
       uploadedCount: eventImages.length,
     };
@@ -1181,12 +1185,12 @@ export class EventImageService {
       totalItems: sortedData.length,
       faces,
     };
-    if (!publicAccess || !query.eventId) return response;
+    if (!publicAccess || !query.eventId) return { ...response, data: await deliveryRows(this.eventImageModel, sortedData, query.albumId) };
     const protectedRows = await this.galleryAccessService.protectStoreOriginals(
       query.eventId,
       sortedData as Array<Record<string, any>>,
     );
-    return { ...response, ...protectedRows };
+    return { ...response, ...protectedRows, data: await deliveryRows(this.eventImageModel, protectedRows.data, query.albumId) };
   }
 
   async findAll(query: EventImageFilterDto, userId?: string, role?: string) {
@@ -1232,7 +1236,7 @@ export class EventImageService {
     const totalPages = Math.ceil(totalItems / limit);
 
     return {
-      data,
+      data: await deliveryRows(this.eventImageModel, data, query.albumId),
       page,
       limit,
       totalItems,
@@ -1298,7 +1302,7 @@ export class EventImageService {
       eventId,
       data as Array<Record<string, any>>,
     );
-    return { ...protectedRows, totalItems: protectedRows.data.length };
+    return { ...protectedRows, data: await deliveryRows(this.eventImageModel, protectedRows.data, albumId), totalItems: protectedRows.data.length };
   }
 
   async findOne(id: string, userId?: string, role?: string) {
@@ -1322,7 +1326,7 @@ export class EventImageService {
         : String(eventImage.eventId);
     await this.assertCanUseEvent(eventId, userId, role);
 
-    return eventImage;
+    return (await deliveryRows(this.eventImageModel, [eventImage]))[0];
   }
 
   async setPublished(
@@ -1383,7 +1387,7 @@ export class EventImageService {
 
     const existing = await this.eventImageModel
       .findById(id)
-      .select('eventId albumId')
+      .select('eventId albumId imageUrl mediaType imagorTransformUrls')
       .lean();
 
     if (!existing) {
@@ -1408,6 +1412,7 @@ export class EventImageService {
     }
 
     const update: Record<string, unknown> = { ...updateEventImageDto };
+    if (updateEventImageDto.imageUrl && updateEventImageDto.imageUrl !== existing.imageUrl) { update.imagorStatus = 'pending'; update.imagorSource = ''; update.imagorSignature = ''; update.imagorLease = ''; update.imagorSmallUrl = ''; update.imagorViewUrl = ''; update.imagorAttempts = 0; }
     if (updateEventImageDto.eventId) {
       update.eventId = this.toObjectId(updateEventImageDto.eventId);
     }
@@ -1418,7 +1423,10 @@ export class EventImageService {
       .findByIdAndUpdate(id, { $set: update }, { new: true })
       .lean();
 
-    return { message: 'Event image updated successfully', data: eventImage };
+    if (eventImage && updateEventImageDto.imageUrl && updateEventImageDto.imageUrl !== existing.imageUrl) {
+      await this.imagorCache?.scheduleCleanup(existing).catch(error => this.logger.warn('Image cache cleanup enqueue failed', error));
+    }
+    return { message: 'Event image updated successfully', data: withDelivery(eventImage) };
   }
 
   async remove(id: string, userId?: string, role?: string) {
@@ -1444,7 +1452,8 @@ export class EventImageService {
     );
     const eventImage = await this.eventImageModel.findByIdAndDelete(id).lean();
 
-    return { message: 'Event image deleted successfully', data: eventImage };
+    await this.imagorCache?.scheduleCleanup(eventImage).catch(error => this.logger.warn('Image cache cleanup enqueue failed', error));
+    return { message: 'Event image deleted successfully', data: withDelivery(eventImage) };
   }
 
   async enhanceExisting(

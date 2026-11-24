@@ -22,6 +22,7 @@ import {
 import { FaceVectorService } from '../face-search/face-vector.service';
 import { QdrantFaceService } from '../face-search/qdrant-face.service';
 import { GalleryAccessService } from '../gallery-access/gallery-access.service';
+import { deliveryRows } from '../event-image/image-delivery';
 import { NotificationService } from '../notification/notification.service';
 import { Event, EventDocument } from '../event/entities/event.entity';
 import {
@@ -404,7 +405,7 @@ export class GuestGalleryService implements OnModuleInit, OnModuleDestroy {
       data as Array<Record<string, any>>,
     );
     return {
-      data: protectedRows.data,
+      data: await deliveryRows(this.eventImages, protectedRows.data, albumId),
       totalItems: protectedRows.data.length,
       storeEnabled: protectedRows.storeEnabled,
       accessToken,

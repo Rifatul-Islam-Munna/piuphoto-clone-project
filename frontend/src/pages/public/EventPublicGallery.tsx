@@ -19,11 +19,15 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { GetRequestAxios, PostRequestAxios } from "@/api-hooks/api-hooks";
 import { PhotoMasonry } from "@/components/gallery/PhotoMasonry";
+import { archiveName, createGalleryZip, galleryFileName, hasDirectDiskSave, reserveZipFile } from "@/lib/gallery-zip-download";
 
 type EventImage = {
   _id?: string;
   id?: string;
   imageUrl?: string;
+  previewUrl?: string;
+  viewUrl?: string;
+  mediaType?: "photo" | "video";
   isEnhanced?: boolean;
   createdAt?: string;
   eventId?:
@@ -278,16 +282,29 @@ export default function EventPublicGallery() {
 
     setIsDownloading(true);
 
-    for (const [index, image] of downloadable.entries()) {
-      await downloadImage(image.imageUrl!, filenameFromImage(image, index));
+    const name = archiveName(getEventTitle(downloadable, eventId));
+    const destination = hasDirectDiskSave() ? reserveZipFile(name) : Promise.resolve(null);
+    try {
+      const files = downloadable.map((image, index) => ({
+        url: image.imageUrl!,
+        name: galleryFileName(image.imageUrl!, getImageId(image), image.mediaType, index),
+      }));
+      const result = await createGalleryZip(files, name, { writable: await destination });
+      if (result.kind === "ready") {
+        const link = document.createElement("a");
+        link.href = result.objectUrl;
+        link.download = result.fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(result.objectUrl), 300000);
+      }
+      toast.success("Original photo ZIP prepared");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not prepare ZIP");
+    } finally {
+      setIsDownloading(false);
     }
-
-    setIsDownloading(false);
-    toast.success(
-      downloadable.length === 1
-        ? "Image download started"
-        : "Image downloads started",
-    );
   };
 
   const findMyPictures = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -367,7 +384,7 @@ export default function EventPublicGallery() {
           ) : focusedImage?.imageUrl ? (
             <div className="overflow-hidden rounded-lg border bg-card">
               <img
-                src={focusedImage.imageUrl}
+                src={focusedImage.viewUrl || focusedImage.imageUrl}
                 alt="Shared event image"
                 className="max-h-[78vh] w-full object-contain"
               />
@@ -534,7 +551,7 @@ export default function EventPublicGallery() {
                   <Card key={id} className="group relative w-full overflow-hidden rounded-none border-0 bg-muted py-0 shadow-none">
                     <div className="relative w-full bg-muted">
                       <img
-                        src={image.imageUrl}
+                        src={image.previewUrl || image.imageUrl}
                         alt={`Event image ${index + 1}`}
                         className="block h-auto w-full"
                         loading="lazy"

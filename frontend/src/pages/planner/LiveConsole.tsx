@@ -32,6 +32,7 @@ type TransferRow = {
   bytesPerSecond?: number;
   error?: string;
   imageUrl?: string;
+  previewUrl?: string;
   createdAt?: string;
   updatedAt?: string;
   photographerId?: { name?: string; email?: string; userId?: string } | string;
@@ -384,7 +385,7 @@ export default function LiveConsole() {
                               <div className="h-10 w-10 overflow-hidden rounded-lg bg-muted">
                                 {row.imageUrl ? (
                                   <img
-                                    src={row.imageUrl}
+                                    src={row.previewUrl || row.imageUrl}
                                     alt=""
                                     className="h-full w-full object-cover"
                                   />

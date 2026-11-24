@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:mobileapp/core/utils/image_loader.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:intl/intl.dart';
@@ -14,6 +15,8 @@ class LiveEventPhoto {
   const LiveEventPhoto({
     required this.id,
     required this.imageUrl,
+    this.previewUrl,
+    this.viewUrl,
     required this.createdAt,
     this.isPublished = true,
     this.mediaType = 'photo',
@@ -21,6 +24,8 @@ class LiveEventPhoto {
 
   final String id;
   final String imageUrl;
+  final String? previewUrl;
+  final String? viewUrl;
   final DateTime createdAt;
   final bool isPublished;
   final String mediaType;
@@ -29,6 +34,8 @@ class LiveEventPhoto {
     return LiveEventPhoto(
       id: (json['_id'] ?? json['id'] ?? '').toString(),
       imageUrl: (json['imageUrl'] ?? '').toString(),
+      previewUrl: json['previewUrl']?.toString(),
+      viewUrl: json['viewUrl']?.toString(),
       createdAt:
           DateTime.tryParse((json['createdAt'] ?? '').toString())?.toLocal() ??
           DateTime.fromMillisecondsSinceEpoch(0),
@@ -240,10 +247,11 @@ class _EventLivePreviewPageState extends State<EventLivePreviewPage> {
                         aspectRatio: 16 / 9,
                         child: Center(child: Icon(Icons.videocam, size: 54)),
                       )
-                    : Image.network(
-                        photo.imageUrl,
+                    : ImageLoader.loadImage(
+                        photo.viewUrl ?? photo.previewUrl ?? photo.imageUrl,
+                        fallbackUrl: photo.imageUrl,
                         fit: BoxFit.contain,
-                        errorBuilder: (_, _, _) => const Padding(
+                        errorWidget: const Padding(
                           padding: EdgeInsets.all(32),
                           child: Text('Photo preview unavailable'),
                         ),
@@ -413,33 +421,27 @@ class _EventLivePreviewPageState extends State<EventLivePreviewPage> {
                                     ),
                                   )
                                 else
-                                  Image.network(
-                                    photo.imageUrl,
+                                  ImageLoader.loadImage(
+                                    photo.previewUrl ?? photo.imageUrl,
+                                    fallbackUrl: photo.imageUrl,
                                     width: double.infinity,
                                     fit: BoxFit.fitWidth,
-                                    cacheWidth: 600,
-                                    // Keep the tile stable until the image's
-                                    // real aspect ratio is decoded.
-                                    loadingBuilder: (context, child, progress) {
-                                      if (progress == null) return child;
-                                      return const AspectRatio(
-                                        aspectRatio: 4 / 3,
-                                        child: Center(
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
+                                    placeholder: const AspectRatio(
+                                      aspectRatio: 4 / 3,
+                                      child: Center(
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
                                         ),
-                                      );
-                                    },
-                                    errorBuilder: (_, _, _) =>
-                                        const AspectRatio(
-                                          aspectRatio: 4 / 3,
-                                          child: Center(
-                                            child: Icon(
-                                              Icons.broken_image_outlined,
-                                            ),
-                                          ),
+                                      ),
+                                    ),
+                                    errorWidget: const AspectRatio(
+                                      aspectRatio: 4 / 3,
+                                      child: Center(
+                                        child: Icon(
+                                          Icons.broken_image_outlined,
                                         ),
+                                      ),
+                                    ),
                                   ),
                                 if (!photo.isPublished)
                                   Positioned(

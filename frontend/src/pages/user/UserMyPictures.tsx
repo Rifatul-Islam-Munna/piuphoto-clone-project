@@ -27,6 +27,7 @@ type MatchImage = {
   _id?: string;
   id?: string;
   imageUrl?: string;
+  previewUrl?: string;
   faceMatch?: { score?: number; faceCount?: number };
   eventId?: { title?: string } | string;
 };
@@ -296,7 +297,7 @@ export default function UserMyPictures() {
                   <Card key={image._id || image.id || image.imageUrl || index} className="overflow-hidden">
                     <div className="aspect-[4/3] bg-muted">
                       <img
-                        src={image.imageUrl}
+                        src={image.previewUrl || image.imageUrl}
                         alt={`Match ${index + 1}`}
                         className="h-full w-full object-cover"
                         loading="lazy"

@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_avif/flutter_avif.dart';
 
 class UrlHelper {
   UrlHelper._();
@@ -12,8 +13,18 @@ class UrlHelper {
 }
 
 class ImageLoader {
+  static bool isAvifUrl(String url) {
+    final parsed = Uri.tryParse(url);
+    final lower = url.toLowerCase();
+    return lower.contains('format(avif)') ||
+        lower.contains('format%28avif%29') ||
+        parsed?.queryParameters['format']?.toLowerCase() == 'avif' ||
+        (parsed?.path.toLowerCase().endsWith('.avif') ?? false);
+  }
+
   static Widget loadImage(
     String? imageUrl, {
+    String? fallbackUrl,
     double? width,
     double? height,
     BoxFit fit = BoxFit.cover,
@@ -27,22 +38,50 @@ class ImageLoader {
       return errorWidget ?? _buildErrorWidget();
     }
 
-    Widget image = CachedNetworkImage(
-      imageUrl: cleanUrl,
-      width: width,
-      height: height,
-      fit: fit,
-      placeholder: (context, url) => placeholder ?? _buildPlaceholder(),
-      errorWidget: (context, url, error) => errorWidget ?? _buildErrorWidget(),
-      memCacheWidth: width?.toInt(),
-      memCacheHeight: height?.toInt(),
-    );
+    final isAvif = isAvifUrl(cleanUrl);
+    Widget failed() {
+      final fallback = UrlHelper.fixLocalUrl(fallbackUrl);
+      if (fallback.isNotEmpty && fallback != cleanUrl) {
+        return loadImage(
+          fallback,
+          width: width,
+          height: height,
+          fit: fit,
+          placeholder: placeholder,
+          errorWidget: errorWidget,
+        );
+      }
+      return errorWidget ?? _buildErrorWidget();
+    }
+
+    Widget image = isAvif
+        ? CachedNetworkAvifImage(
+            cleanUrl,
+            width: width,
+            height: height,
+            fit: fit,
+            frameBuilder: (context, child, frame, sync) => frame != null || sync
+                ? child
+                : (placeholder ?? _buildPlaceholder()),
+            errorBuilder: (context, error, stack) => failed(),
+          )
+        : CachedNetworkImage(
+            imageUrl: cleanUrl,
+            width: width,
+            height: height,
+            fit: fit,
+            placeholder: (context, url) => placeholder ?? _buildPlaceholder(),
+            errorWidget: (context, url, error) => failed(),
+            memCacheWidth: width != null && width.isFinite && width > 0
+                ? width.toInt()
+                : null,
+            memCacheHeight: height != null && height.isFinite && height > 0
+                ? height.toInt()
+                : null,
+          );
 
     if (borderRadius != null) {
-      return ClipRRect(
-        borderRadius: borderRadius,
-        child: image,
-      );
+      return ClipRRect(borderRadius: borderRadius, child: image);
     }
 
     return image;
@@ -96,9 +135,7 @@ class ImageLoader {
         child: SizedBox(
           width: 24,
           height: 24,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-          ),
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
       ),
     );

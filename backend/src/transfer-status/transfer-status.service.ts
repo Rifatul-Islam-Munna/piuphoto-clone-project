@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Observable, Subject, interval, map, merge } from 'rxjs';
 import { EventMemberService } from '../event-member/event-member.service';
 import { UploadSessionService } from '../upload-session/upload-session.service';
+import { withDelivery } from '../event-image/image-delivery';
 import {
   TransferStatusQueryDto,
   UpsertTransferStatusDto,
@@ -114,9 +115,9 @@ export class TransferStatusService {
       .populate('uploadSessionId', 'source cameraId startedAt lastSeenAt status')
       .lean();
 
-    const payload = { type: 'transfer.updated', data };
+    const payload = { type: 'transfer.updated', data: withDelivery(data) };
     this.subject(dto.eventId).next(payload as Record<string, unknown>);
-    return { message: 'Transfer status updated', data };
+    return { message: 'Transfer status updated', data: withDelivery(data) };
   }
 
   async list(query: TransferStatusQueryDto, userId: string, role?: string) {
@@ -145,7 +146,7 @@ export class TransferStatusService {
       counts.map((item) => [item._id, item.count]),
     );
     return {
-      data,
+      data: data.map(row => withDelivery(row)),
       totalItems: counts.reduce((sum, item) => sum + item.count, 0),
       summary,
     };
