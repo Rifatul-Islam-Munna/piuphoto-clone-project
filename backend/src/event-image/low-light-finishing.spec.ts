@@ -41,7 +41,7 @@ describe('Measured low-light finishing', () => {
     const mean = (pixels: Buffer) => pixels.reduce((sum, value) => sum + value, 0) / pixels.length;
     expect(mean(data)).toBeGreaterThan(mean(before) * 1.3);
     expect(info).toMatchObject({ width: 96, height: 64, channels: 3 });
-    // Gamma/Lab conversion may round white by one 8-bit level.
+    // Gamma conversion may round white by one 8-bit level.
     for (const channel of data.subarray(0, 3)) expect(channel).toBeGreaterThanOrEqual(254);
     expect(data[0]).toBe(data[1]);
     expect(data[1]).toBe(data[2]);
@@ -69,13 +69,25 @@ describe('Measured low-light finishing', () => {
     await expect(readFile(corrected)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('does not add saturation when the color control is OFF', async () => {
+  it('never applies a global saturation boost, including with legacy color controls enabled', async () => {
     expect(await finishLowLight(source, result, corrected, { ...options, color: 0 })).toBe(true);
     const plain = await sharp(corrected).raw().toBuffer();
     expect(await finishLowLight(source, result, corrected, options)).toBe(true);
     const colored = await sharp(corrected).raw().toBuffer();
-    const index = (32 * 96 + 32) * 3;
-    expect(colored[index] - colored[index + 2]).toBeGreaterThan(plain[index] - plain[index + 2]);
+    expect(colored).toEqual(plain);
+  });
+
+  it('cannot darken a light source-colored patch while lifting a dim scene', async () => {
+    const fair = await sharp({ create: { width: 20, height: 20, channels: 3, background: '#e8d2ca' } }).png().toBuffer();
+    const original = await sharp(await photo(22)).composite([{ input: fair, left: 30, top: 20 }]).png().toBuffer();
+    await writeFile(source, original);
+    await writeFile(result, original);
+    expect(await finishLowLight(source, result, corrected, options)).toBe(true);
+    const before = await sharp(result).removeAlpha().raw().toBuffer();
+    const after = await sharp(corrected).removeAlpha().raw().toBuffer();
+    for (let i = 0; i < after.length; i += 1) expect(after[i]).toBeGreaterThanOrEqual(before[i] - 1);
+    const index = (30 * 96 + 40) * 3;
+    expect(after[index] - after[index + 2]).toBeLessThanOrEqual(before[index] - before[index + 2] + 1);
   });
 
   it('does not wash out a near-black scene with only a small bright subject', async () => {

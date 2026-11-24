@@ -3,6 +3,7 @@ import { Readable } from 'stream';
 import { readFile } from 'fs/promises';
 import sharp from 'sharp';
 import { EnhancementOutputService, isFalOutputUrl } from './enhancement-output.service';
+import { SOURCE_COLOR_REJECTION_MESSAGE } from './source-color-guard';
 
 describe('AI enhancement output storage', () => {
   const originalUrl = 'https://r2.example.test/source.jpg';
@@ -13,9 +14,10 @@ describe('AI enhancement output storage', () => {
 
   beforeEach(async () => {
     bytes = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#b0a090' } }).png().toBuffer();
+    const original = await sharp(bytes).jpeg().toBuffer();
     storage = {
       canStreamStoredUrl: jest.fn().mockReturnValue(true),
-      openStoredUrl: jest.fn().mockImplementation(async () => Readable.from([Buffer.from('different original')])),
+      openStoredUrl: jest.fn().mockImplementation(async () => Readable.from([original])),
       uploadFile: jest.fn().mockImplementation(async (file) => {
         expect(await readFile(file.path)).toEqual(bytes);
         expect(file.mimetype).toBe('image/png');
@@ -94,4 +96,14 @@ describe('AI enhancement output storage', () => {
       { exposure: 95, shadows: 95, color: 60, lowLight: true })).rejects.toThrow('unchanged copy');
     expect(storage.uploadFile).not.toHaveBeenCalled();
   });
+
+  it.each([undefined, { exposure: 95, shadows: 95, color: 60, lowLight: true }])(
+    'rejects a tanned/darkened result before storage or exposure finishing (%s)', async options => {
+      const original = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#e8d2ca' } }).png().toBuffer();
+      bytes = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#8e604a' } }).png().toBuffer();
+      storage.openStoredUrl.mockImplementation(async () => Readable.from([original]));
+      await expect(service.save(originalUrl, falUrl, undefined, undefined, options)).rejects.toThrow(SOURCE_COLOR_REJECTION_MESSAGE);
+      expect(storage.uploadFile).not.toHaveBeenCalled();
+    },
+  );
 });

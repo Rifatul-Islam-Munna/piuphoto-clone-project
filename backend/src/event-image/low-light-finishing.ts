@@ -60,9 +60,10 @@ export async function finishLowLight(
 
   // A bounded gamma curve lifts recoverable midtones while keeping black/white
   // endpoints. No resize, sharpening, face reconstruction or hue rotation.
-  let image = sharp(resultFile, INPUT_OPTIONS).rotate().gamma(1, gamma);
-  if (options.color > 0) image = image.modulate({ saturation: 1 + 0.18 * clamp(options.color) / 100 });
-  await image.png().toFile(destination);
+  // Do not add global saturation: it also pushes otherwise-correct faces
+  // toward orange/brown. Color controls remain part of the AI editing request;
+  // this fallback only lifts exposure with a non-darkening channel curve.
+  await sharp(resultFile, INPUT_OPTIONS).rotate().gamma(1, gamma).png().toFile(destination);
   const finished = await lightMetrics(destination);
   return finished.median >= result.median + 3;
 }

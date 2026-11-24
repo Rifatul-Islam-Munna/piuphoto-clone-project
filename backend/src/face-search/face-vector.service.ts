@@ -36,11 +36,20 @@ export class FaceVectorService {
       ?.trim();
 
     if (!direct || direct === 'PASTE_MY_ENDPOINT_HERE') return undefined;
-    return direct;
+    try {
+      const endpoint = new URL(direct);
+      if (!['http:', 'https:'].includes(endpoint.protocol)) throw new Error();
+      // InsightFace exposes its multipart API at /v1/faces, not the site root.
+      // Keep explicit custom paths for other compatible deployments.
+      if (!endpoint.pathname || endpoint.pathname === '/') endpoint.pathname = '/v1/faces';
+      return endpoint.toString();
+    } catch {
+      throw new HttpException('FACE_DETECTION_ENDPOINT_URL must be a valid HTTP or HTTPS URL.', 503);
+    }
   }
 
   private apiKey() {
-    return undefined;
+    return this.configService.get<string>('FACE_DETECTION_API_KEY')?.trim() || undefined;
   }
 
   private vectorSize() {
@@ -70,7 +79,8 @@ export class FaceVectorService {
     }
 
     const formData = new FormData();
-    formData.append('image', buffer, { filename, contentType: mimeType });
+    const uploadField = this.configService.get<string>('FACE_DETECTION_UPLOAD_FIELD')?.trim() || 'file';
+    formData.append(uploadField, buffer, { filename, contentType: mimeType });
 
     try {
       const response = await axios.post<FaceApiResponse>(endpointUrl, formData, {
@@ -81,7 +91,10 @@ export class FaceVectorService {
         timeout: 60000,
       });
 
-      const faces = Array.isArray(response.data.faces) ? response.data.faces : [];
+      if (!Array.isArray(response.data?.faces)) {
+        throw new HttpException('Face detection endpoint returned an invalid response: expected a faces array.', 502);
+      }
+      const faces = response.data.faces;
       this.logger.log(
         `face-endpoint-ok faces=${faces.length} embeddingDim=${response.data.embeddingDimension || 'unknown'}`,
       );
@@ -97,14 +110,19 @@ export class FaceVectorService {
         vector: face.vector || face.embedding || face.descriptor,
       }));
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       const status = axios.isAxiosError(error) ? error.response?.status : undefined;
       this.logger.warn(
         `face-endpoint-failed ${status ? `status=${status}` : ''}`,
       );
-      throw new HttpException(
-        'Face detection service is not reachable. Check FACE_DETECTION_ENDPOINT_URL.',
-        503,
-      );
+      const message = status === 404
+        ? 'Face detection route returned 404. Set FACE_DETECTION_ENDPOINT_URL to the service origin or its /v1/faces upload URL.'
+        : status === 422
+          ? 'Face detection rejected the upload. Check FACE_DETECTION_UPLOAD_FIELD (normally file).'
+          : status === 401 || status === 403
+            ? 'Face detection authentication failed. Check FACE_DETECTION_API_KEY.'
+            : 'Face detection service is not reachable. Check FACE_DETECTION_ENDPOINT_URL.';
+      throw new HttpException(message, 503);
     }
   }
 

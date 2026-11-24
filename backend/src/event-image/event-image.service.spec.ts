@@ -6,11 +6,12 @@ jest.mock('../face-search/qdrant-face.service', () => ({
 }));
 
 import axios from 'axios';
-import { Logger } from '@nestjs/common';
+import { HttpException, Logger } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { EventImageService } from './event-image.service';
 import { FalEnhancementJobStatus } from './entities/fal-enhancement-job.entity';
 import { buildEnhancementPrompt, resolvePhotoFinishingOptions } from './enhancement-prompts';
+import { SOURCE_COLOR_REJECTION_MESSAGE } from './source-color-guard';
 
 describe('EventImageService FAL webhook', () => {
   afterEach(() => jest.restoreAllMocks());
@@ -170,6 +171,48 @@ describe('EventImageService FAL webhook', () => {
 
     expect(userModel.findByIdAndUpdate).toHaveBeenCalledWith(ownerId, {
       $inc: { credits: 3 },
+    });
+  });
+
+  it('does not publish a color-regressed webhook output and refunds its credits once', async () => {
+    const { service, eventImageModel, userModel, falEnhancementJobModel, output } = makeService();
+    const job = {
+      _id: new Types.ObjectId(), requestId: 'fal-request-1', eventId, ownerId,
+      sourceEventImageId: eventImageId, sourceImageUrl: 'https://r2.example.com/original.jpg',
+      creditsCharged: 3, status: FalEnhancementJobStatus.PENDING as FalEnhancementJobStatus,
+    };
+    falEnhancementJobModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(job) });
+    falEnhancementJobModel.findOneAndUpdate.mockImplementation(async () => {
+      job.status = FalEnhancementJobStatus.FAILED;
+      return job;
+    });
+    eventImageModel.findOne.mockResolvedValue(null);
+    output.save.mockRejectedValue(new HttpException(SOURCE_COLOR_REJECTION_MESSAGE, 502));
+
+    await expect(service.handleFalWebhook('puiphoto', successfulWebhook)).resolves.toEqual({ received: true, failed: true });
+    await expect(service.handleFalWebhook('puiphoto', successfulWebhook)).resolves.toEqual({ received: true, duplicate: true });
+    expect(eventImageModel.create).not.toHaveBeenCalled();
+    expect(userModel.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+    expect(userModel.findByIdAndUpdate).toHaveBeenCalledWith(ownerId, { $inc: { credits: 3 } });
+    expect(eventImageModel.updateOne).toHaveBeenCalledWith({ _id: eventImageId }, {
+      $set: { enhancementStatus: 'failed', enhancementMessage: SOURCE_COLOR_REJECTION_MESSAGE },
+    });
+  });
+
+  it('retains the original and refunds synchronous enhancement when source colors regress', async () => {
+    const { service, eventImageModel, userModel, output } = makeService();
+    jest.spyOn(service as any, 'getOwnerPlanMeta').mockResolvedValue({ credits: 10, hasCustomEnhancer: false });
+    jest.spyOn(service as any, 'useFalWebhook').mockReturnValue(false);
+    jest.spyOn(service as any, 'enhanceImage').mockResolvedValue('https://fal.media/enhanced.png');
+    output.save.mockRejectedValue(new HttpException(SOURCE_COLOR_REJECTION_MESSAGE, 502));
+    await expect((service as any).tryEnhanceForOwner(
+      'https://r2.example.com/original.jpg', String(eventId), String(uploaderId), String(ownerId),
+      undefined, undefined, false, String(eventImageId), { aiPreset: 'portrait' },
+    )).rejects.toThrow(SOURCE_COLOR_REJECTION_MESSAGE);
+    expect(eventImageModel.create).not.toHaveBeenCalled();
+    expect(userModel.findByIdAndUpdate).toHaveBeenCalledWith(String(ownerId), { $inc: { credits: 3 } });
+    expect(eventImageModel.updateOne).toHaveBeenCalledWith({ _id: String(eventImageId) }, {
+      $set: { enhancementStatus: 'failed', enhancementMessage: SOURCE_COLOR_REJECTION_MESSAGE },
     });
   });
 

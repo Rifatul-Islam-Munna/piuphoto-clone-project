@@ -89,6 +89,20 @@ and header `Content-Type`. Configure its own CORS rules in Cloudflare as needed.
 See [Cloudflare presigned URL docs](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
 and [R2 CORS docs](https://developers.cloudflare.com/r2/buckets/cors/).
 
+### Face detection service
+
+Set `FACE_DETECTION_ENDPOINT_URL` to the InsightFace service origin or its full
+`/v1/faces` URL. The backend expands a bare origin to `/v1/faces` and sends a
+multipart `file` field. `GET /health` checks availability; the site root may
+return 404 even when the service is healthy. See the service's `/docs` or
+`/openapi.json` for its upload contract.
+
+For a compatible service that expects a different field, set
+`FACE_DETECTION_UPLOAD_FIELD` (for example, `image`). If the service requires
+authentication, set `FACE_DETECTION_API_KEY`; it is sent as `x-api-key`.
+Set these values in the deployed backend environment as well as local `.env`,
+then restart the backend. Changing local `.env` does not update Easypanel.
+
 ```bash
 $ npm install
 ```

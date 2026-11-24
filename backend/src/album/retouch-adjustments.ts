@@ -6,7 +6,7 @@ export const PHOTO_CONTROLS = {
   shadows: 'lift blocked shadows while retaining depth',
   whiteBalance: 'neutralize unwanted white-balance and mixed-light color casts',
   contrast: 'restore midtone separation and natural contrast',
-  color: 'improve realistic color vibrance and tonal harmony without changing object colors',
+  color: 'improve realistic color vibrance and tonal harmony in non-skin regions without changing object colors or source complexions',
   noise: 'reduce luminance and chroma noise without waxy textures',
   sharpness: 'restore useful edge and fine-detail clarity without halos',
   deblur: 'reduce mild camera shake or motion blur only where detail is recoverable',
@@ -88,7 +88,7 @@ export function retouchInstructions(preset: string, custom?: RetouchAdjustments 
     'Global photographic corrections: ' + describe(PHOTO_CONTROLS, resolved.photo) + '.',
     'Adult male portrait: ' + describe(PORTRAIT_CONTROLS, resolved.male) + '.',
     'Adult female portrait: ' + describe(PORTRAIT_CONTROLS, resolved.female) + '.',
-    'Portrait profiles apply independently to clearly appropriate subjects only. If age or adult presentation is uncertain, use only global photographic corrections. Do not infer identity, gender or age to force an edit. No face reshaping, body retouching, age reduction, makeup, artificial eye whitening or changes to the person\'s underlying complexion. Enabled global exposure, shadow, white-balance and color corrections still apply to underlit skin; they are photographic corrections, not complexion changes.',
+    'Portrait profiles apply independently to clearly appropriate subjects only. If age or adult presentation is uncertain, use only global photographic corrections. Do not infer identity, gender or age to force an edit. No face reshaping, body retouching, age reduction, makeup, artificial eye whitening or changes to the person\'s source complexion. Gently brighten genuinely underlit skin only when enabled; preserve its hue. Exclude skin from global saturation and warmth adjustments. Never darken already well-exposed skin or infer a different underlying complexion.',
     'Children: ' + describe({ blemish: PORTRAIT_CONTROLS.blemish }, resolved.child) + '. No wrinkle, skin smoothing, under-eye, beauty or shape edits for children. Preserve their natural appearance and age.',
   ].join('\n');
 }

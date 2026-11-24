@@ -53,6 +53,7 @@ import { publicationForUpload, resolveAiSettings } from '../album/ai-settings';
 import type { AiSettings } from '../album/ai-settings';
 import { buildEnhancementPrompt, resolvePhotoFinishingOptions } from './enhancement-prompts';
 import type { PhotoFinishingOptions } from './low-light-finishing';
+import { SOURCE_COLOR_REJECTION_MESSAGE } from './source-color-guard';
 import { RetouchWorkflowService } from '../retouch-workflow/retouch-workflow.service';
 import { WorkflowWebhookPublisherService } from '../external-api/workflow-webhook-publisher.service';
 
@@ -577,10 +578,16 @@ export class EventImageService {
       await this.markEnhancement(sourceEventImageId, 'completed');
       return enhancedImage;
     } catch (error) {
-      await this.markEnhancement(sourceEventImageId, 'failed', 'AI enhancement failed. Please retry.');
+      await this.markEnhancement(sourceEventImageId, 'failed', this.enhancementFailureMessage(error));
       await this.userModel.findByIdAndUpdate(ownerId, { $inc: { credits: 3 } });
       throw error;
     }
+  }
+
+  private enhancementFailureMessage(error: unknown) {
+    return error instanceof HttpException && error.message === SOURCE_COLOR_REJECTION_MESSAGE
+      ? SOURCE_COLOR_REJECTION_MESSAGE
+      : 'AI enhancement failed. Please retry.';
   }
 
   // Limit in-flight AI work per backend process. Both synchronous FAL
@@ -633,7 +640,7 @@ export class EventImageService {
           });
         }
       } catch (error) {
-        await this.markEnhancement(String(original._id), 'failed', 'AI enhancement failed. Please retry.');
+        await this.markEnhancement(String(original._id), 'failed', this.enhancementFailureMessage(error));
         this.logger.error('image-enhance-failed', error instanceof Error ? error.message : 'AI request failed');
       }
     });
@@ -688,7 +695,8 @@ export class EventImageService {
       );
 
       if (failedJob) {
-        await this.markEnhancement(job.sourceEventImageId, 'failed', 'AI enhancement failed. Please retry.');
+        await this.markEnhancement(job.sourceEventImageId, 'failed', webhook.error === SOURCE_COLOR_REJECTION_MESSAGE
+          ? SOURCE_COLOR_REJECTION_MESSAGE : 'AI enhancement failed. Please retry.');
         await this.userModel.findByIdAndUpdate(job.ownerId, {
           $inc: { credits: job.creditsCharged },
         });
@@ -725,7 +733,8 @@ export class EventImageService {
         storedUrl = await this.enhancementOutput.save(job.sourceImageUrl, enhancedUrl, job.sourceEventImageId ? String(job.sourceEventImageId) : undefined, webhook.request_id, job.photoFinishing);
       } catch (error) {
         this.logger.warn('AI result could not be stored or was unchanged');
-        return this.handleFalWebhook(type, { request_id: webhook.request_id, status: 'ERROR', error: 'AI returned no usable enhanced photo' });
+        return this.handleFalWebhook(type, { request_id: webhook.request_id, status: 'ERROR', error: error instanceof HttpException && error.message === SOURCE_COLOR_REJECTION_MESSAGE
+          ? SOURCE_COLOR_REJECTION_MESSAGE : 'AI returned no usable enhanced photo' });
       }
       try {
         eventImage = await this.eventImageModel.create({

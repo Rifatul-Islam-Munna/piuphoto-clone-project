@@ -11,6 +11,7 @@ import sharp from 'sharp';
 import { MinioService } from '../lib/minio.service';
 import { finishLowLight } from './low-light-finishing';
 import type { PhotoFinishingOptions } from './low-light-finishing';
+import { hasWarmColorRegression, SOURCE_COLOR_REJECTION_MESSAGE } from './source-color-guard';
 
 const MAX_RESULT_BYTES = 64 * 1024 * 1024;
 
@@ -79,35 +80,32 @@ export class EnhancementOutputService {
         const source = await this.storage.openStoredUrl(sourceUrl, signal);
         const originalHash = createHash('sha256');
         let originalBytes = 0;
-        if (photoFinishing) {
-          const candidate = join(dir, 'source');
-          const tooLarge = new Error('Source exceeds low-light analysis limit');
-          try {
-            await pipeline(source, new Transform({
-              transform(chunk: Buffer, _encoding, callback) {
-                originalBytes += chunk.length;
-                if (originalBytes > MAX_RESULT_BYTES) return callback(tooLarge);
-                originalHash.update(chunk);
-                callback(null, chunk);
-              },
-            }), createWriteStream(candidate), { signal });
-            sourceFile = candidate;
-          } catch (error) {
-            if (error !== tooLarge) throw error;
-            this.logger.warn('Skipped low-light analysis for oversized source');
-          }
-        } else {
-          // Stop early when hashing alone proves the files cannot be identical.
-          try {
-            for await (const chunk of source) {
-              const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-              originalBytes += buffer.length;
-              if (originalBytes > bytes) break;
-              originalHash.update(buffer);
-            }
-          } finally { source.destroy(); }
+        const candidate = join(dir, 'source');
+        const tooLarge = new Error('Source exceeds image analysis limit');
+        try {
+          await pipeline(source, new Transform({
+            transform(chunk: Buffer, _encoding, callback) {
+              originalBytes += chunk.length;
+              if (originalBytes > MAX_RESULT_BYTES) return callback(tooLarge);
+              originalHash.update(chunk);
+              callback(null, chunk);
+            },
+          }), createWriteStream(candidate), { signal });
+          sourceFile = candidate;
+        } catch (error) {
+          if (error !== tooLarge) throw error;
+          this.logger.warn('Skipped source color analysis for oversized source');
         }
         unchanged = originalBytes === bytes && originalHash.digest('hex') === outputHash.digest('hex');
+      }
+
+      // Inspect the AI result before exposure finishing can hide its darkening.
+      // This check applies even when exposure/shadow controls are disabled.
+      if (sourceFile) {
+        let regressed = false;
+        try { regressed = await hasWarmColorRegression(sourceFile, file); }
+        catch { this.logger.warn('Source color comparison unavailable for this image codec'); }
+        if (regressed) throw new HttpException(SOURCE_COLOR_REJECTION_MESSAGE, 502);
       }
 
       let uploadPath = file;
@@ -119,7 +117,7 @@ export class EnhancementOutputService {
             uploadPath = corrected;
             format = ['png', 'image/png'];
             unchanged = false;
-            this.logger.log('Applied measured low-light exposure and color finishing');
+            this.logger.log('Applied measured low-light exposure finishing');
           }
         } catch {
           // Unsupported source codecs must not discard a valid provider result.
