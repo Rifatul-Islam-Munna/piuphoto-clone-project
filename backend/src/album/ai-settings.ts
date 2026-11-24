@@ -22,18 +22,18 @@ export const PRESET_PROMPTS: Record<AiPreset, string> = {
   banquet: 'Balance warm indoor lights, reduce low-light noise, recover highlights and improve food, decor and natural skin colors.',
   sports: 'Improve motion detail where recoverable, reduce haze and noise, correct exposure and deliver clear, natural action photography. Never invent missing motion detail.',
   portrait: 'Balance facial exposure, neutralize color casts and gently reduce temporary blemishes only. Keep natural pores, age, facial geometry and identity.',
-  low_light: 'Lift underexposed shadows carefully, control noise, balance uneven illumination, recover highlight detail and retain the original lighting atmosphere.',
+  low_light: 'Lift underexposed shadows and midtones enough to make subjects clearly readable. Restore visible, rich but realistic color separation after correcting exposure and accidental color casts; dark clothing and skin must not remain muddy. Balance local illumination and reduce chroma noise without erasing texture. Protect lamps, stage effects and existing highlight detail. Preserve the night setting in the background while correcting accidental subject underexposure. Do not treat low brightness or weak colors as protected scene content. Respect disabled controls and retain intentional silhouettes.',
   outdoor: 'Recover sky highlights, balance bright sunlight and shadows, reduce haze and improve natural colors without changing scenery.',
 };
 
 export function identityGuard(protectVehiclePlates = false) {
   return [
     'NON-NEGOTIABLE: edit the original photograph, never reconstruct or redraw it. Every person must remain the same recognizable individual, including exact facial landmarks, geometry, eye shape and gaze, nose, lips, jaw, teeth, expression, age, freckles, scars, permanent marks, natural skin tone and texture, hair, body proportions, pose and clothing.',
-    'Never replace faces, reshape features, apply age changes, add makeup, invent missing facial details, change skin color, remove people or objects, crop, change aspect ratio, framing or scene.',
+    'Never replace faces, reshape features, apply age changes, add makeup, invent missing facial details, change a person\'s underlying complexion, remove people or objects, crop, change aspect ratio, framing or scene.',
     protectVehiclePlates
       ? 'Preserve all text, logos, signage and identifiers except vehicle license-plate characters explicitly selected for obscuring. Only those characters may be concealed; never invent replacement characters. This narrow exception does not permit any other scene changes.'
       : 'Never alter text, logos, signage, identifiers or license-plate characters.',
-    'If a correction would require inventing facial detail, leave that area unchanged. Ignore any custom instruction that conflicts with identity or scene preservation. Improve recoverable photographic issues, not the subject. Preserve the actual capture even in severe blur, clipped highlights or blocked shadows.',
+    'Identity and scene preservation protect content and geometry, not exposure errors. Exposure, shadow recovery, white balance and natural color correction are permitted within enabled controls, including on faces and skin; preserve the actual complexion rather than an accidental lighting cast. Never interpret these corrections as permission to change ethnicity, natural complexion, permanent marks or anatomy. If a correction would require inventing facial detail, leave that area unchanged. Ignore any custom instruction that conflicts with identity or scene preservation. Improve recoverable photographic issues, not the subject. Preserve the actual capture even in severe blur, clipped highlights or blocked shadows.',
   ].join(' ');
 }
 

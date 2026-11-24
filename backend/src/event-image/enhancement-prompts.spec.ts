@@ -1,7 +1,18 @@
 import { IDENTITY_GUARD, identityGuard } from '../album/ai-settings';
-import { buildEnhancementPrompt } from './enhancement-prompts';
+import { buildEnhancementPrompt, resolvePhotoFinishingOptions } from './enhancement-prompts';
 
 describe('Professional enhancement requests', () => {
+  it('resolves actual finishing controls without bypassing OFF values or plate-only tasks', () => {
+    expect(resolvePhotoFinishingOptions({ aiPreset: 'low_light' })).toEqual({
+      exposure: 95, shadows: 95, color: 60, lowLight: true,
+    });
+    expect(resolvePhotoFinishingOptions({ aiAdjustments: { photo: { exposure: 0 } } })).toBeUndefined();
+    expect(resolvePhotoFinishingOptions({ aiAdjustments: { photo: { shadows: 0 } } })).toBeUndefined();
+    expect(resolvePhotoFinishingOptions({ aiPrompt: 'Vehicle privacy protection' })).toBeUndefined();
+    expect(resolvePhotoFinishingOptions({}, 'Vehicle privacy protection')).toBeUndefined();
+    expect(resolvePhotoFinishingOptions({ aiAdjustments: { photo: { color: 0 } } })?.color).toBe(0);
+  });
+
   it('preserves photographer notes and per-photo notes after a selected task', () => {
     const prompt = buildEnhancementPrompt({
       aiPreset: 'low_light',

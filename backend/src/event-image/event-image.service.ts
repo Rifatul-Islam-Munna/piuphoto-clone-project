@@ -51,7 +51,8 @@ import { ImagorCacheService } from './imagor-cache.service';
 import { EnhancementOutputService } from './enhancement-output.service';
 import { publicationForUpload, resolveAiSettings } from '../album/ai-settings';
 import type { AiSettings } from '../album/ai-settings';
-import { buildEnhancementPrompt } from './enhancement-prompts';
+import { buildEnhancementPrompt, resolvePhotoFinishingOptions } from './enhancement-prompts';
+import type { PhotoFinishingOptions } from './low-light-finishing';
 import { RetouchWorkflowService } from '../retouch-workflow/retouch-workflow.service';
 import { WorkflowWebhookPublisherService } from '../external-api/workflow-webhook-publisher.service';
 
@@ -352,6 +353,7 @@ export class EventImageService {
       albumId?: string;
       sourceEventImageId?: string;
       isPublished: boolean;
+      photoFinishing?: PhotoFinishingOptions;
     },
   ) {
     const falKey =
@@ -400,6 +402,7 @@ export class EventImageService {
       ownerId: this.toObjectId(context.ownerId),
       albumId: context.albumId ? this.toObjectId(context.albumId) : undefined,
       sourceImageUrl: imageUrl,
+      photoFinishing: context.photoFinishing,
       sourceEventImageId: context.sourceEventImageId
         ? this.toObjectId(context.sourceEventImageId)
         : undefined,
@@ -521,7 +524,9 @@ export class EventImageService {
     );
     // Album settings are owner-managed. Keep the existing subscription gate
     // for arbitrary per-upload overrides; never let one replace the preset.
-    const finalPrompt = buildEnhancementPrompt(effective, meta.hasCustomEnhancer ? customPrompt : undefined);
+    const allowedRequest = meta.hasCustomEnhancer ? customPrompt : undefined;
+    const finalPrompt = buildEnhancementPrompt(effective, allowedRequest);
+    const photoFinishing = resolvePhotoFinishingOptions(effective, allowedRequest);
 
     if (meta.credits < 3) {
       await this.markEnhancement(sourceEventImageId, 'skipped', 'Not enough AI credits');
@@ -552,11 +557,12 @@ export class EventImageService {
           albumId,
           sourceEventImageId,
           isPublished,
+          photoFinishing,
         });
       }
 
       const outputUrl = await this.enhanceImage(imageUrl, finalPrompt);
-      const enhancedUrl = await this.enhancementOutput.save(imageUrl, outputUrl, sourceEventImageId);
+      const enhancedUrl = await this.enhancementOutput.save(imageUrl, outputUrl, sourceEventImageId, undefined, photoFinishing);
       const enhancedImage = await this.eventImageModel.create({
         eventId: this.toObjectId(eventId),
         imageUrl: enhancedUrl,
@@ -716,7 +722,7 @@ export class EventImageService {
       let storedUrl = enhancedUrl;
       try {
         if (enhancedUrl === job.sourceImageUrl) throw new HttpException('AI returned the original image unchanged', 502);
-        storedUrl = await this.enhancementOutput.save(job.sourceImageUrl, enhancedUrl, job.sourceEventImageId ? String(job.sourceEventImageId) : undefined, webhook.request_id);
+        storedUrl = await this.enhancementOutput.save(job.sourceImageUrl, enhancedUrl, job.sourceEventImageId ? String(job.sourceEventImageId) : undefined, webhook.request_id, job.photoFinishing);
       } catch (error) {
         this.logger.warn('AI result could not be stored or was unchanged');
         return this.handleFalWebhook(type, { request_id: webhook.request_id, status: 'ERROR', error: 'AI returned no usable enhanced photo' });

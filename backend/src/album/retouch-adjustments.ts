@@ -88,7 +88,7 @@ export function retouchInstructions(preset: string, custom?: RetouchAdjustments 
     'Global photographic corrections: ' + describe(PHOTO_CONTROLS, resolved.photo) + '.',
     'Adult male portrait: ' + describe(PORTRAIT_CONTROLS, resolved.male) + '.',
     'Adult female portrait: ' + describe(PORTRAIT_CONTROLS, resolved.female) + '.',
-    'Portrait profiles apply independently to clearly appropriate subjects only. If age or adult presentation is uncertain, use only global photographic corrections. Do not infer identity, gender or age to force an edit. No face reshaping, body retouching, age reduction, makeup, artificial eye whitening or skin-tone changes.',
+    'Portrait profiles apply independently to clearly appropriate subjects only. If age or adult presentation is uncertain, use only global photographic corrections. Do not infer identity, gender or age to force an edit. No face reshaping, body retouching, age reduction, makeup, artificial eye whitening or changes to the person\'s underlying complexion. Enabled global exposure, shadow, white-balance and color corrections still apply to underlit skin; they are photographic corrections, not complexion changes.',
     'Children: ' + describe({ blemish: PORTRAIT_CONTROLS.blemish }, resolved.child) + '. No wrinkle, skin smoothing, under-eye, beauty or shape edits for children. Preserve their natural appearance and age.',
   ].join('\n');
 }

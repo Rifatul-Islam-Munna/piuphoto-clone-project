@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
+import type { PhotoFinishingOptions } from '../low-light-finishing';
 
 export type FalEnhancementJobDocument = HydratedDocument<FalEnhancementJob>;
 
@@ -34,6 +35,11 @@ export class FalEnhancementJob {
 
   @Prop({ type: Types.ObjectId, ref: 'EventImage' })
   sourceEventImageId?: Types.ObjectId;
+
+  // Snapshot the controls at submission so webhook completion honors OFF values
+  // even if the owner changes event or album settings while the job is queued.
+  @Prop({ type: Object })
+  photoFinishing?: PhotoFinishingOptions;
 
   @Prop({ default: true })
   isPublished: boolean;

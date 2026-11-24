@@ -10,7 +10,7 @@ import { Logger } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { EventImageService } from './event-image.service';
 import { FalEnhancementJobStatus } from './entities/fal-enhancement-job.entity';
-import { buildEnhancementPrompt } from './enhancement-prompts';
+import { buildEnhancementPrompt, resolvePhotoFinishingOptions } from './enhancement-prompts';
 
 describe('EventImageService FAL webhook', () => {
   afterEach(() => jest.restoreAllMocks());
@@ -108,6 +108,7 @@ describe('EventImageService FAL webhook', () => {
       ownerId,
       albumId,
       sourceImageUrl: 'https://r2.example.com/original.jpg',
+      photoFinishing: { exposure: 95, shadows: 95, color: 60, lowLight: true },
       status: FalEnhancementJobStatus.PENDING,
     };
     falEnhancementJobModel.findOne.mockReturnValue({
@@ -130,7 +131,7 @@ describe('EventImageService FAL webhook', () => {
       saved: true,
       eventImageId: String(eventImageId),
     });
-    expect(output.save).toHaveBeenCalledWith(job.sourceImageUrl, 'https://fal.media/enhanced.png', undefined, 'fal-request-1');
+    expect(output.save).toHaveBeenCalledWith(job.sourceImageUrl, 'https://fal.media/enhanced.png', undefined, 'fal-request-1', job.photoFinishing);
     expect(eventImageModel.create).toHaveBeenCalledWith({
       eventId,
       imageUrl: 'https://r2.example.com/enhanced.png',
@@ -187,6 +188,7 @@ describe('EventImageService FAL webhook', () => {
         ownerId: String(ownerId),
         albumId: String(albumId),
         isPublished: true,
+        photoFinishing: resolvePhotoFinishingOptions({ aiPreset: 'low_light' }),
       },
     );
 
@@ -205,6 +207,7 @@ describe('EventImageService FAL webhook', () => {
         uploaderId,
         ownerId,
         albumId,
+        photoFinishing: { exposure: 95, shadows: 95, color: 60, lowLight: true },
         status: FalEnhancementJobStatus.PENDING,
       }),
     );
@@ -231,7 +234,7 @@ describe('EventImageService FAL webhook', () => {
   });
 
   it.each([false, true])('retains the subscription gate for per-photo tasks (custom enhancer: %s)', async hasCustomEnhancer => {
-    const { service } = makeService();
+    const { service, output } = makeService();
     jest.spyOn(service as any, 'getOwnerPlanMeta').mockResolvedValue({ credits: 10, hasCustomEnhancer });
     jest.spyOn(service as any, 'useFalWebhook').mockReturnValue(false);
     const enhance = jest.spyOn(service as any, 'enhanceImage').mockResolvedValue('https://fal.media/enhanced.png');
@@ -246,6 +249,10 @@ describe('EventImageService FAL webhook', () => {
     expect(enhance).toHaveBeenCalledWith(
       'https://cdn.example.com/source.jpg',
       buildEnhancementPrompt(settings, hasCustomEnhancer ? request : undefined),
+    );
+    expect(output.save).toHaveBeenCalledWith(
+      'https://cdn.example.com/source.jpg', 'https://fal.media/enhanced.png', undefined, undefined,
+      resolvePhotoFinishingOptions(settings, hasCustomEnhancer ? request : undefined),
     );
   });
 });

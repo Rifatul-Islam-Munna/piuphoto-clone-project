@@ -1,14 +1,16 @@
-import { Injectable, HttpException } from '@nestjs/common';
+import { Injectable, HttpException, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { createHash, randomUUID } from 'crypto';
 import { createWriteStream } from 'fs';
-import { mkdtemp, rm } from 'fs/promises';
+import { mkdtemp, rm, stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 import sharp from 'sharp';
 import { MinioService } from '../lib/minio.service';
+import { finishLowLight } from './low-light-finishing';
+import type { PhotoFinishingOptions } from './low-light-finishing';
 
 const MAX_RESULT_BYTES = 64 * 1024 * 1024;
 
@@ -23,11 +25,14 @@ export function isFalOutputUrl(value: string): boolean {
 
 @Injectable()
 export class EnhancementOutputService {
+  private readonly logger = new Logger(EnhancementOutputService.name);
+
   constructor(private readonly storage: MinioService) {}
 
-  // Keep the full-resolution provider result, without a JPEG re-encode.
+  // Keep the full-resolution provider result, without a re-encode unless a
+  // measured low-light correction is needed. Corrected results use lossless PNG.
   // Download to a bounded temporary file instead of allocating a large RAM buffer.
-  async save(sourceUrl: string, outputUrl: string, sourceId?: string, requestId?: string): Promise<string> {
+  async save(sourceUrl: string, outputUrl: string, sourceId?: string, requestId?: string, photoFinishing?: PhotoFinishingOptions): Promise<string> {
     if (sourceUrl === outputUrl) {
       throw new HttpException('AI returned the original image without editing it', 502);
     }
@@ -61,29 +66,67 @@ export class EnhancementOutputService {
         webp: ['webp', 'image/webp'], avif: ['avif', 'image/avif'],
         ...(meta.compression === 'av1' ? { heif: ['avif', 'image/avif'] as [string, string] } : {}),
       };
-      const format = meta.format && formats[meta.format];
+      let format = meta.format && formats[meta.format];
       if (!format || !meta.width || !meta.height) {
         throw new HttpException('AI did not return a supported photograph', 502);
       }
 
-      // Reject byte-for-byte duplicates without loading original photos into RAM.
-      // Stop reading as soon as the source is larger than the result.
+      let sourceFile: string | undefined;
+      let unchanged = false;
+      // Read originals only through authorized storage. The optional finishing
+      // stage uses bounded disk files, never a full-resolution in-memory buffer.
       if (this.storage.canStreamStoredUrl(sourceUrl)) {
         const source = await this.storage.openStoredUrl(sourceUrl, signal);
         const originalHash = createHash('sha256');
         let originalBytes = 0;
-        try {
-          for await (const chunk of source) {
-            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-            originalBytes += buffer.length;
-            if (originalBytes > bytes) break;
-            originalHash.update(buffer);
+        if (photoFinishing) {
+          const candidate = join(dir, 'source');
+          const tooLarge = new Error('Source exceeds low-light analysis limit');
+          try {
+            await pipeline(source, new Transform({
+              transform(chunk: Buffer, _encoding, callback) {
+                originalBytes += chunk.length;
+                if (originalBytes > MAX_RESULT_BYTES) return callback(tooLarge);
+                originalHash.update(chunk);
+                callback(null, chunk);
+              },
+            }), createWriteStream(candidate), { signal });
+            sourceFile = candidate;
+          } catch (error) {
+            if (error !== tooLarge) throw error;
+            this.logger.warn('Skipped low-light analysis for oversized source');
           }
-        } finally { source.destroy(); }
-        if (originalBytes === bytes && originalHash.digest('hex') === outputHash.digest('hex')) {
-          throw new HttpException('AI returned an unchanged copy of the original photo', 502);
+        } else {
+          // Stop early when hashing alone proves the files cannot be identical.
+          try {
+            for await (const chunk of source) {
+              const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+              originalBytes += buffer.length;
+              if (originalBytes > bytes) break;
+              originalHash.update(buffer);
+            }
+          } finally { source.destroy(); }
+        }
+        unchanged = originalBytes === bytes && originalHash.digest('hex') === outputHash.digest('hex');
+      }
+
+      let uploadPath = file;
+      if (sourceFile && photoFinishing) {
+        const corrected = join(dir, 'corrected.png');
+        try {
+          if (await finishLowLight(sourceFile, file, corrected, photoFinishing) &&
+              (await stat(corrected)).size <= MAX_RESULT_BYTES) {
+            uploadPath = corrected;
+            format = ['png', 'image/png'];
+            unchanged = false;
+            this.logger.log('Applied measured low-light exposure and color finishing');
+          }
+        } catch {
+          // Unsupported source codecs must not discard a valid provider result.
+          this.logger.warn('Low-light analysis unavailable; retaining provider result');
         }
       }
+      if (unchanged) throw new HttpException('AI returned an unchanged copy of the original photo', 502);
 
       // Stable per webhook request; retrying a callback cannot create a new key.
       const safeSource = /^[a-f0-9]{24}$/i.test(sourceId || '') ? sourceId : 'photo';
@@ -92,7 +135,7 @@ export class EnhancementOutputService {
       const filename = 'enhanced/' + safeSource + '/' + identity + '.' + extension;
       const origin = this.storage.canStreamStoredUrl(sourceUrl) &&
         new URL(sourceUrl).pathname.startsWith('/image/file/') ? new URL(sourceUrl).origin : undefined;
-      return await this.storage.uploadFile({ path: file, filename, originalname: filename, mimetype: mime }, origin);
+      return await this.storage.uploadFile({ path: uploadPath, filename, originalname: filename, mimetype: mime }, origin);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -52,4 +52,46 @@ describe('AI enhancement output storage', () => {
     expect(isFalOutputUrl('http://fal.media/a.jpg')).toBe(false);
     expect(isFalOutputUrl('https://storage.googleapis.com/falserverless/example.png')).toBe(true);
   });
+
+  it('corrects a nearly unchanged low-light result before storing it as enhanced', async () => {
+    const dark = await sharp({ create: { width: 96, height: 64, channels: 3, background: '#302218' } }).png().toBuffer();
+    bytes = await sharp(dark).png({ compressionLevel: 9 }).toBuffer();
+    storage.openStoredUrl.mockImplementation(async () => Readable.from([dark]));
+    storage.uploadFile.mockImplementation(async file => {
+      const output = await readFile(file.path);
+      const originalStats = await sharp(bytes).stats();
+      const outputStats = await sharp(output).stats();
+      expect(output.equals(bytes)).toBe(false);
+      expect(outputStats.channels[1].mean).toBeGreaterThan(originalStats.channels[1].mean * 1.3);
+      expect(await sharp(output).metadata()).toMatchObject({ width: 96, height: 64, format: 'png' });
+      return 'https://r2.example.test/' + file.filename;
+    });
+
+    await expect(service.save(originalUrl, falUrl, undefined, undefined,
+      { exposure: 95, shadows: 95, color: 60, lowLight: true })).resolves.toMatch(/\.png$/);
+    expect(storage.uploadFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('can finish an identical dark AI copy instead of accepting it unchanged', async () => {
+    bytes = await sharp({ create: { width: 32, height: 32, channels: 3, background: '#302218' } }).png().toBuffer();
+    storage.openStoredUrl.mockImplementation(async () => Readable.from([bytes]));
+    storage.uploadFile.mockResolvedValue('https://r2.example.test/corrected.png');
+    await expect(service.save(originalUrl, falUrl, undefined, undefined,
+      { exposure: 95, shadows: 95, color: 0, lowLight: true })).resolves.toContain('corrected.png');
+  });
+
+  it('preserves provider bytes when the source was already properly exposed', async () => {
+    const source = await sharp(bytes).jpeg().toBuffer();
+    storage.openStoredUrl.mockImplementation(async () => Readable.from([source]));
+    await expect(service.save(originalUrl, falUrl, undefined, undefined,
+      { exposure: 95, shadows: 95, color: 60, lowLight: true })).resolves.toMatch(/\.png$/);
+    expect(storage.uploadFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('still rejects an unchanged well-lit copy when finishing is enabled', async () => {
+    storage.openStoredUrl.mockImplementation(async () => Readable.from([bytes]));
+    await expect(service.save(originalUrl, falUrl, undefined, undefined,
+      { exposure: 95, shadows: 95, color: 60, lowLight: true })).rejects.toThrow('unchanged copy');
+    expect(storage.uploadFile).not.toHaveBeenCalled();
+  });
 });
