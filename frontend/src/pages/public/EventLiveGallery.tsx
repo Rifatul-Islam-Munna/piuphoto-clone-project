@@ -133,6 +133,7 @@ type GalleryImage = {
   thumbnailUrl?: string;
   previewUrl?: string;
   viewUrl?: string;
+  watermarkApplied?: boolean;
   isEnhanced?: boolean;
   mediaType?: "photo" | "video";
   userTakenBy?: { name?: string } | string;
@@ -1783,7 +1784,7 @@ export default function EventLiveGallery() {
                       >
                         <img
                           src={assetUrl(image.previewUrl || image.imageUrl)}
-                          onError={(event) => { const fallback = assetUrl(image.imageUrl); if (fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
+                          onError={(event) => { const fallback = assetUrl(image.imageUrl); if (!image.watermarkApplied && fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
                           alt={`Event photo ${index + 1}`}
                           loading="lazy"
                           decoding="async"
@@ -1796,7 +1797,7 @@ export default function EventLiveGallery() {
                       <ImageIcon className="h-8 w-8 text-muted-foreground" />
                     </div>
                   )}
-                  {branding.watermarkUrl &&
+                  {!image.watermarkApplied && !image.purchaseRequired && branding.watermarkUrl &&
                   branding.watermarkPosition === "tile" ? (
                     <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-2 place-items-center gap-3 p-4">
                       {Array.from({ length: 6 }, (_, watermarkIndex) => (
@@ -1812,7 +1813,7 @@ export default function EventLiveGallery() {
                         />
                       ))}
                     </div>
-                  ) : branding.watermarkUrl ? (
+                  ) : !image.watermarkApplied && !image.purchaseRequired && branding.watermarkUrl ? (
                     <img
                       src={assetUrl(branding.watermarkUrl)}
                       alt=""
@@ -2084,7 +2085,7 @@ export default function EventLiveGallery() {
                         <div className="aspect-square bg-muted">
                           <img
                             src={assetUrl(image.thumbnailUrl || image.previewUrl || image.imageUrl)}
-                            onError={(event) => { const fallback = assetUrl(image.imageUrl); if (fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
+                            onError={(event) => { const fallback = assetUrl(image.imageUrl); if (!image.watermarkApplied && fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
                             alt={`Event photo ${index + 1}`}
                             loading="lazy"
                             className="h-full w-full object-cover"
@@ -2519,7 +2520,7 @@ function GalleryLightbox({
       ) : (
         <img
           src={imageUrl}
-          onError={(event) => { const fallback = assetUrl(image.imageUrl); if (fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
+          onError={(event) => { const fallback = assetUrl(image.imageUrl); if (!image.watermarkApplied && fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
           alt={`Event photo ${position}`}
           className="max-h-screen max-w-full object-contain"
         />

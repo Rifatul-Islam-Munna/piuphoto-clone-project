@@ -28,7 +28,7 @@ class _TransferAiMonitorState extends State<TransferAiMonitor> {
         (item) =>
             item.eventId == widget.eventId &&
             item.isUploaded &&
-            item.aiPending &&
+            item.needsDeliveryRefresh &&
             item.eventImageId?.isNotEmpty == true,
       );
 

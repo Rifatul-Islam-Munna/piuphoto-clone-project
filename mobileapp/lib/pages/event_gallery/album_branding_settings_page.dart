@@ -253,7 +253,8 @@ class _AlbumBrandingSettingsPageState extends State<AlbumBrandingSettingsPage> {
               _section('PHOTO WATERMARK'),
               _imageSetting(
                 title: 'Photo Watermark',
-                subtitle: 'Add your logo or watermark to store preview images.',
+                subtitle:
+                    'Apply your watermark to compressed gallery previews. Original downloads stay clean.',
                 key: 'watermarkUrl',
                 watermark: true,
               ),

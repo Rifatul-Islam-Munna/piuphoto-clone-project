@@ -246,11 +246,14 @@ describe('EventImageService camera upload confirmation', () => {
     const eventId = new Types.ObjectId();
     const userId = new Types.ObjectId();
     const event = { _id: eventId, userId, autoEnhanceImages };
-    const original = { _id: new Types.ObjectId(), eventId, isPublished: true };
+    const original = { _id: new Types.ObjectId(), eventId, isPublished: true, imageUrl: 'https://images.example/shot.jpg' };
     const enhanced = { _id: new Types.ObjectId(), eventId, isPublished: true };
     const model = {
       findOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }),
+      findById: jest.fn().mockResolvedValue(original),
+      exists: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue(original),
+      insertMany: jest.fn().mockImplementation(async (docs) => docs.map(doc => ({ ...doc, _id: new Types.ObjectId() }))),
       updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
     };
     const publish = jest.fn().mockResolvedValue(0);
@@ -326,12 +329,85 @@ describe('EventImageService camera upload confirmation', () => {
     expect(fixture.model.create).toHaveBeenCalledTimes(1);
   });
 
-  it('preserves synchronous enhancement results for callers without a transfer id', async () => {
+  it('confirms single uploads without a transfer ID while AI is blocked', async () => {
     const fixture = makeService();
     const { clientTransferId, ...dto } = fixture.dto;
-    fixture.finishEnhancement(fixture.enhanced);
-    const result = await fixture.service.create(dto, String(fixture.userId));
-    expect(result.enhancedData).toBe(fixture.enhanced);
+    const response = fixture.service.create(dto, String(fixture.userId));
+    try {
+      const result = await Promise.race([response, new Promise(resolve => setTimeout(() => resolve('blocked'), 50))]);
+      expect(result).toMatchObject({ data: fixture.original, enhancedData: null, enhancementJob: null });
+      expect(fixture.enhance).toHaveBeenCalledTimes(1);
+    } finally {
+      fixture.finishEnhancement(fixture.enhanced);
+      await response;
+      await new Promise(setImmediate);
+    }
+    expect(fixture.automate).toHaveBeenCalledWith(fixture.enhanced);
+  });
+
+  it('returns original batch receipts immediately and limits concurrent AI jobs', async () => {
+    const fixture = makeService();
+    const imageUrls = ['https://images.example/a.jpg', 'https://images.example/b.jpg', 'https://images.example/c.jpg', 'https://images.example/clip.mp4'];
+    const response = fixture.service.createMany({ eventId: fixture.dto.eventId, imageUrls }, String(fixture.userId));
+    try {
+      const result = await Promise.race([response, new Promise(resolve => setTimeout(() => resolve('blocked'), 50))]);
+      expect(result).toMatchObject({ uploadedCount: 4, enhancedData: [], enhancementJobs: [], data: [
+        { imageUrl: imageUrls[0], enhancementStatus: 'pending' },
+        { imageUrl: imageUrls[1], enhancementStatus: 'pending' },
+        { imageUrl: imageUrls[2], enhancementStatus: 'pending' },
+        { imageUrl: imageUrls[3], mediaType: 'video' },
+      ] });
+      expect(fixture.enhance).toHaveBeenCalledTimes(2);
+    } finally {
+      fixture.finishEnhancement(null);
+      await response;
+      await new Promise(setImmediate);
+    }
+    expect(fixture.enhance).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not enqueue any batch AI work when the switch is off', async () => {
+    const fixture = makeService(false);
+    const result = await fixture.service.createMany({
+      eventId: fixture.dto.eventId, imageUrls: ['https://images.example/a.jpg'],
+    }, String(fixture.userId));
+    expect(result.uploadedCount).toBe(1);
+    expect(fixture.enhance).not.toHaveBeenCalled();
+  });
+
+  it('queues manual enhancement with automatic AI off and returns before inference', async () => {
+    const fixture = makeService(false);
+    const id = String(fixture.original._id);
+    const receipt = fixture.service.enhanceBatch([id], undefined, String(fixture.userId));
+    try {
+      const result = await Promise.race([receipt, new Promise(resolve => setTimeout(() => resolve('blocked'), 50))]);
+      expect(result).toMatchObject({ queued: 1, skipped: 0, failed: 0 });
+      expect(fixture.enhance).toHaveBeenCalledTimes(1);
+      expect(fixture.model.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({ enhancementStatus: { $nin: ['pending', 'processing', 'completed'] } }),
+        { $set: { enhancementStatus: 'pending', enhancementMessage: '' } },
+      );
+      fixture.model.updateOne.mockResolvedValueOnce({ modifiedCount: 0 });
+      const duplicate = await fixture.service.enhanceBatch([id], undefined, String(fixture.userId));
+      expect(duplicate).toMatchObject({ queued: 0, skipped: 1 });
+      expect(fixture.enhance).toHaveBeenCalledTimes(1);
+    } finally {
+      fixture.finishEnhancement(fixture.enhanced);
+      await receipt;
+      await new Promise(setImmediate);
+    }
+    expect(fixture.automate).toHaveBeenCalledWith(fixture.enhanced);
+  });
+
+  it('skips existing enhanced copies and video files without submitting AI', async () => {
+    const fixture = makeService(false);
+    fixture.model.exists.mockResolvedValueOnce({ _id: new Types.ObjectId() });
+    const id = String(fixture.original._id);
+    expect(await fixture.service.enhanceExisting(id, String(fixture.userId))).toMatchObject({ queued: false, skipped: true });
+    fixture.model.findById.mockResolvedValueOnce({ ...fixture.original, imageUrl: 'https://images.example/clip.mp4' });
+    expect(await fixture.service.enhanceExisting(id, String(fixture.userId))).toMatchObject({ queued: false, skipped: true });
+    expect(fixture.enhance).not.toHaveBeenCalled();
+    fixture.finishEnhancement(null);
   });
 
   it('keeps a saved camera photo confirmed even when background enhancement fails', async () => {

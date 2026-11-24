@@ -29,7 +29,7 @@ import {
 } from '../event-image/entities/event-image.entity';
 import { NotificationService } from '../notification/notification.service';
 import { MinioService } from '../lib/minio.service';
-import { deliveryRows } from '../event-image/image-delivery';
+import { deliveryRows, imagorStorePreview, imagorUrls, currentCache } from '../event-image/image-delivery';
 import { safePhotoEntryName } from '../gallery-download/gallery-download.service';
 import { streamPhotoZip } from '../gallery-download/stream-photo-zip';
 import { downloadAttachmentHeader } from './download-attachment-header';
@@ -387,7 +387,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
         isForSale: { $ne: false },
         mediaType: { $ne: 'video' },
       })
-      .select('imageUrl albumId')
+      .select('imageUrl albumId mediaType imagorStatus imagorSource imagorSignature imagorConfig imagorSmallUrl imagorViewUrl')
       .lean();
     if (!image) throw new HttpException('Photo not found', 404);
     const allowedAlbums = (config.saleAlbumIds || []).map(String);
@@ -397,6 +397,24 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     )
       throw new HttpException('Photo is not available for sale', 404);
     const event = await this.events.findById(eventId).select('branding').lean();
+    const branding = event?.branding;
+    // Prefer native Imagor for all supported R2 photos. Reuse a verified
+    // cached gallery variant if it exactly matches the requested transform.
+    const nativeUrl = imagorStorePreview(image, branding, config);
+    if (nativeUrl) {
+      const variants = imagorUrls(image, branding);
+      if (variants && currentCache(image, variants)) {
+        if (nativeUrl === variants.small) return { url: image.imagorSmallUrl! };
+        if (nativeUrl === variants.view) return { url: image.imagorViewUrl! };
+      }
+      return { url: nativeUrl };
+    }
+    // The backend never draws watermarks. An old source that the shared
+    // S3 loader cannot read must be migrated before a protected preview
+    // can be served. Never expose a clean fallback for a protected photo.
+    if (branding?.watermarkUrl || config.watermarkedPreview !== false) {
+      throw new HttpException('Watermarked preview is unavailable; use a photo stored in your photo bucket', 503);
+    }
     const response = await axios.get<ArrayBuffer>(image.imageUrl, {
       responseType: 'arraybuffer',
       timeout: 30000,
@@ -410,67 +428,12 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
       Math.max(Number(config.previewMaxWidth) || 1200, 400),
       2400,
     );
-    const resized = await sharp(Buffer.from(response.data))
+    // Legacy unwatermarked preview compatibility only.
+    return sharp(Buffer.from(response.data))
       .rotate()
       .resize({ width: maxWidth, withoutEnlargement: true })
       .jpeg({ quality })
-      .toBuffer({ resolveWithObject: true });
-    let pipeline = sharp(resized.data);
-    if (config.watermarkedPreview !== false) {
-      const branding: any = event?.branding || {};
-      const opacity = Math.min(
-        Math.max(Number(branding.watermarkOpacity) || 0.7, 0.05),
-        1,
-      );
-      const scale = Math.min(
-        Math.max(Number(branding.watermarkScale) || 24, 5),
-        80,
-      );
-      const position = String(branding.watermarkPosition || 'bottom_right');
-      const gravityMap: Record<string, any> = {
-        top_left: 'northwest',
-        top_center: 'north',
-        top_right: 'northeast',
-        center_left: 'west',
-        center: 'center',
-        center_right: 'east',
-        bottom_left: 'southwest',
-        bottom_center: 'south',
-        bottom_right: 'southeast',
-      };
-      if (branding.watermarkUrl) {
-        const wmResponse = await axios.get<ArrayBuffer>(branding.watermarkUrl, {
-          responseType: 'arraybuffer',
-          timeout: 15000,
-          maxContentLength: 10 * 1024 * 1024,
-        });
-        const targetWidth = Math.max(
-          40,
-          Math.round(resized.info.width * (scale / 100)),
-        );
-        const wm = await sharp(Buffer.from(wmResponse.data))
-          .resize({ width: targetWidth, withoutEnlargement: true })
-          .png()
-          .toBuffer({ resolveWithObject: true });
-        const encoded = wm.data.toString('base64');
-        const svg = Buffer.from(
-          `<svg width="${wm.info.width}" height="${wm.info.height}"><image href="data:image/png;base64,${encoded}" width="100%" height="100%" opacity="${opacity}"/></svg>`,
-        );
-        pipeline = pipeline.composite([
-          {
-            input: svg,
-            gravity: gravityMap[position] || 'southeast',
-            tile: position === 'tile',
-          },
-        ]);
-      } else {
-        const svg = Buffer.from(
-          `<svg width="600" height="120"><text x="300" y="72" text-anchor="middle" font-size="48" font-family="Arial" fill="white" fill-opacity="${opacity}">PREVIEW</text></svg>`,
-        );
-        pipeline = pipeline.composite([{ input: svg, gravity: 'center' }]);
-      }
-    }
-    return pipeline.jpeg({ quality }).toBuffer();
+      .toBuffer();
   }
 
   private price(

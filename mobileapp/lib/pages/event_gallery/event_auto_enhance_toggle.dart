@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/network/ai_settings_api.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
@@ -25,10 +25,12 @@ class _EventAutoEnhanceToggleState extends State<EventAutoEnhanceToggle> {
   bool _saving = false;
   bool _hasValue = false;
   bool _enabled = false;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    AiSettingsApi.changes.addListener(_settingsChanged);
     _load();
   }
 
@@ -44,49 +46,39 @@ class _EventAutoEnhanceToggleState extends State<EventAutoEnhanceToggle> {
     }
   }
 
+  void _settingsChanged() {
+    if (AiSettingsApi.changes.value == widget.eventId && !_saving) _load();
+  }
+
+  @override
+  void dispose() {
+    AiSettingsApi.changes.removeListener(_settingsChanged);
+    super.dispose();
+  }
+
   Future<void> _load() async {
     final eventId = widget.eventId;
     final albumId = widget.albumId;
+    final generation = ++_loadGeneration;
+    bool current() =>
+        mounted &&
+        generation == _loadGeneration &&
+        widget.eventId == eventId &&
+        widget.albumId == albumId;
     if (mounted) setState(() => _loading = true);
     try {
-      final response = await DioHelper.get(
-        '/event/get-one',
-        queryParameters: {'id': eventId},
-      );
-      final raw = response.data is Map ? response.data['data'] : null;
-      if (raw is! Map) throw StateError('Missing event settings');
-      bool enabled = raw['autoEnhanceImages'] == true;
-      if (albumId != null) {
-        final response = await DioHelper.get(
-          '/album/get-all',
-          queryParameters: {'eventId': eventId},
-        );
-        final matches = (response.data['data'] as List).where(
-          (row) =>
-              row is Map && (row['_id'] ?? row['id']).toString() == albumId,
-        );
-        if (matches.isEmpty) throw StateError('Album not found');
-        final album = matches.first as Map;
-        if (album['autoEnhanceImages'] is bool) {
-          enabled = album['autoEnhanceImages'] == true;
-        }
-      }
-      if (!mounted || widget.eventId != eventId || widget.albumId != albumId) {
-        return;
-      }
+      final result = await AiSettingsApi.read(eventId, albumId);
+      if (!current()) return;
+      final enabled = AiSettingsApi.enabled(result.event, result.scope);
       setState(() {
         _enabled = enabled;
         _hasValue = true;
       });
       widget.onValueChanged?.call(enabled);
     } catch (_) {
-      if (mounted && widget.eventId == eventId && widget.albumId == albumId) {
-        setState(() => _hasValue = false);
-      }
+      if (current()) setState(() => _hasValue = false);
     } finally {
-      if (mounted && widget.eventId == eventId && widget.albumId == albumId) {
-        setState(() => _loading = false);
-      }
+      if (current()) setState(() => _loading = false);
     }
   }
 
@@ -94,31 +86,26 @@ class _EventAutoEnhanceToggleState extends State<EventAutoEnhanceToggle> {
     if (_loading || _saving || !_hasValue) return;
     final eventId = widget.eventId;
     final albumId = widget.albumId;
+    bool current() =>
+        mounted && widget.eventId == eventId && widget.albumId == albumId;
     setState(() => _saving = true);
     try {
-      await DioHelper.patch(
-        albumId == null ? '/event/update' : '/album/update',
-        queryParameters: {'id': albumId ?? eventId},
-        data: {'autoEnhanceImages': enabled},
-      );
-      if (!mounted || widget.eventId != eventId || widget.albumId != albumId) {
-        return;
+      await AiSettingsApi.save(eventId, albumId, {
+        'autoEnhanceImages': enabled,
+      });
+      if (!current()) return;
+      await _load();
+      if (current() && _hasValue) {
+        AppToast.success(
+          _enabled
+              ? 'AI enhancement enabled for new photos'
+              : 'AI enhancement disabled for new photos',
+        );
       }
-      setState(() => _enabled = enabled);
-      widget.onValueChanged?.call(enabled);
-      AppToast.success(
-        enabled
-            ? 'AI enhancement enabled for new photos'
-            : 'AI enhancement disabled for new photos',
-      );
     } catch (_) {
-      if (mounted && widget.eventId == eventId && widget.albumId == albumId) {
-        AppToast.error('Could not save AI enhancement setting');
-      }
+      if (current()) AppToast.error('Could not save AI enhancement setting');
     } finally {
-      if (mounted && widget.eventId == eventId && widget.albumId == albumId) {
-        setState(() => _saving = false);
-      }
+      if (current()) setState(() => _saving = false);
     }
   }
 

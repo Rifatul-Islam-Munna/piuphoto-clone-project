@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mobileapp/core/guest/guest_qr_payload.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/network/ai_settings_api.dart';
 import 'package:mobileapp/core/platform/image_downloads.dart';
 import 'package:mobileapp/core/storage/active_event_storage.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
@@ -100,20 +101,16 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
     }
   }
 
-  // Refresh only while the current first page contains in-flight AI work.
-  // No permanent polling, loading overlay, selection loss, or extra requests
-  // while the user is scrolling through a paginated album.
+  // Refresh while a loaded photo is waiting for AI or cached delivery.
+  // Preserve loaded pages and selection; stop when all known work is ready.
   void _scheduleEnhancementRefresh() {
     _enhancementRefresh?.cancel();
-    if (!mounted || !_images.any((image) => image.enhancementInProgress))
-      return;
+    if (!mounted || !_images.any((image) => image.needsRefresh)) return;
     _enhancementRefresh = Timer(const Duration(seconds: 5), () {
       if (!mounted) return;
       if (_loading ||
           _loadingMore ||
           _refreshingEnhancement ||
-          _selectionMode ||
-          _page != 1 ||
           _busy ||
           ModalRoute.of(context)?.isCurrent != true) {
         _scheduleEnhancementRefresh();
@@ -133,32 +130,42 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
       });
     }
     try {
-      final response = await DioHelper.get(
-        '/eventImage/get-all',
-        queryParameters: {
-          'eventId': widget.eventId,
-          if (widget.albumId != null) 'albumId': widget.albumId,
-          'page': '1',
-          'limit': '100',
-        },
-      );
-      final data = response.data['data'] as List? ?? [];
-      final totalPages =
-          int.tryParse(response.data['totalPages']?.toString() ?? '') ?? 1;
-      final images = data
-          .map(
-            (item) => EventImageModel.fromJson(
-              Map<String, dynamic>.from(item as Map),
-            ),
-          )
-          .toList();
+      // Refresh loaded pages without clearing the grid, including originals
+      // whose AI jobs were started on later pages.
+      final requestedPages = silent ? _page : 1;
+      var totalPages = 1;
+      var loadedPages = 0;
+      final byId = <String, EventImageModel>{};
+      for (var page = 1; page <= requestedPages; page++) {
+        final response = await DioHelper.get(
+          '/eventImage/get-all',
+          queryParameters: {
+            'eventId': widget.eventId,
+            if (widget.albumId != null) 'albumId': widget.albumId,
+            'page': '$page',
+            'limit': '100',
+          },
+        );
+        totalPages =
+            int.tryParse(response.data['totalPages']?.toString() ?? '') ?? 1;
+        final data = response.data['data'] as List? ?? [];
+        for (final item in data) {
+          final image = EventImageModel.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          );
+          byId[image.id] = image;
+        }
+        loadedPages = page;
+        if (page >= totalPages) break;
+      }
+      final images = byId.values.toList();
       if (!mounted) return;
       setState(() {
         _images
           ..clear()
           ..addAll(images);
-        _page = 1;
-        _hasMore = totalPages > 1;
+        _page = loadedPages;
+        _hasMore = totalPages > loadedPages;
         _loadingMore = false;
         if (!silent) {
           _selectedIds.clear();
@@ -219,7 +226,10 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
         );
       }
     } finally {
-      if (mounted) setState(() => _loadingMore = false);
+      if (mounted) {
+        setState(() => _loadingMore = false);
+        _scheduleEnhancementRefresh();
+      }
     }
   }
 
@@ -238,12 +248,8 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
           .firstOrNull;
       String? mode = currentAlbum?.aiGalleryMode;
       if (mode == null) {
-        final eventResponse = await DioHelper.get(
-          '/event/get-one',
-          queryParameters: {'id': widget.eventId},
-        );
-        final event = eventResponse.data['data'];
-        if (event is Map) mode = event['aiGalleryMode']?.toString();
+        final event = await AiSettingsApi.readEvent(widget.eventId);
+        mode = event['aiGalleryMode']?.toString();
       }
       if (!mounted) return;
       setState(() {
@@ -407,6 +413,7 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
         _albumDescription = updated['description'] ?? _albumDescription;
       });
     await _loadAlbums();
+    if (mounted) await _load(silent: true);
   }
 
   Future<void> _openWorkflowManagement() async {
@@ -500,6 +507,82 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _enhanceSelected() async {
+    final selected = _selectedImages
+        .where((image) => image.canRequestEnhancement)
+        .toList();
+    if (selected.isEmpty || _busy) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enhance selected photos?'),
+        content: Text(
+          'AI will retouch ${selected.length} original photos in the background (3 credits per photo, up to ${selected.length * 3} credits). Enhanced copies will appear in this album. Originals are kept.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.auto_awesome_rounded, size: 18),
+            label: const Text('Enhance'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _busy = true);
+    var queued = 0;
+    var skipped = 0;
+    var failed = 0;
+    try {
+      for (var offset = 0; offset < selected.length; offset += 100) {
+        final response = await DioHelper.post(
+          '/eventImage/enhance-batch',
+          data: {
+            'ids': selected
+                .skip(offset)
+                .take(100)
+                .map((image) => image.id)
+                .toList(),
+          },
+        );
+        final data = response.data;
+        if (data is! Map || data['queued'] is! num)
+          throw StateError('Missing enhancement receipt');
+        queued += (data['queued'] as num).toInt();
+        skipped += (data['skipped'] as num?)?.toInt() ?? 0;
+        failed += (data['failed'] as num?)?.toInt() ?? 0;
+      }
+      if (queued > 0) {
+        AppToast.success(
+          '$queued photos queued for AI enhancement${skipped + failed > 0 ? ' · ${skipped + failed} not queued' : ''}',
+        );
+      } else {
+        AppToast.error(
+          'No new enhancement jobs. Photos may already be enhanced or processing.',
+        );
+      }
+    } catch (_) {
+      AppToast.error(
+        queued > 0
+            ? '$queued photos queued. Could not queue the remaining photos.'
+            : 'Could not queue selected photos',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _selectedIds.clear();
+          _selectionMode = false;
+        });
+        await _load(silent: true);
+      }
+    }
   }
 
   Future<void> _setSelectedVisibility() async {
@@ -1573,6 +1656,17 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
                     onTap: _busy ? null : _setSelectedVisibility,
                   ),
                   _selectionAction(
+                    icon: Icons.auto_awesome_rounded,
+                    label: 'Enhance',
+                    onTap:
+                        _busy ||
+                            !selected.any(
+                              (image) => image.canRequestEnhancement,
+                            )
+                        ? null
+                        : _enhanceSelected,
+                  ),
+                  _selectionAction(
                     icon: Icons.drive_file_move_outline,
                     label: 'Move',
                     onTap: _busy ? null : _moveSelected,
@@ -1711,8 +1805,12 @@ class _AlbumManagementPageState extends State<AlbumManagementPage> {
               Icon(
                 icon,
                 size: 21,
-                color: destructive
+                color: onTap == null
+                    ? AppColors.mutedForeground.withValues(alpha: .4)
+                    : destructive
                     ? AppColors.destructive
+                    : icon == Icons.auto_awesome_rounded
+                    ? AppColors.primary
                     : AppColors.mutedForeground,
               ),
               const SizedBox(height: 4),

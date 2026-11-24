@@ -97,6 +97,7 @@ class PresignedUploadService {
     void Function(int index)? onStarted,
     void Function(int index, int sent, int total)? onProgress,
     void Function(int index)? onStored,
+    Future<void> Function(int index, String url)? onUploaded,
   }) async {
     final urls = List<String>.filled(files.length, '');
     var next = 0;
@@ -111,6 +112,7 @@ class PresignedUploadService {
         );
         // Stored in object storage, but not yet registered in the event.
         onStored?.call(index);
+        if (onUploaded != null) await onUploaded(index, urls[index]);
       }
     }
 

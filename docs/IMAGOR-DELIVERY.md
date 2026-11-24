@@ -9,6 +9,26 @@ JPEG/PNG support and original URL fallback. Gallery downloads use original bytes
 and ZIP archives, not resized variants; paid previews retain their existing
 store authorization and watermark path.
 
+## Watermarks
+
+Use the existing event/album Branding settings to upload a watermark to AirPix
+and choose its position, opacity and scale. The backend only signs Imagor
+requests: the native watermark() filter loads the routed piuphoto object key
+from the same R2 loader. Imagor applies it to 320px, 720px and 1800px derivatives.
+The compressed result objects are cached in the existing result bucket.
+Changing or removing a watermark requeues only the event's eligible derivatives;
+old cache signatures are never selected for the new configuration. Existing
+unwatermarked URLs retain their content-addressed keys. The worker protocol and
+engine configuration are unchanged.
+
+The API preserves imageUrl as the full-resolution source for ZIP downloads,
+purchases and AI enhancement. Gallery clients use the preview/view fields;
+the web gallery skips its legacy overlay when watermarkApplied is true. Store
+previews reuse the matching cached gallery variant where possible and otherwise
+request a native Imagor transform. Protected legacy sources outside the shared
+S3 loader must be moved into the existing bucket before native watermarking;
+the backend never composites a watermark.
+
 ## Deployment
 
 1. Keep the existing Imagor app (Pixieset project `deploy/imagor`).
@@ -35,7 +55,8 @@ store authorization and watermark path.
    Once all eligible photos for an album (or full event view) are verified,
    the API delivers the cached R2 variants. New uploads revert the relevant
    scope to Imagor until warming catches up. Videos, unsupported RAW formats,
-   externally hosted images and store-protected previews retain prior behavior.
+   externally hosted images retain their legacy delivery behavior. Store previews
+   use native Imagor AVIF transforms for supported source objects.
 
 Queue endpoints (authenticated using x-imagor-worker-secret):
 POST /internal/imagor-cache/claim

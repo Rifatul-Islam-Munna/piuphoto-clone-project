@@ -6,6 +6,7 @@ import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { Album, AlbumDocument } from '../album/entities/album.entity';
 import { resolveAiSettings } from '../album/ai-settings';
+import { imagorEnabled, nativeWatermarkFilter, invalidateEventWatermark } from '../event-image/image-delivery';
 import { EventMemberService } from '../event-member/event-member.service';
 import { Event, EventDocument } from '../event/entities/event.entity';
 import {
@@ -388,7 +389,12 @@ export class GalleryAccessService {
       }
     }
     if (dto.publishPolicy === 'auto_ai') set.autoEnhanceImages = true;
-    if (dto.branding !== undefined) set.branding = dto.branding;
+    if (dto.branding !== undefined) {
+      if (imagorEnabled() && dto.branding?.watermarkUrl && !nativeWatermarkFilter(dto.branding)) {
+        throw new HttpException('Upload the watermark to your existing photo storage first', 400);
+      }
+      set.branding = dto.branding;
+    }
 
     if (dto.gallerySlug !== undefined) {
       const slug = dto.gallerySlug.trim().toLowerCase();
@@ -420,9 +426,19 @@ export class GalleryAccessService {
     const update: Record<string, unknown> = { $set: set };
     if (Object.keys(unset).length) update.$unset = unset;
     if (bumpAccess) update.$inc = { galleryAccessVersion: 1 };
-    const data = await this.eventModel
-      .findByIdAndUpdate(dto.eventId, update, { new: true })
+    // Return the actual previous value when saving branding, rather than a
+    // separate pre-read that can race another settings save.
+    const brandingChanged = dto.branding !== undefined && imagorEnabled();
+    let data = await this.eventModel
+      .findByIdAndUpdate(dto.eventId, update, { new: !brandingChanged })
       .lean();
+    if (!data) throw new HttpException('Event not found', 404);
+    if (brandingChanged) {
+      if (nativeWatermarkFilter(data.branding) !== nativeWatermarkFilter(dto.branding)) {
+        await invalidateEventWatermark(this.eventModel, dto.eventId);
+      }
+      data = await this.eventModel.findById(dto.eventId).lean();
+    }
     await this.audit(dto.eventId, dto.albumId, 'settings.updated', actorId, {
       visibility: dto.visibility,
       faceSearchEnabled: dto.faceSearchEnabled,

@@ -57,6 +57,7 @@ void main() {
         await second.writeAsBytes([4, 5, 6]);
         final started = <int>[];
         final stored = <int>[];
+        final confirmed = <int>[];
         final progress = <int>[];
 
         final urls = await PresignedUploadService.uploadFiles(
@@ -67,6 +68,11 @@ void main() {
           onStarted: started.add,
           onProgress: (index, sent, total) => progress.add(index),
           onStored: stored.add,
+          onUploaded: (index, url) async {
+            expect(stored, contains(index));
+            expect(url, 'https://images.invalid/photo.jpg');
+            confirmed.add(index);
+          },
         );
         expect(urls, [
           'https://images.invalid/photo.jpg',
@@ -74,6 +80,7 @@ void main() {
         ]);
         expect(started, containsAll([0, 1]));
         expect(stored, containsAll([0, 1]));
+        expect(confirmed, containsAll([0, 1]));
         expect(progress, isNotEmpty);
         expect(
           adapter.requests.where((item) => item.method == 'PUT').length,

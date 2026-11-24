@@ -7,6 +7,7 @@ import 'package:mobileapp/core/upload/camera_private_files.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/network/ai_settings_api.dart';
 import 'package:mobileapp/core/upload/transfer_ledger_storage.dart';
 import 'package:mobileapp/core/upload/camera_staging_cleanup.dart';
 import 'package:mobileapp/core/upload/upload_queue_storage.dart';
@@ -310,6 +311,7 @@ class UploadQueueService {
     String? error,
     String? imageUrl,
     String? previewUrl,
+    String? deliverySource,
     String? localPath,
     String? eventImageId,
     String? enhancementStatus,
@@ -330,6 +332,7 @@ class UploadQueueService {
       error: error,
       imageUrl: imageUrl,
       previewUrl: previewUrl,
+      deliverySource: deliverySource,
       eventImageId: eventImageId,
       enhancementStatus: enhancementStatus,
       isEnhanced: isEnhanced,
@@ -932,6 +935,7 @@ class UploadQueueService {
       );
       final confirmationToken = CancelToken();
       final confirmationTimeout = cloudConfirmationTimeout;
+      await AiSettingsApi.waitForSave(event.id);
       final eventResponse =
           await DioHelper.post(
             '/eventImage',
@@ -989,6 +993,7 @@ class UploadQueueService {
         progress: 100,
         imageUrl: imageUrl,
         previewUrl: createdData['previewUrl']?.toString(),
+        deliverySource: createdData['deliverySource']?.toString(),
         eventImageId: eventImageId,
         enhancementStatus: createdData['enhancementStatus']?.toString(),
         isEnhanced: createdData['isEnhanced'] == true,

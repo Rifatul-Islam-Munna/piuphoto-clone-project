@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/network/ai_settings_api.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 
@@ -29,6 +29,7 @@ class _WorkflowManagementPageState extends State<WorkflowManagementPage> {
   bool _loading = true;
   bool _saving = false;
   bool _autoEnhanceImages = false;
+  bool _hasSettings = false;
 
   @override
   void initState() {
@@ -37,63 +38,42 @@ class _WorkflowManagementPageState extends State<WorkflowManagementPage> {
   }
 
   Future<void> _loadWorkflow() async {
+    setState(() => _loading = true);
     try {
-      final response = await DioHelper.get(
-        '/event/get-one',
-        queryParameters: {'id': widget.eventId},
-      );
-      final raw = response.data['data'];
-      final event = raw is Map
-          ? Map<String, dynamic>.from(raw)
-          : <String, dynamic>{};
-      var enabled = event['autoEnhanceImages'] == true;
-      if (widget.albumId != null) {
-        final response = await DioHelper.get(
-          '/album/get-all',
-          queryParameters: {'eventId': widget.eventId},
-        );
-        final matches = (response.data['data'] as List).where(
-          (row) =>
-              row is Map &&
-              (row['_id'] ?? row['id']).toString() == widget.albumId,
-        );
-        if (matches.isEmpty) throw StateError('Album not found');
-        final album = matches.first as Map;
-        if (album['autoEnhanceImages'] is bool)
-          enabled = album['autoEnhanceImages'] == true;
-      }
+      final result = await AiSettingsApi.read(widget.eventId, widget.albumId);
       if (!mounted) return;
       setState(() {
-        _autoEnhanceImages = enabled;
+        _autoEnhanceImages = AiSettingsApi.enabled(result.event, result.scope);
+        _hasSettings = true;
       });
     } catch (_) {
-      if (mounted) AppToast.error('Could not load workflow settings');
+      if (mounted) {
+        setState(() => _hasSettings = false);
+        AppToast.error('Could not load workflow settings');
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _setAutoEnhance(bool enabled) async {
-    if (_saving) return;
-    final previous = _autoEnhanceImages;
-    setState(() {
-      _autoEnhanceImages = enabled;
-      _saving = true;
-    });
+    if (_saving || !_hasSettings) return;
+    setState(() => _saving = true);
     try {
-      await DioHelper.patch(
-        widget.albumId == null ? '/event/update' : '/album/update',
-        queryParameters: {'id': widget.albumId ?? widget.eventId},
-        data: {'autoEnhanceImages': enabled},
-      );
-      AppToast.success(
-        enabled
-            ? 'AI image enhancement enabled'
-            : 'AI image enhancement disabled',
-      );
+      await AiSettingsApi.save(widget.eventId, widget.albumId, {
+        'autoEnhanceImages': enabled,
+      });
+      if (!mounted) return;
+      await _loadWorkflow();
+      if (mounted && _hasSettings) {
+        AppToast.success(
+          _autoEnhanceImages
+              ? 'AI image enhancement enabled'
+              : 'AI image enhancement disabled',
+        );
+      }
     } catch (_) {
-      if (mounted) setState(() => _autoEnhanceImages = previous);
-      AppToast.error('Could not update AI image enhancement');
+      if (mounted) AppToast.error('Could not update AI image enhancement');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -242,7 +222,9 @@ class _WorkflowManagementPageState extends State<WorkflowManagementPage> {
                     contentPadding: EdgeInsets.zero,
                     dense: true,
                     value: _autoEnhanceImages,
-                    onChanged: _saving ? null : _setAutoEnhance,
+                    onChanged: _saving || !_hasSettings
+                        ? null
+                        : _setAutoEnhance,
                     title: const Text(
                       'AI image enhancement',
                       style: TextStyle(

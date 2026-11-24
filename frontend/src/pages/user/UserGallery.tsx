@@ -151,9 +151,9 @@ export default function UserGallery() {
     },
     onSuccess: (response) => {
       if (response?.skipped) {
-        toast.error("Enhance skipped. Not enough credits.");
+        toast.error(response.message || "Enhancement skipped");
       } else {
-        toast.success("Image enhanced");
+        toast.success("AI enhancement queued");
       }
       setEnhanceImage(null);
       setPrompt("");

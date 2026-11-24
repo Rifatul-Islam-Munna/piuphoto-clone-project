@@ -146,7 +146,9 @@ class TransferListPage extends StatelessWidget {
       '.png',
       '.webp',
     ].any(lower.endsWith);
-    if (previewable && item.localPath != null) {
+    if (previewable &&
+        item.localPath != null &&
+        !(item.isUploaded && item.previewUrl?.isNotEmpty == true)) {
       final file = File(item.localPath!);
       if (file.existsSync()) {
         return ClipRRect(

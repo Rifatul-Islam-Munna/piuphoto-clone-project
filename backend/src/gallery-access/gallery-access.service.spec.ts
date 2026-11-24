@@ -39,3 +39,28 @@ describe('GalleryAccessService store protection', () => {
     expect(result.data[0].imageUrl).not.toContain('private.example');
   });
 });
+
+describe('Gallery branding invalidation', () => {
+  const env = process.env;
+  beforeEach(() => { process.env = { ...env, IMAGOR_ENABLED: 'true', IMAGOR_URL: 'https://imagor.example.test', IMAGOR_SECRET: 'test-only', STORAGE_PUBLIC_URL: 'https://originals.example.test' }; });
+  afterEach(() => { process.env = env; });
+  it('invalidates only for a changed watermark, including removal', async () => {
+    const id = new Types.ObjectId();
+    const old = { watermarkUrl: 'https://originals.example.test/logo.png', watermarkOpacity: .7 };
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 3 });
+    const previous = { _id: id, branding: old };
+    const eventModel = {
+      db: { collection: jest.fn().mockReturnValue({ updateMany }) },
+      findByIdAndUpdate: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(previous) }),
+      findById: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(previous) }),
+    };
+    const service = new GalleryAccessService(eventModel as never, {} as never, { create: jest.fn().mockResolvedValue({}) } as never, {} as never, { assertCanManage: jest.fn().mockResolvedValue(undefined) } as never, {} as never);
+    await service.updateSettings({ eventId: String(id), branding: { ...old, coverText: 'Changed banner' } });
+    expect(updateMany).not.toHaveBeenCalled();
+    await service.updateSettings({ eventId: String(id), branding: { ...old, watermarkOpacity: .4 } });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    await service.updateSettings({ eventId: String(id), branding: {} });
+    expect(updateMany).toHaveBeenCalledTimes(2);
+    await expect(service.updateSettings({ eventId: String(id), branding: { watermarkUrl: 'https://external.test/logo.png' } })).rejects.toThrow('Upload the watermark');
+  });
+});

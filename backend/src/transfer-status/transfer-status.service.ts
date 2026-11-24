@@ -4,7 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Observable, Subject, interval, map, merge } from 'rxjs';
 import { EventMemberService } from '../event-member/event-member.service';
 import { UploadSessionService } from '../upload-session/upload-session.service';
-import { withDelivery } from '../event-image/image-delivery';
+import { withDelivery, loadDeliveryBranding } from '../event-image/image-delivery';
 import {
   TransferStatusQueryDto,
   UpsertTransferStatusDto,
@@ -115,9 +115,11 @@ export class TransferStatusService {
       .populate('uploadSessionId', 'source cameraId startedAt lastSeenAt status')
       .lean();
 
-    const payload = { type: 'transfer.updated', data: withDelivery(data) };
+    const branding = await loadDeliveryBranding(this.model, dto.eventId);
+    const delivered = withDelivery(data, false, branding);
+    const payload = { type: 'transfer.updated', data: delivered };
     this.subject(dto.eventId).next(payload as Record<string, unknown>);
-    return { message: 'Transfer status updated', data: withDelivery(data) };
+    return { message: 'Transfer status updated', data: delivered };
   }
 
   async list(query: TransferStatusQueryDto, userId: string, role?: string) {
@@ -145,8 +147,9 @@ export class TransferStatusService {
     const summary = Object.fromEntries(
       counts.map((item) => [item._id, item.count]),
     );
+    const branding = await loadDeliveryBranding(this.model, query.eventId);
     return {
-      data: data.map(row => withDelivery(row)),
+      data: data.map(row => withDelivery(row, false, branding)),
       totalItems: counts.reduce((sum, item) => sum + item.count, 0),
       summary,
     };

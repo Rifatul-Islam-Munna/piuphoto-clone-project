@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/network/ai_settings_api.dart';
 import 'package:mobileapp/core/theme/app_theme.dart';
 import 'package:mobileapp/utilities/app_toast.dart';
 import 'package:mobileapp/pages/event_gallery/album_retouch_controls.dart';
@@ -105,25 +105,9 @@ class _AlbumAiSettingsPageState extends State<AlbumAiSettingsPage> {
       _error = null;
     });
     try {
-      final response = await DioHelper.get(
-        '/event/get-one',
-        queryParameters: {'id': widget.eventId},
-      );
-      final event = Map<String, dynamic>.from(response.data['data'] as Map);
-      Map<String, dynamic> settings = event;
-      if (_isAlbum) {
-        final albums = await DioHelper.get(
-          '/album/get-all',
-          queryParameters: {'eventId': widget.eventId},
-        );
-        final matches = (albums.data['data'] as List).where(
-          (row) =>
-              row is Map &&
-              (row['_id'] ?? row['id']).toString() == widget.albumId,
-        );
-        if (matches.isEmpty) throw StateError('Album not found');
-        settings = Map<String, dynamic>.from(matches.first as Map);
-      }
+      final result = await AiSettingsApi.read(widget.eventId, widget.albumId);
+      final event = result.event;
+      final settings = result.scope;
       if (!mounted) return;
       setState(() {
         _eventEnabled = event['autoEnhanceImages'] == true;
@@ -181,17 +165,13 @@ class _AlbumAiSettingsPageState extends State<AlbumAiSettingsPage> {
     if (_saving || _loading || _error != null) return;
     setState(() => _saving = true);
     try {
-      await DioHelper.patch(
-        _isAlbum ? '/album/update' : '/event/update',
-        queryParameters: {'id': widget.albumId ?? widget.eventId},
-        data: {
-          'autoEnhanceImages': _inherit ? null : _enabled,
-          'aiPreset': _inherit ? null : _preset,
-          'aiPrompt': _inherit ? null : _notes.text.trim(),
-          'aiAdjustments': _inherit ? null : _adjustments,
-          'aiGalleryMode': _inherit ? null : _mode,
-        },
-      );
+      await AiSettingsApi.save(widget.eventId, widget.albumId, {
+        'autoEnhanceImages': _inherit ? null : _enabled,
+        'aiPreset': _inherit ? null : _preset,
+        'aiPrompt': _inherit ? null : _notes.text.trim(),
+        'aiAdjustments': _inherit ? null : _adjustments,
+        'aiGalleryMode': _inherit ? null : _mode,
+      });
       if (!mounted) return;
       AppToast.success('AI settings saved');
       Navigator.of(context).pop(true);

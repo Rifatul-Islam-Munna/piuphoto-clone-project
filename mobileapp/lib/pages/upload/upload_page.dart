@@ -14,6 +14,7 @@ import 'package:mobileapp/core/guest/guest_qr_payload.dart';
 import 'package:mobileapp/core/guest/guest_qr_preparation.dart';
 import 'package:mobileapp/core/guest/guest_face_delivery.dart';
 import 'package:mobileapp/core/network/dio_helper.dart';
+import 'package:mobileapp/core/network/ai_settings_api.dart';
 import 'package:mobileapp/core/platform/canon_ccapi_camera.dart';
 import 'package:mobileapp/core/platform/camera_ftp_receiver.dart';
 import 'package:mobileapp/core/platform/debug_pc_camera_transport.dart';
@@ -1175,30 +1176,33 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     return false;
   }
 
-  Future<List<String>> _uploadFilesBatch(List<_SelectedUploadFile> files) =>
-      PresignedUploadService.uploadFiles(
-        [for (final file in files) (path: file.path, filename: file.name)],
-        onStarted: (index) {
-          if (!mounted) return;
-          _safeSetState(() => _manualStarted.add(files[index].path));
-        },
-        onProgress: (index, sent, total) {
-          if (!mounted || total <= 0) return;
-          final path = files[index].path;
-          final percent = ((sent * 100) / total).round().clamp(0, 100);
-          final previous = _manualProgress[path] ?? 0;
-          // Avoid rebuilding the whole upload screen on every network chunk.
-          if (percent < 100 && percent - previous < 5) return;
-          _safeSetState(() => _manualProgress[path] = percent);
-        },
-        onStored: (index) {
-          if (!mounted) return;
-          _safeSetState(() {
-            _manualStored.add(files[index].path);
-            _manualProgress[files[index].path] = 100;
-          });
-        },
-      );
+  Future<List<String>> _uploadFilesBatch(
+    List<_SelectedUploadFile> files, {
+    required Future<void> Function(int, String) onUploaded,
+  }) => PresignedUploadService.uploadFiles(
+    [for (final file in files) (path: file.path, filename: file.name)],
+    onStarted: (index) {
+      if (!mounted) return;
+      _safeSetState(() => _manualStarted.add(files[index].path));
+    },
+    onProgress: (index, sent, total) {
+      if (!mounted || total <= 0) return;
+      final path = files[index].path;
+      final percent = ((sent * 100) / total).round().clamp(0, 100);
+      final previous = _manualProgress[path] ?? 0;
+      // Avoid rebuilding the whole upload screen on every network chunk.
+      if (percent < 100 && percent - previous < 5) return;
+      _safeSetState(() => _manualProgress[path] = percent);
+    },
+    onUploaded: onUploaded,
+    onStored: (index) {
+      if (!mounted) return;
+      _safeSetState(() {
+        _manualStored.add(files[index].path);
+        _manualProgress[files[index].path] = 100;
+      });
+    },
+  );
 
   Future<bool> _uploadOrQueueFile({
     required EventSummary event,
@@ -1226,25 +1230,29 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     return '${event.id}|wireless|$imageUrl|$signature';
   }
 
-  Future<Map<String, Map>> _createEventImages(
+  Future<Map<String, dynamic>> _registerManualPhoto(
     EventSummary event,
-    List<String> imageUrls,
+    String url,
+    String? albumId,
   ) async {
+    await AiSettingsApi.waitForSave(event.id);
+    // The same stored URL always has the same idempotency key on retry.
+    final transferId = 'manual-${sha256.convert(url.codeUnits)}';
     final response = await DioHelper.post(
-      '/eventImage/batch',
+      '/eventImage',
       data: {
         'eventId': event.id,
-        'imageUrls': imageUrls,
+        'imageUrl': url,
+        'clientTransferId': transferId,
         'isEnhanced': false,
-        if (_selectedAlbumId != null) 'albumId': _selectedAlbumId,
+        if (albumId != null) 'albumId': albumId,
       },
     );
-    final rows = response.data is Map ? response.data['data'] : null;
-    return {
-      if (rows is List)
-        for (final row in rows.whereType<Map>())
-          if (row['imageUrl'] != null) row['imageUrl'].toString(): row,
-    };
+    final row = response.data is Map ? response.data['data'] : null;
+    if (row is! Map || row['_id']?.toString().isNotEmpty != true) {
+      throw StateError('Cloud confirmation is incomplete');
+    }
+    return Map<String, dynamic>.from(row);
   }
 
   Future<void> _loadAlbumsForEvent(EventSummary event) async {
@@ -2711,13 +2719,16 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   }
 
   Future<void> _submit(EventSummary event) async {
+    if (_uploading) return;
     if (_selectedFiles.isEmpty) {
       AppToast.error('Choose images first');
       return;
     }
 
     final files = List<_SelectedUploadFile>.from(_selectedFiles);
-
+    final albumId = _selectedAlbumId;
+    final confirmed = <String>{};
+    final now = DateTime.now().millisecondsSinceEpoch;
     _pickedUploading.value = true;
     _safeSetState(() {
       _uploading = true;
@@ -2728,73 +2739,74 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     });
 
     try {
-      final imageUrls = await _uploadFilesBatch(files);
-      if (imageUrls.isEmpty) {
-        throw Exception('Image upload returned no URLs');
-      }
-
-      _safeSetState(() {
-        _uploadStatus =
-            'Saving ${imageUrls.length} images to ${event.title}...';
-      });
-
-      final receipts = await _createEventImages(event, imageUrls);
-      // Only count a photo as uploaded after the event registration succeeds.
-      // This records manually selected photos in the same live transfer grid.
-      try {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        final fileSizes = await Future.wait([
-          for (final file in files)
-            File(file.path).length().catchError((_) => 0),
-        ]);
-        await TransferLedgerStorage.upsertAll([
-          for (var index = 0; index < imageUrls.length; index++)
-            TransferLedgerItem(
-              id: 'manual-$now-$index',
-              eventId: event.id,
-              eventTitle: event.title,
-              filename: files[index].name,
-              source: 'manual-picker',
-              status: TransferLedgerStatus.published,
-              createdAt: now + index,
-              updatedAt: now + index,
-              localPath: files[index].path,
-              imageUrl: imageUrls[index],
-              eventImageId: receipts[imageUrls[index]]?['_id']?.toString(),
-              enhancementStatus:
-                  receipts[imageUrls[index]]?['enhancementStatus']?.toString(),
-              isEnhanced: receipts[imageUrls[index]]?['isEnhanced'] == true,
-              fileSize: fileSizes[index],
-              registrationStarted: true,
-              progress: 100,
-            ),
-        ]);
-      } catch (error) {
-        // Cloud registration already succeeded; never report a false upload failure.
-        debugPrint('Could not record manual upload history: $error');
-      }
-      AppToast.success('${imageUrls.length} images uploaded to ${event.title}');
-      _safeSetState(() {
-        _selectedFiles.clear();
-        _manualStarted.clear();
-        _manualProgress.clear();
-        _manualStored.clear();
-        // Enhancement is an event-level preference; completing one upload
-        // must not silently turn it off for the next batch.
-        _uploadStatus = null;
-      });
-      _syncPickedPhotos();
-    } on DioException catch (error) {
-      AppToast.error(
-        error.response?.data?['message']?.toString() ??
-            'Failed to upload images',
+      // Each bounded storage worker confirms its own photo immediately after
+      // the PUT; it never waits for the rest of the batch or for an AI result.
+      await _uploadFilesBatch(
+        files,
+        onUploaded: (index, url) async {
+          final file = files[index];
+          final receipt = await _registerManualPhoto(event, url, albumId);
+          confirmed.add(file.path);
+          try {
+            await TransferLedgerStorage.upsert(
+              TransferLedgerItem(
+                id: 'manual-${sha256.convert(url.codeUnits)}',
+                eventId: event.id,
+                eventTitle: event.title,
+                albumId: albumId,
+                filename: file.name,
+                source: 'manual-picker',
+                status: receipt['isPublished'] == true
+                    ? TransferLedgerStatus.published
+                    : TransferLedgerStatus.delivered,
+                createdAt: now + index,
+                updatedAt: DateTime.now().millisecondsSinceEpoch,
+                localPath: file.path,
+                imageUrl: url,
+                previewUrl: receipt['previewUrl']?.toString(),
+                deliverySource: receipt['deliverySource']?.toString(),
+                eventImageId: receipt['_id']?.toString(),
+                enhancementStatus: receipt['enhancementStatus']?.toString(),
+                isEnhanced: receipt['isEnhanced'] == true,
+                fileSize: await File(file.path).length().catchError((_) => 0),
+                registrationStarted: true,
+                progress: 100,
+              ),
+            );
+          } catch (error) {
+            // Do not report failure for a photo already committed on the server.
+            debugPrint('Could not record manual upload history: $error');
+          }
+          if (mounted) {
+            _safeSetState(() {
+              _selectedFiles.removeWhere((item) => item.path == file.path);
+              _manualStarted.remove(file.path);
+              _manualStored.remove(file.path);
+              _manualProgress.remove(file.path);
+              _uploadStatus = '${confirmed.length} / ${files.length} uploaded';
+            });
+            _syncPickedPhotos();
+          }
+        },
       );
+      AppToast.success('${confirmed.length} images uploaded to ${event.title}');
     } catch (_) {
-      AppToast.error('Failed to upload images');
+      AppToast.error(
+        confirmed.isEmpty
+            ? 'Failed to upload images. Please retry.'
+            : '${confirmed.length} images uploaded. Retry the remaining photos.',
+      );
     } finally {
       if (mounted) {
-        _safeSetState(() => _uploading = false);
+        _safeSetState(() {
+          _uploading = false;
+          _manualStarted.clear();
+          _manualStored.clear();
+          _manualProgress.clear();
+          _uploadStatus = null;
+        });
         _pickedUploading.value = false;
+        _syncPickedPhotos();
       }
     }
   }
@@ -3873,7 +3885,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 const SizedBox(height: 8),
                 Text(
                   _uploading
-                      ? '${_manualStored.length} / ${_selectedFiles.length} sent to storage · saving to event next'
+                      ? '${_manualStored.length} / ${_selectedFiles.length} sent to storage · confirming each photo'
                       : 'Selected photos · tap Upload to send this batch',
                   style: const TextStyle(fontSize: 11),
                 ),

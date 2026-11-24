@@ -46,6 +46,78 @@ void main() {
     await getIt.reset();
   });
 
+  testWidgets(
+    'Selected originals can be enhanced with AI off and copies appear automatically',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.binding.setSurfaceSize(null);
+      });
+      backend.autoEnhanceImages = false;
+      backend.images = [
+        {
+          '_id': 'source-1',
+          'imageUrl': 'https://storage.example.test/source.jpg',
+          'mediaType': 'photo',
+          'isPublished': true,
+        },
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          scaffoldMessengerKey: AppToast.messengerKey,
+          home: const AlbumManagementPage(
+            eventId: '507f1f77bcf86cd799439011',
+            eventTitle: 'Wedding shoot',
+            albumTitle: 'Wedding shoot',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('album-media-source-1')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.text('Enhance'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.textContaining('3 credits per photo'), findsOneWidget);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Enhance'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(backend.enhancedRequests, [
+        ['source-1'],
+      ]);
+      expect(backend.autoEnhanceImages, isFalse);
+      expect(find.text('AI processing'), findsOneWidget);
+      backend.images.first['enhancementStatus'] = 'completed';
+      backend.images.insert(0, {
+        '_id': 'enhanced-1',
+        'imageUrl': 'https://storage.example.test/enhanced.jpg',
+        'isEnhanced': true,
+        'mediaType': 'photo',
+        'isPublished': true,
+      });
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('AI enhanced'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('album-media-source-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('album-media-enhanced-1')),
+        findsOneWidget,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   testWidgets('Album photo names are clean and both viewer gestures work', (
     tester,
   ) async {
@@ -552,6 +624,7 @@ class _AlbumLibraryAdapter implements HttpClientAdapter {
   int storeSettingsWrites = 0;
   int enhancementUpdates = 0;
   int albumAiUpdates = 0;
+  final enhancedRequests = <List<String>>[];
   List<Map<String, dynamic>> albums = [];
   bool autoEnhanceImages = false;
   String? lastEnhancementEventId;
@@ -599,12 +672,11 @@ class _AlbumLibraryAdapter implements HttpClientAdapter {
     }
 
     if (path == '/event/get-one' && options.method == 'GET') {
+      // Production EventService.findOne returns the document directly.
       return _json({
-        'data': {
-          '_id': '507f1f77bcf86cd799439011',
-          'title': 'Wedding shoot',
-          'autoEnhanceImages': autoEnhanceImages,
-        },
+        '_id': '507f1f77bcf86cd799439011',
+        'title': 'Wedding shoot',
+        'autoEnhanceImages': autoEnhanceImages,
       });
     }
 
@@ -643,6 +715,15 @@ class _AlbumLibraryAdapter implements HttpClientAdapter {
         lastEnhancementEventId = options.queryParameters['id']?.toString();
       }
       return _json({'message': 'updated'});
+    }
+
+    if (path == '/eventImage/enhance-batch' && options.method == 'POST') {
+      final ids = List<String>.from((options.data as Map)['ids'] as List);
+      enhancedRequests.add(ids);
+      for (final row in images) {
+        if (ids.contains(row['_id'])) row['enhancementStatus'] = 'pending';
+      }
+      return _json({'queued': ids.length, 'skipped': 0, 'failed': 0});
     }
 
     if (path == '/eventImage/get-all' && options.method == 'GET') {

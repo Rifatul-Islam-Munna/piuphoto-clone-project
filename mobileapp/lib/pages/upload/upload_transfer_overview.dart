@@ -223,6 +223,8 @@ class UploadTransferOverview extends StatelessWidget {
             errorWidget: placeholder(),
           )
         : placeholder();
+    if (item.isUploaded && item.previewUrl?.isNotEmpty == true)
+      return network();
     if (item.localPath?.isNotEmpty == true) {
       return Image.file(
         File(item.localPath!),

@@ -156,7 +156,7 @@ export class EventImageService {
 
     const event = await this.eventModel
       .findById(eventId)
-      .select('userId title autoEnhanceImages autoPublishImages requireReview publishPolicy aiPreset aiPrompt aiAdjustments aiGalleryMode')
+      .select('userId title autoEnhanceImages autoPublishImages requireReview publishPolicy aiPreset aiPrompt aiAdjustments aiGalleryMode branding')
       .lean();
 
     if (!event) {
@@ -654,6 +654,62 @@ export class EventImageService {
     }
   }
 
+  // Limit in-flight AI work per backend process. Both synchronous FAL
+  // inference and webhook submission are independent of upload confirmation.
+  private activeEnhancements = 0;
+  private readonly enhancementQueue: Array<() => Promise<void>> = [];
+
+  private enqueueEnhancement(work: () => Promise<void>) {
+    this.enhancementQueue.push(work);
+    this.drainEnhancements();
+  }
+
+  private drainEnhancements() {
+    while (this.activeEnhancements < 2 && this.enhancementQueue.length) {
+      const work = this.enhancementQueue.shift()!;
+      this.activeEnhancements++;
+      void Promise.resolve().then(work).catch((error) => {
+        this.logger.error('image-enhance-failed', error instanceof Error ? error.message : 'AI request failed');
+      }).finally(() => {
+        this.activeEnhancements--;
+        this.drainEnhancements();
+      });
+    }
+  }
+
+  private enqueuePhotoEnhancement(
+    original: EventImageDocument,
+    eventId: string,
+    uploaderId: string,
+    ownerId: string,
+    albumId: string | undefined,
+    prompt: string | undefined,
+    published: boolean,
+    settings: AiSettings,
+  ) {
+    this.enqueueEnhancement(async () => {
+      try {
+        const result = await this.tryEnhanceForOwner(
+          original.imageUrl, eventId, uploaderId, ownerId, albumId,
+          prompt, published, String(original._id), settings,
+        );
+        if (result && !this.isEnhancementJobResult(result)) {
+          this.queuePhotoAutomation(result);
+          this.emitGallery(eventId, {
+            type: 'photo.enhanced', imageId: String(result._id),
+            isPublished: result.isPublished !== false,
+          });
+          void this.workflowWebhooks.publish(eventId, 'photo.ai', {
+            imageId: String(result._id), sourceEventImageId: String(original._id),
+          });
+        }
+      } catch (error) {
+        await this.markEnhancement(String(original._id), 'failed', 'AI enhancement failed. Please retry.');
+        this.logger.error('image-enhance-failed', error instanceof Error ? error.message : 'AI request failed');
+      }
+    });
+  }
+
   private isEnhancementJobResult(
     value: EventImageDocument | { requestId: string; status: string },
   ): value is { requestId: string; status: string } {
@@ -896,7 +952,7 @@ export class EventImageService {
       if (existing) {
         return {
           message: 'Event image already received',
-          data: withDelivery(existing),
+          data: withDelivery(existing, true, event.branding),
           enhancedData: null,
           enhancementJob: null,
           idempotent: true,
@@ -941,7 +997,7 @@ export class EventImageService {
         if (existing) {
           return {
             message: 'Event image already received',
-            data: withDelivery(existing),
+            data: withDelivery(existing, true, event.branding),
             enhancedData: null,
             enhancementJob: null,
             idempotent: true,
@@ -964,50 +1020,21 @@ export class EventImageService {
       isPublished: eventImage.isPublished !== false,
     });
 
-    let enhancedImage: EventImageDocument | null = null;
-    let enhancementJob: { requestId: string; status: string } | null = null;
-    if (aiSettings.autoEnhanceImages && !createEventImageDto.isEnhanced && this.inferMediaType(createEventImageDto.imageUrl, createEventImageDto.mediaType) === 'photo') {
-      const enhance = async () => {
-        try {
-          const enhancement = await this.tryEnhanceForOwner(
-            createEventImageDto.imageUrl,
-            createEventImageDto.eventId,
-            String(userId),
-            String(event.userId),
-            createEventImageDto.albumId,
-            createEventImageDto.enhancePrompt,
-            publishEnhanced,
-            String(eventImage._id),
-            aiSettings,
-          );
-          if (enhancement && this.isEnhancementJobResult(enhancement)) {
-            enhancementJob = enhancement;
-          } else if (enhancement) {
-            enhancedImage = enhancement as EventImageDocument;
-            this.queuePhotoAutomation(enhancedImage);
-            this.emitGallery(createEventImageDto.eventId, { type: 'photo.enhanced', imageId: String(enhancedImage._id), isPublished: enhancedImage.isPublished !== false });
-            void this.workflowWebhooks.publish(createEventImageDto.eventId, 'photo.ai', { imageId: String(enhancedImage._id), sourceEventImageId: String(eventImage._id) });
-          }
-        } catch (error) {
-          await this.markEnhancement(String(eventImage._id), 'failed', 'AI enhancement failed. Please retry.');
-          this.logger.error('image-enhance-failed', error instanceof Error ? error.message : 'AI request failed');
-        }
-      };
-      if (createEventImageDto.clientTransferId) {
-        // The original is already stored. Camera queues need its confirmation
-        // immediately so a slow AI request cannot hold the next photo hostage.
-        // Retries return the original above and do not charge for AI twice.
-        void enhance();
-      } else {
-        await enhance();
-      }
+    // Confirm the original as soon as its database record exists, regardless
+    // of whether this is a manual, camera, or API upload.
+    if (aiSettings.autoEnhanceImages && !createEventImageDto.isEnhanced &&
+        this.inferMediaType(createEventImageDto.imageUrl, createEventImageDto.mediaType) === 'photo') {
+      this.enqueuePhotoEnhancement(
+        eventImage, createEventImageDto.eventId, String(userId), String(event.userId),
+        createEventImageDto.albumId, createEventImageDto.enhancePrompt, publishEnhanced, aiSettings,
+      );
     }
 
     return {
       message: 'Event image created successfully',
-      data: withDelivery(eventImage),
-      enhancedData: withDelivery(enhancedImage),
-      enhancementJob,
+      data: withDelivery(eventImage, false, event.branding),
+      enhancedData: null,
+      enhancementJob: null,
     };
   }
 
@@ -1073,60 +1100,23 @@ export class EventImageService {
       isPublished: publishOriginal,
     });
 
-    let enhancedImages: EventImageDocument[] = [];
-    let enhancementJobs: Array<{ requestId: string; status: string }> = [];
-    if (aiSettings.autoEnhanceImages && !createEventImagesBatchDto.isEnhanced && createEventImagesBatchDto.mediaType !== 'video') {
-      const results = await Promise.allSettled(
-        createEventImagesBatchDto.imageUrls.map((imageUrl, index) =>
-          this.inferMediaType(imageUrl, createEventImagesBatchDto.mediaType) === 'video' ? Promise.resolve(null) : this.tryEnhanceForOwner(
-            imageUrl,
-            createEventImagesBatchDto.eventId,
-            String(userId),
-            String(event.userId),
-            createEventImagesBatchDto.albumId,
-            createEventImagesBatchDto.enhancePrompt,
-            publishEnhanced,
-            eventImages[index] ? String(eventImages[index]._id) : undefined,
-            aiSettings,
-          ),
-        ),
-      );
-
-      const enhancements = results
-        .map((result, index) => {
-          if (result.status === 'rejected') {
-            void this.markEnhancement(eventImages[index]?._id, 'failed', 'AI enhancement failed. Please retry.');
-            this.logger.error('image-enhance-failed', result.reason instanceof Error ? result.reason.message : 'AI request failed');
-            return null;
-          }
-          return result.value;
-        })
-        .filter((image): image is NonNullable<typeof image> => image !== null);
-
-      enhancementJobs = enhancements.filter(
-        (enhancement): enhancement is { requestId: string; status: string } =>
-          this.isEnhancementJobResult(enhancement),
-      );
-      enhancedImages = enhancements.filter(
-        (enhancement): enhancement is EventImageDocument =>
-          !this.isEnhancementJobResult(enhancement),
-      );
-
-      enhancedImages.forEach((eventImage) => {
-        this.queuePhotoAutomation(eventImage);
-        void this.workflowWebhooks.publish(createEventImagesBatchDto.eventId, 'photo.ai', {
-          imageId: String(eventImage._id),
-          sourceEventImageId: eventImage.enhancedFromId ? String(eventImage.enhancedFromId) : undefined,
-        });
+    // Each original is already stored. Enqueue work without waiting for
+    // FAL inference, result download, or the enhanced copy's R2 upload.
+    if (aiSettings.autoEnhanceImages && !createEventImagesBatchDto.isEnhanced) {
+      eventImages.forEach((image, index) => {
+        if (this.inferMediaType(createEventImagesBatchDto.imageUrls[index], createEventImagesBatchDto.mediaType) !== 'photo') return;
+        this.enqueuePhotoEnhancement(
+          image, createEventImagesBatchDto.eventId, String(userId), String(event.userId),
+          createEventImagesBatchDto.albumId, createEventImagesBatchDto.enhancePrompt, publishEnhanced, aiSettings,
+        );
       });
-      if (enhancedImages.length) this.emitGallery(createEventImagesBatchDto.eventId, { type: 'photos.enhanced', imageIds: enhancedImages.map((image) => String(image._id)), count: enhancedImages.length });
     }
 
     return {
       message: 'Event images created successfully',
-      data: eventImages.map(image => withDelivery(image)),
-      enhancedData: enhancedImages.map(image => withDelivery(image)),
-      enhancementJobs,
+      data: eventImages.map(image => withDelivery(image, false, event.branding)),
+      enhancedData: [],
+      enhancementJobs: [],
       uploadedCount: eventImages.length,
     };
   }
@@ -1456,7 +1446,7 @@ export class EventImageService {
     }
 
     const eventId = updateEventImageDto.eventId ?? String(existing.eventId);
-    await this.assertCanUseEvent(eventId, userId, role);
+    const event = await this.assertCanUseEvent(eventId, userId, role);
     await this.eventMemberService.assertCanUpload(
       eventId,
       userId,
@@ -1473,7 +1463,7 @@ export class EventImageService {
     }
 
     const update: Record<string, unknown> = { ...updateEventImageDto };
-    if (updateEventImageDto.imageUrl && updateEventImageDto.imageUrl !== existing.imageUrl) { update.imagorStatus = 'pending'; update.imagorSource = ''; update.imagorSignature = ''; update.imagorLease = ''; update.imagorSmallUrl = ''; update.imagorViewUrl = ''; update.imagorAttempts = 0; }
+    if ((updateEventImageDto.imageUrl && updateEventImageDto.imageUrl !== existing.imageUrl) || (updateEventImageDto.eventId && updateEventImageDto.eventId !== String(existing.eventId))) { update.imagorStatus = 'pending'; update.imagorSource = ''; update.imagorSignature = ''; update.imagorLease = ''; update.imagorSmallUrl = ''; update.imagorViewUrl = ''; update.imagorAttempts = 0; }
     if (updateEventImageDto.eventId) {
       update.eventId = this.toObjectId(updateEventImageDto.eventId);
     }
@@ -1487,7 +1477,7 @@ export class EventImageService {
     if (eventImage && updateEventImageDto.imageUrl && updateEventImageDto.imageUrl !== existing.imageUrl) {
       await this.imagorCache?.scheduleCleanup(existing).catch(error => this.logger.warn('Image cache cleanup enqueue failed', error));
     }
-    return { message: 'Event image updated successfully', data: withDelivery(eventImage) };
+    return { message: 'Event image updated successfully', data: withDelivery(eventImage, true, event.branding) };
   }
 
   async remove(id: string, userId?: string, role?: string) {
@@ -1514,7 +1504,7 @@ export class EventImageService {
     const eventImage = await this.eventImageModel.findByIdAndDelete(id).lean();
 
     await this.imagorCache?.scheduleCleanup(eventImage).catch(error => this.logger.warn('Image cache cleanup enqueue failed', error));
-    return { message: 'Event image deleted successfully', data: withDelivery(eventImage) };
+    return { message: 'Event image deleted successfully', data: eventImage };
   }
 
   async enhanceExisting(
@@ -1523,66 +1513,42 @@ export class EventImageService {
     role?: string,
     prompt?: string,
   ) {
-    if (!Types.ObjectId.isValid(id)) {
-      throw new HttpException('Invalid event image id', 400);
-    }
-
-    const existing = await this.eventImageModel
-      .findById(id)
-      .select('eventId imageUrl albumId isEnhanced isPublished mediaType')
-      .lean();
-
-    if (!existing) {
-      throw new HttpException('Event image not found', 400);
-    }
-    if (existing.mediaType === 'video') throw new HttpException('AI photo enhancement is not available for video', 400);
-
-    const event = await this.assertCanUseEvent(
-      String(existing.eventId),
-      userId,
-      role,
-    );
-    await this.eventMemberService.assertCanUpload(
-      String(existing.eventId),
-      userId,
-      role,
-      existing.albumId ? String(existing.albumId) : undefined,
-    );
-
+    if (!Types.ObjectId.isValid(id)) throw new HttpException('Invalid event image id', 400);
+    const existing = await this.eventImageModel.findById(id);
+    if (!existing) throw new HttpException('Event image not found', 400);
+    const eventId = String(existing.eventId);
     const albumId = existing.albumId ? String(existing.albumId) : undefined;
+    const event = await this.assertCanUseEvent(eventId, userId, role);
+    await this.eventMemberService.assertCanUpload(eventId, userId, role, albumId);
+    if (existing.isEnhanced || this.inferMediaType(existing.imageUrl, existing.mediaType) === 'video') {
+      return { message: 'Only original photos can be enhanced', data: null, queued: false, skipped: true };
+    }
+    if (['pending', 'processing', 'completed'].includes(existing.enhancementStatus || '')) {
+      return { message: 'Enhancement already queued or completed', data: null, queued: false, skipped: true };
+    }
+    // Legacy enhanced copies may predate enhancementStatus.
+    if (await this.eventImageModel.exists({ enhancedFromId: existing._id, isEnhanced: true })) {
+      return { message: 'An enhanced copy already exists', data: null, queued: false, skipped: true };
+    }
     const aiSettings = await this.resolveEnhancementSettings(event, albumId);
     const policy = await this.resolvePublishPolicy(event, albumId);
-    const enhancedImage = await this.tryEnhanceForOwner(
-      existing.imageUrl,
-      String(existing.eventId),
-      String(userId),
-      String(event.userId),
-      existing.albumId ? String(existing.albumId) : undefined,
-      prompt,
+    // Manual requests are independent of the auto-enhance switch. Reserve
+    // atomically so concurrent taps cannot charge twice for the same original.
+    const reserved = await this.eventImageModel.updateOne({
+      _id: existing._id,
+      imageUrl: existing.imageUrl,
+      isEnhanced: { $ne: true },
+      enhancementStatus: { $nin: ['pending', 'processing', 'completed'] },
+    }, { $set: { enhancementStatus: 'pending', enhancementMessage: '' } });
+    if (!reserved.modifiedCount) {
+      return { message: 'Enhancement already queued or completed', data: null, queued: false, skipped: true };
+    }
+    this.enqueuePhotoEnhancement(
+      existing, eventId, String(userId), String(event.userId), albumId, prompt,
       !event.requireReview && policy !== 'manual' && (policy === 'auto_ai' || existing.isPublished !== false || !!aiSettings.aiGalleryMode),
-      String(existing._id),
       aiSettings,
     );
-
-    if (!enhancedImage) {
-      return {
-        message: 'Enhance skipped because owner has not enough credits',
-        data: null,
-        skipped: true,
-      };
-    }
-
-    if (!this.isEnhancementJobResult(enhancedImage)) {
-      this.queuePhotoAutomation(enhancedImage);
-      this.emitGallery(String(existing.eventId), { type: 'photo.enhanced', imageId: String(enhancedImage._id), isPublished: enhancedImage.isPublished !== false });
-      void this.workflowWebhooks.publish(String(existing.eventId), 'photo.ai', { imageId: String(enhancedImage._id), sourceEventImageId: String(existing._id) });
-    }
-
-    return {
-      message: this.isEnhancementJobResult(enhancedImage) ? 'AI enhancement queued' : 'Image enhanced successfully',
-      data: this.isEnhancementJobResult(enhancedImage) ? enhancedImage : withDelivery(enhancedImage),
-      skipped: false,
-    };
+    return { message: 'AI enhancement queued', data: null, queued: true, skipped: false };
   }
 
   // Small authenticated status projection for upload monitors. No image bytes,
@@ -1593,18 +1559,23 @@ export class EventImageService {
     if (!requested.length || requested.length > 100 || requested.some(id => !Types.ObjectId.isValid(id))) {
       throw new HttpException('Invalid photo ids', 400);
     }
-    await this.assertCanUseEvent(eventId, userId, role);
+    const event = await this.assertCanUseEvent(eventId, userId, role);
     const allowed = await this.eventMemberService.allowedAlbumIds(eventId, userId, role);
     const rows = await this.eventImageModel.find({
       eventId: this.toObjectId(eventId),
       _id: { $in: requested.map(id => this.toObjectId(id)) },
       ...(allowed ? { albumId: { $in: allowed.map(id => this.toObjectId(id)) } } : {}),
-    }).select('_id isEnhanced enhancementStatus').lean();
-    return { data: rows.map(row => ({
-      id: String(row._id),
-      isEnhanced: row.isEnhanced === true,
-      enhancementStatus: row.enhancementStatus || 'none',
-    })) };
+    }).select('_id imageUrl mediaType isEnhanced enhancementStatus imagorStatus imagorConfig imagorSource imagorSignature imagorSmallUrl imagorViewUrl').lean();
+    return { data: rows.map(row => {
+      const delivery = withDelivery(row, true, event.branding) as typeof row & { previewUrl?: string; deliverySource?: string };
+      return {
+        id: String(row._id),
+        isEnhanced: row.isEnhanced === true,
+        enhancementStatus: row.enhancementStatus || 'none',
+        previewUrl: delivery.previewUrl,
+        deliverySource: delivery.deliverySource || 'original',
+      };
+    }) };
   }
 
   async enhancementJobs(eventId: string, userId?: string, role?: string) {
@@ -1692,10 +1663,13 @@ export class EventImageService {
     const results = await Promise.allSettled(
       validIds.map((id) => this.enhanceExisting(id, userId, role, prompt)),
     );
+    const queued = results.filter(result => result.status === 'fulfilled' && result.value.queued).length;
+    const skipped = results.filter(result => result.status === 'fulfilled' && result.value.skipped).length;
     return {
       total: validIds.length,
-      completed: results.filter((result) => result.status === 'fulfilled')
-        .length,
+      queued,
+      completed: queued, // Legacy clients count accepted jobs.
+      skipped,
       failed: results.filter((result) => result.status === 'rejected').length,
       results: results.map((result, index) => ({
         id: validIds[index],

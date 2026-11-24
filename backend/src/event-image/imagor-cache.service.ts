@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import { Model, Types } from 'mongoose';
 import { EventImage, EventImageDocument } from './entities/event-image.entity';
-import { deliveryConfigVersion, digestKey, eligiblePhotoFilter, imagorEnabled, imagorUrls } from './image-delivery';
+import { deliveryConfigVersion, digestKey, eligiblePhotoFilter, imagorEnabled, imagorUrls, loadDeliveryBranding } from './image-delivery';
 
 const LEASE = 15 * 60_000;
 @Injectable()
@@ -36,13 +36,15 @@ export class ImagorCacheService {
       $inc: { imagorAttempts: 1 },
     }, { new: true, sort: { createdAt: 1 } }).lean();
     if (!row) return null;
-    const urls = imagorUrls(row);
+    const branding = await loadDeliveryBranding(this.photos, String(row.eventId));
+    const urls = imagorUrls(row, branding);
     if (!urls) {
       await this.photos.updateOne({ _id: row._id, imagorLease: token }, { $set: { imagorStatus: 'unsupported', imagorConfig: configVersion }, $unset: { imagorLease: 1, imagorNextAt: 1 } });
       return null;
     }
-    const updated = await this.photos.updateOne({ _id: row._id, imagorLease: token, imageUrl: row.imageUrl }, {
+    const updated = await this.photos.updateOne({ _id: row._id, imagorLease: token, eventId: row.eventId, imageUrl: row.imageUrl }, {
       $set: { imagorSource: row.imageUrl, imagorSignature: urls.small + '|' + urls.view, imagorConfig: configVersion },
+      $addToSet: { imagorTransformUrls: { $each: Object.values(urls) } },
     });
     if (!updated.matchedCount) return null;
     return { imageId: this.claimId(row._id, token), collectionId: String(row.eventId), version: 1, urls: { small: urls.small, view: urls.view } };
@@ -55,7 +57,8 @@ export class ImagorCacheService {
     if (!filter) return { accepted: true, ready: false };
     const row = await this.photos.findOne(filter).lean();
     if (!row) return { accepted: true, ready: false };
-    const urls = imagorUrls(row);
+    const branding = await loadDeliveryBranding(this.photos, String(row.eventId));
+    const urls = imagorUrls(row, branding);
     if (row.imagorSource !== row.imageUrl || !urls || row.imagorConfig !== deliveryConfigVersion() || row.imagorSignature !== urls.small + '|' + urls.view) {
       await this.photos.updateOne(filter, { $set: { imagorStatus: 'pending' }, $unset: { imagorLease: 1 } });
       return { accepted: true, ready: false };
@@ -76,17 +79,20 @@ export class ImagorCacheService {
       await this.photos.updateOne(filter, { $set: { imagorStatus: 'failed', imagorNextAt: new Date(Date.now() + delay) }, $unset: { imagorLease: 1 } });
       return { accepted: true, ready: false };
     }
-    const result = await this.photos.updateOne({ ...filter, imageUrl: row.imageUrl }, {
-      $set: { imagorStatus: 'ready', imagorSmallUrl: body.urls.small, imagorViewUrl: body.urls.view, imagorTransformUrls: Object.values(urls) },
+    const result = await this.photos.updateOne({ ...filter, eventId: row.eventId, imageUrl: row.imageUrl }, {
+      $set: { imagorStatus: 'ready', imagorSmallUrl: body.urls.small, imagorViewUrl: body.urls.view },
       $unset: { imagorLease: 1, imagorNextAt: 1, imagorAttempts: 1 },
+      $addToSet: { imagorTransformUrls: { $each: Object.values(urls) } },
     });
     return { accepted: true, ready: !!result.modifiedCount };
   }
 
   async scheduleCleanup(row: any) {
-    if (!row || !imagorEnabled() || !imagorUrls(row)) return;
+    if (!row || !imagorEnabled()) return;
     if (await this.photos.exists({ imageUrl: row.imageUrl })) return;
-    const urls = [...new Set([...Object.values(imagorUrls(row)!), ...(row.imagorTransformUrls || [])])];
+    const branding = await loadDeliveryBranding(this.photos, String(row.eventId));
+    const urls = [...new Set([...Object.values(imagorUrls(row, branding) || {}), ...(row.imagorTransformUrls || [])])];
+    if (!urls.length) return;
     await this.cleanup.updateOne({ imageId: String(row._id), source: row.imageUrl }, {
       $setOnInsert: { imageId: String(row._id), collectionId: String(row.eventId), source: row.imageUrl,
         transformUrls: urls, nextAt: new Date(Date.now() + LEASE), attempts: 0 },

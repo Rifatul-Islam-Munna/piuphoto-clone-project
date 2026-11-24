@@ -40,6 +40,7 @@ class TransferLedgerItem {
     this.error,
     this.imageUrl,
     this.previewUrl,
+    this.deliverySource,
     this.eventImageId,
     this.enhancementStatus,
     this.isEnhanced = false,
@@ -73,7 +74,9 @@ class TransferLedgerItem {
   final String? error;
   final String? imageUrl;
   final String? previewUrl;
+  final String? deliverySource;
   final String? eventImageId;
+  bool get needsDeliveryRefresh => aiPending || deliverySource == 'imagor';
   final String? enhancementStatus;
   final bool isEnhanced;
   bool get aiPending =>
@@ -114,6 +117,7 @@ class TransferLedgerItem {
     String? error,
     String? imageUrl,
     String? previewUrl,
+    String? deliverySource,
     String? eventImageId,
     String? enhancementStatus,
     bool? isEnhanced,
@@ -141,6 +145,7 @@ class TransferLedgerItem {
       error: clearError ? null : (error ?? this.error),
       imageUrl: imageUrl ?? this.imageUrl,
       previewUrl: previewUrl ?? this.previewUrl,
+      deliverySource: deliverySource ?? this.deliverySource,
       eventImageId: eventImageId ?? this.eventImageId,
       enhancementStatus: enhancementStatus ?? this.enhancementStatus,
       isEnhanced: isEnhanced ?? this.isEnhanced,
@@ -169,6 +174,7 @@ class TransferLedgerItem {
     'error': error,
     'imageUrl': imageUrl,
     'previewUrl': previewUrl,
+    'deliverySource': deliverySource,
     'eventImageId': eventImageId,
     'enhancementStatus': enhancementStatus,
     'isEnhanced': isEnhanced,
@@ -206,6 +212,7 @@ class TransferLedgerItem {
       error: json['error']?.toString(),
       imageUrl: json['imageUrl']?.toString(),
       previewUrl: json['previewUrl']?.toString(),
+      deliverySource: json['deliverySource']?.toString(),
       eventImageId: json['eventImageId']?.toString(),
       enhancementStatus: json['enhancementStatus']?.toString(),
       isEnhanced: json['isEnhanced'] == true,
@@ -271,6 +278,7 @@ class TransferLedgerStorage {
         localPath: item.localPath ?? existing.localPath,
         imageUrl: item.imageUrl ?? existing.imageUrl,
         previewUrl: item.previewUrl ?? existing.previewUrl,
+        deliverySource: item.deliverySource ?? existing.deliverySource,
         eventImageId: item.eventImageId ?? existing.eventImageId,
         enhancementStatus: item.enhancementStatus ?? existing.enhancementStatus,
         isEnhanced: item.isEnhanced || existing.isEnhanced,
@@ -336,6 +344,7 @@ class TransferLedgerStorage {
     String? error,
     String? imageUrl,
     String? previewUrl,
+    String? deliverySource,
     String? eventImageId,
     String? enhancementStatus,
     bool? isEnhanced,
@@ -359,6 +368,7 @@ class TransferLedgerStorage {
           error: error,
           imageUrl: imageUrl,
           previewUrl: previewUrl,
+          deliverySource: deliverySource,
           eventImageId: eventImageId,
           enhancementStatus: enhancementStatus,
           isEnhanced: isEnhanced,
@@ -381,7 +391,7 @@ class TransferLedgerStorage {
             (item) =>
                 item.eventId == eventId &&
                 item.isUploaded &&
-                item.aiPending &&
+                item.needsDeliveryRefresh &&
                 item.eventImageId?.isNotEmpty == true,
           )
           .toList();
@@ -409,17 +419,27 @@ class TransferLedgerStorage {
         final next = current.map((item) {
           final id = item.eventImageId;
           if (item.eventId != eventId ||
-              !item.aiPending ||
+              !item.needsDeliveryRefresh ||
               !queried.contains(id))
             return item;
           final row = statuses[id];
           final status = row?['enhancementStatus']?.toString() ?? 'none';
           final enhanced = row?['isEnhanced'] == true || item.isEnhanced;
-          if (status == item.enhancementStatus && enhanced == item.isEnhanced)
+          final source = row == null
+              ? 'original'
+              : row['deliverySource']?.toString() ?? item.deliverySource;
+          final preview = row?['previewUrl']?.toString() ?? item.previewUrl;
+          if (status == item.enhancementStatus &&
+              enhanced == item.isEnhanced &&
+              source == item.deliverySource &&
+              preview == item.previewUrl) {
             return item;
+          }
           changed = true;
           return item.copyWith(
             enhancementStatus: status,
+            deliverySource: source,
+            previewUrl: preview,
             isEnhanced: enhanced,
             updatedAt: item.updatedAt,
           );

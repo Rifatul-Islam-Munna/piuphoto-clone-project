@@ -41,6 +41,11 @@ export class StoreController {
     @Res() res: Response,
   ) {
     const data = await this.service.preview(eventId, imageId);
+    if (!Buffer.isBuffer(data)) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.redirect(302, data.url);
+      return;
+    }
     res.setHeader('Content-Type', 'image/jpeg');
     res.setHeader('Cache-Control', 'public,max-age=120');
     res.send(data);

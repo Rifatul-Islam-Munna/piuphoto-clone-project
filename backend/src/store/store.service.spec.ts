@@ -241,3 +241,38 @@ describe('StoreService custom Stripe validation', () => {
     );
   });
 });
+
+describe('Store previews use Imagor rather than backend compositing', () => {
+  const env = process.env;
+  beforeEach(() => {
+    process.env = { ...env, IMAGOR_ENABLED: 'true', IMAGOR_URL: 'https://imagor.example.test', IMAGOR_SECRET: 'test-only', IMAGOR_SIGNER_TYPE: 'sha256', IMAGOR_SIGNER_TRUNCATE: '40', STORAGE_PUBLIC_URL: 'https://originals.example.test' };
+  });
+  afterEach(() => { process.env = env; jest.restoreAllMocks(); });
+
+  function fixture(imageUrl = 'https://originals.example.test/photo.jpg') {
+    const eventId = new Types.ObjectId();
+    const imageId = new Types.ObjectId();
+    const image = { _id: imageId, eventId, imageUrl, mediaType: 'photo' };
+    const branding = { watermarkUrl: 'https://originals.example.test/logo.png', watermarkOpacity: .7 };
+    const images = { findOne: jest.fn().mockReturnValue({ select: jest.fn().mockReturnValue({ lean: async () => image }) }) };
+    const events = { findById: jest.fn().mockReturnValue({ select: jest.fn().mockReturnValue({ lean: async () => ({ branding }) }) }) };
+    const service = new StoreService({} as never, {} as never, events as never, images as never, {} as never, {} as never, {} as never, {} as never);
+    jest.spyOn(service as any, 'getSettings').mockResolvedValue({ enabled: true, saleAlbumIds: [], watermarkedPreview: true, previewMaxWidth: 1200, previewQuality: 64 });
+    return { service, eventId: String(eventId), imageId: String(imageId) };
+  }
+
+  it('redirects to a signed native watermarked AVIF without downloading originals', async () => {
+    const { service, eventId, imageId } = fixture();
+    const get = jest.spyOn(axios, 'get');
+    const result = await service.preview(eventId, imageId);
+    expect(result).toMatchObject({ url: expect.stringContaining('watermark(b64:') });
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('does not expose an unmarked legacy original if native watermarking is unavailable', async () => {
+    const { service, eventId, imageId } = fixture('https://legacy.example.test/photo.jpg');
+    const get = jest.spyOn(axios, 'get');
+    await expect(service.preview(eventId, imageId)).rejects.toThrow('Watermarked preview is unavailable');
+    expect(get).not.toHaveBeenCalled();
+  });
+});

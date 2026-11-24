@@ -137,9 +137,11 @@ class _EventImagesPageState extends State<EventImagesPage> {
         },
       );
       if (response.data['skipped'] == true) {
-        AppToast.error('Enhance skipped. Not enough credits.');
+        AppToast.error(
+          response.data['message']?.toString() ?? 'Enhancement skipped',
+        );
       } else {
-        AppToast.success('Image enhanced');
+        AppToast.success('AI enhancement queued');
       }
       await _refresh(event);
     } catch (_) {

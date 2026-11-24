@@ -208,6 +208,8 @@ export default function Phase2Gallery() {
       if (!selectedIds.length) throw new Error("Select at least one photo");
       const [response, error] = await PostRequestAxios<{
         completed: number;
+        queued?: number;
+        skipped?: number;
         failed: number;
       }>(
         "/eventImage/enhance-batch",
@@ -220,7 +222,7 @@ export default function Phase2Gallery() {
     },
     onSuccess: (response) => {
       toast.success(
-        `${response.completed} enhancement jobs started/completed${response.failed ? `, ${response.failed} failed` : ""}`,
+        `${response.queued ?? response.completed} enhancement jobs queued${response.skipped ? `, ${response.skipped} skipped` : ""}${response.failed ? `, ${response.failed} failed` : ""}`,
       );
       setSelected(new Set());
       refresh();
@@ -249,6 +251,8 @@ export default function Phase2Gallery() {
       if (!ids.length) throw new Error("No photos to analyze");
       const [response, error] = await PostRequestAxios<{
         completed: number;
+        queued?: number;
+        skipped?: number;
         failed: number;
       }>(
         "/eventImage/ai/analyze",

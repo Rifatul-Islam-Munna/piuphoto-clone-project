@@ -30,6 +30,7 @@ describe('Imagor delivery', () => {
     const result: any = withDelivery(row);
     expect(result.imageUrl).toBe(row.imageUrl);
     expect(result.previewUrl).toBe(urls.small);
+    expect(result.deliverySource).toBe('imagor');
     expect(result.viewUrl).toBe(urls.view);
   });
   it('does not sign videos, paid previews, or arbitrary hosts', () => {
@@ -60,10 +61,20 @@ describe('Imagor delivery', () => {
     expect(pending.previewUrl).toBe(imagorUrls(row)!.small);
     const ready: any = (await deliveryRows({ distinct } as any, [photo], String(albumId)))[0];
     expect(ready.previewUrl).toBe(photo.imagorSmallUrl + '?format=avif');
+    expect(pending.deliverySource).toBe('imagor');
+    expect(ready.deliverySource).toBe('r2');
     expect(ready.viewUrl).toBe(photo.imagorViewUrl + '?format=avif');
     expect(ready.imageUrl).toBe(row.imageUrl);
     expect(ready.imagorSignature).toBeUndefined();
     expect(distinct.mock.calls[0][1].albumId).toEqual(albumId);
+  });
+  it('returns verified direct R2 previews per transfer without replacing the original', () => {
+    const pending: any = withDelivery(row, true);
+    const ready: any = withDelivery(readyRow(), true);
+    expect(pending.deliverySource).toBe('imagor');
+    expect(ready.deliverySource).toBe('r2');
+    expect(ready.previewUrl).toContain('https://result.example.test/');
+    expect(ready.imageUrl).toBe(row.imageUrl);
   });
   it('invalidates a ready row when transform settings change', () => {
     const photo = readyRow();

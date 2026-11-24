@@ -1970,7 +1970,9 @@ class _PhotoPreview extends StatelessWidget {
     }
 
     final Widget preview;
-    if (previewable && item.localPath?.isNotEmpty == true) {
+    if (item.isUploaded && item.previewUrl?.isNotEmpty == true) {
+      preview = networkOrPlaceholder();
+    } else if (previewable && item.localPath?.isNotEmpty == true) {
       preview = Image.file(
         File(item.localPath!),
         fit: BoxFit.cover,

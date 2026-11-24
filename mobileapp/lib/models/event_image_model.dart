@@ -4,6 +4,7 @@ class EventImageModel {
     required this.imageUrl,
     this.previewUrl,
     this.viewUrl,
+    this.deliverySource,
     this.isEnhanced = false,
     this.enhancementStatus,
     this.enhancementMessage,
@@ -19,6 +20,13 @@ class EventImageModel {
   final String imageUrl;
   final String? previewUrl;
   final String? viewUrl;
+  final String? deliverySource;
+  bool get canRequestEnhancement =>
+      mediaType.toLowerCase() != 'video' &&
+      !isEnhanced &&
+      !enhancementInProgress &&
+      enhancementStatus != 'completed';
+  bool get needsRefresh => enhancementInProgress || deliverySource == 'imagor';
   String get displayUrl =>
       previewUrl?.isNotEmpty == true ? previewUrl! : imageUrl;
   String get fullViewUrl => viewUrl?.isNotEmpty == true ? viewUrl! : displayUrl;
@@ -51,6 +59,7 @@ class EventImageModel {
       imageUrl: json['imageUrl']?.toString() ?? '',
       previewUrl: json['previewUrl']?.toString(),
       viewUrl: json['viewUrl']?.toString(),
+      deliverySource: json['deliverySource']?.toString(),
       isEnhanced: json['isEnhanced'] == true,
       enhancementStatus: json['enhancementStatus']?.toString(),
       enhancementMessage: json['enhancementMessage']?.toString(),
