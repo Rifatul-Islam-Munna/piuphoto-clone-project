@@ -1441,6 +1441,13 @@ export class EventImageService {
     );
     const eventImage = await this.eventImageModel.findByIdAndDelete(id).lean();
 
+    // Keep camera upload history in sync with the album: deleted photos must not
+    // reappear as stale entries when the photographer reconnects the camera.
+    await this.transferStatusService.removeForEventImage(
+      String(existing.eventId),
+      id,
+    );
+
     await this.imagorCache?.scheduleCleanup(eventImage).catch(error => this.logger.warn('Image cache cleanup enqueue failed', error));
     return { message: 'Event image deleted successfully', data: eventImage };
   }

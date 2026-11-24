@@ -105,11 +105,11 @@ export class TransferStatusQueryDto {
   @IsOptional()
   status?: PhotoTransferState;
 
-  @ApiPropertyOptional({ default: 200, maximum: 1000 })
+  @ApiPropertyOptional({ default: 20, maximum: 20 })
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(1000)
+  @Max(20)
   @IsOptional()
-  limit?: number = 200;
+  limit?: number = 20;
 }

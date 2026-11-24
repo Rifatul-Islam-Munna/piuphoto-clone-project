@@ -127,7 +127,8 @@ export class TransferStatusService {
     const eventId = this.toObjectId(query.eventId);
     const filter: Record<string, unknown> = { eventId };
     if (query.status) filter.status = query.status;
-    const limit = Math.min(Math.max(query.limit || 200, 1), 1000);
+    // The camera upload screen only needs a compact recent-history window.
+    const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 20);
 
     const [data, counts] = await Promise.all([
       this.model
@@ -153,6 +154,14 @@ export class TransferStatusService {
       totalItems: counts.reduce((sum, item) => sum + item.count, 0),
       summary,
     };
+  }
+
+  async removeForEventImage(eventId: string, eventImageId: string) {
+    if (!Types.ObjectId.isValid(eventId) || !Types.ObjectId.isValid(eventImageId)) return;
+    await this.model.deleteMany({
+      eventId: this.toObjectId(eventId),
+      eventImageId: this.toObjectId(eventImageId),
+    });
   }
 
   async markPublication(
