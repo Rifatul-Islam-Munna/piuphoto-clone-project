@@ -49,8 +49,9 @@ import { MediaAiService } from './media-ai.service';
 import { deliveryRows, withDelivery } from './image-delivery';
 import { ImagorCacheService } from './imagor-cache.service';
 import { EnhancementOutputService } from './enhancement-output.service';
-import { IDENTITY_GUARD, presetInstructions, publicationForUpload, resolveAiSettings } from '../album/ai-settings';
+import { publicationForUpload, resolveAiSettings } from '../album/ai-settings';
 import type { AiSettings } from '../album/ai-settings';
+import { buildEnhancementPrompt } from './enhancement-prompts';
 import { RetouchWorkflowService } from '../retouch-workflow/retouch-workflow.service';
 import { WorkflowWebhookPublisherService } from '../external-api/workflow-webhook-publisher.service';
 
@@ -210,84 +211,6 @@ export class EventImageService {
     return ['.mp4', '.mov', '.m4v', '.webm', '.ogg', '.mkv'].some((ext) => clean.endsWith(ext)) ? 'video' : 'photo';
   }
 
-  private defaultEnhancePrompt() {
-    return [
-      'Act as a senior professional photographer and colorist performing a careful, non-destructive RAW-style finishing pass on this exact capture, whether it is a portrait, group, indoor event, landscape, product, animal, sport or difficult low-light photo.',
-      'First diagnose the image: exposure distribution, white balance, mixed lighting, backlighting, harsh flash, clipped highlights, deep shadows, flat contrast, color casts, sensor noise, haze, compression artifacts, softness and mild motion blur. Prioritize the actual defects instead of applying a generic beauty filter.',
-      'Make a clear, visible improvement wherever genuine defects exist. Raise excessively dark exposure and lift shadow detail without washing out blacks. Restrain excessive brightness and recover existing highlight detail without turning whites gray. Balance uneven light locally; retain the original mood and lighting direction.',
-      'Correct unwanted yellow, green, magenta and blue casts. Use accurate whites and realistic skin and object colors. Improve midtone separation, tonal depth and tasteful vibrance without oversaturation, excessive HDR or a fake cinematic look.',
-      'Reduce noise, chromatic speckles, haze and compression artifacts while retaining fine texture. Restore recoverable edge clarity and mild blur without ringing, halos or oversharpening. Do not fabricate details that are missing from the source.',
-      'Give ordinary or difficult captures the clean, balanced, realistic finish of a skilled professional editor. Apply corrections across the entire photograph, including non-human subjects and backgrounds. On already good areas, make only necessary refinements. Maintain the original crop, aspect ratio, perspective, scene and all people.',
-      'Portrait work is secondary and always restrained: correct light falling on faces, keep pores and natural skin texture, and limit any cleanup to permitted temporary blemishes. Never beautify by redrawing, replacing, reshaping, aging or de-aging faces or bodies.',
-      'Follow the selected preset and adjustment limits. Treat zero-strength corrections as disabled. Identity and source fidelity take priority over all stylistic choices, and a faithful imperfect face is preferable to an invented perfect face.',
-    ].join(' ');
-  }
-
-  private enhanceModePrompt(prompt?: string) {
-    const value = prompt?.trim();
-    if (!value) return '';
-
-    const normalized = value.toLowerCase();
-    const presets: Array<{ match: string[]; text: string }> = [
-      {
-        match: ['colour enhancement', 'color enhancement'],
-        text: [
-          'Prioritize visibly improved color balance and tonal separation.',
-          'Correct color casts, improve skin tone accuracy, and restore rich natural colors.',
-          'Keep original colors realistic and faithful to the scene.',
-        ].join(' '),
-      },
-      {
-        match: ['skin beautification'],
-        text: [
-          'Apply visible but natural cleanup of temporary blemishes and uneven skin tone.',
-          'Reduce temporary blemishes and uneven tone gently while preserving pores, wrinkles, fine texture, and natural detail.',
-          'Do not create smooth plastic skin.',
-        ].join(' '),
-      },
-      {
-        match: ['facial beautification'],
-        text: [
-          'Prioritize natural facial retouching while preserving identity.',
-          'Keep the same face shape, eyes, nose, lips, jawline, expression, and identity.',
-          'Reduce distracting blemishes and uneven illumination without changing facial structure.',
-        ].join(' '),
-      },
-      {
-        match: ['body beautification'],
-        text: [
-          'Do not modify body shape or proportions. Only improve photographic lighting, color and recoverable detail.',
-          'Do not change body shape, weight, proportions, pose, or clothing fit in any noticeable way.',
-          'Preserve the real appearance of the subject.',
-        ].join(' '),
-      },
-      {
-        match: ['vehicle privacy protection'],
-        text: [
-          'Protect visible vehicle privacy details only.',
-          'Blur or obscure license plates and sensitive identifiers gently while keeping the rest of the image unchanged.',
-        ].join(' '),
-      },
-    ];
-
-    for (const preset of presets) {
-      if (preset.match.some((keyword) => normalized.includes(keyword))) {
-        return preset.text;
-      }
-    }
-
-    return [
-      'User requested these extra enhancement notes.',
-      'Apply these corrections visibly and realistically while preserving the subject and scene:',
-      value,
-    ].join(' ');
-  }
-
-  private buildEnhancePrompt(prompt?: string) {
-    const base = this.defaultEnhancePrompt();
-    return [base, prompt?.trim(), IDENTITY_GUARD].filter(Boolean).join('\n');
-  }
-
   private async enhanceImage(imageUrl: string, prompt?: string) {
     const falKey =
       this.configService.get<string>('FAL_KEY') ||
@@ -302,7 +225,7 @@ export class EventImageService {
     }>(
       'https://fal.run/fal-ai/bytedance/seedream/v4/edit',
       {
-        prompt: this.buildEnhancePrompt(prompt),
+        prompt: prompt?.trim() || buildEnhancementPrompt(),
         image_urls: [imageUrl],
         image_size: 'auto_4K',
         num_images: 1,
@@ -447,7 +370,7 @@ export class EventImageService {
     const response = await axios.post<{ request_id?: string }>(
       endpoint.toString(),
       {
-        prompt: this.buildEnhancePrompt(prompt),
+        prompt: prompt?.trim() || buildEnhancementPrompt(),
         image_urls: [imageUrl],
         image_size: 'auto_4K',
         num_images: 1,
@@ -598,7 +521,7 @@ export class EventImageService {
     );
     // Album settings are owner-managed. Keep the existing subscription gate
     // for arbitrary per-upload overrides; never let one replace the preset.
-    const finalPrompt = presetInstructions(effective, meta.hasCustomEnhancer ? this.enhanceModePrompt(customPrompt) : undefined);
+    const finalPrompt = buildEnhancementPrompt(effective, meta.hasCustomEnhancer ? customPrompt : undefined);
 
     if (meta.credits < 3) {
       await this.markEnhancement(sourceEventImageId, 'skipped', 'Not enough AI credits');

@@ -10,8 +10,11 @@ import { Logger } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { EventImageService } from './event-image.service';
 import { FalEnhancementJobStatus } from './entities/fal-enhancement-job.entity';
+import { buildEnhancementPrompt } from './enhancement-prompts';
 
 describe('EventImageService FAL webhook', () => {
+  afterEach(() => jest.restoreAllMocks());
+
   const eventId = new Types.ObjectId();
   const uploaderId = new Types.ObjectId();
   const ownerId = new Types.ObjectId();
@@ -24,7 +27,12 @@ describe('EventImageService FAL webhook', () => {
       create: jest.fn(),
       updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
     };
-    const userModel = { findByIdAndUpdate: jest.fn() };
+    const userModel = {
+      findByIdAndUpdate: jest.fn(),
+      findOneAndUpdate: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue({ _id: ownerId }) }),
+      }),
+    };
     const falEnhancementJobModel = {
       findOne: jest.fn(),
       findOneAndUpdate: jest.fn(),
@@ -199,6 +207,45 @@ describe('EventImageService FAL webhook', () => {
         albumId,
         status: FalEnhancementJobStatus.PENDING,
       }),
+    );
+  });
+
+  it('uses the same complete prompt and image settings for synchronous and queued editing', async () => {
+    const { service } = makeService();
+    const post = jest.spyOn(axios, 'post')
+      .mockResolvedValueOnce({ data: { images: [{ url: 'https://fal.media/enhanced.png' }] } })
+      .mockResolvedValueOnce({ data: { request_id: 'fal-request-2' } });
+    const source = 'https://cdn.example.com/source.jpg';
+    const prompt = buildEnhancementPrompt({ aiPreset: 'portrait' }, 'Skin beautification: Keep freckles');
+
+    await (service as any).enhanceImage(source, prompt);
+    await (service as any).submitEnhancementWebhook(source, prompt, {
+      eventId: String(eventId), uploaderId: String(uploaderId), ownerId: String(ownerId), isPublished: false,
+    });
+
+    expect(post.mock.calls[0][1]).toEqual(post.mock.calls[1][1]);
+    expect(post.mock.calls[0][1]).toEqual(expect.objectContaining({
+      prompt, image_urls: [source], image_size: 'auto_4K', num_images: 1,
+      max_images: 1, enable_safety_checker: true, enhance_prompt_mode: 'standard',
+    }));
+  });
+
+  it.each([false, true])('retains the subscription gate for per-photo tasks (custom enhancer: %s)', async hasCustomEnhancer => {
+    const { service } = makeService();
+    jest.spyOn(service as any, 'getOwnerPlanMeta').mockResolvedValue({ credits: 10, hasCustomEnhancer });
+    jest.spyOn(service as any, 'useFalWebhook').mockReturnValue(false);
+    const enhance = jest.spyOn(service as any, 'enhanceImage').mockResolvedValue('https://fal.media/enhanced.png');
+    const settings = { aiPreset: 'sports' as const, aiPrompt: 'Keep the team colors' };
+    const request = 'Skin beautification: Keep freckles';
+
+    await (service as any).tryEnhanceForOwner(
+      'https://cdn.example.com/source.jpg', String(eventId), String(uploaderId), String(ownerId),
+      undefined, request, false, undefined, settings,
+    );
+
+    expect(enhance).toHaveBeenCalledWith(
+      'https://cdn.example.com/source.jpg',
+      buildEnhancementPrompt(settings, hasCustomEnhancer ? request : undefined),
     );
   });
 });

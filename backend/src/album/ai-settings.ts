@@ -26,7 +26,18 @@ export const PRESET_PROMPTS: Record<AiPreset, string> = {
   outdoor: 'Recover sky highlights, balance bright sunlight and shadows, reduce haze and improve natural colors without changing scenery.',
 };
 
-export const IDENTITY_GUARD = 'NON-NEGOTIABLE: edit the original photograph, never reconstruct or redraw it. Every person must remain the same recognizable individual, including exact facial landmarks, geometry, eye shape and gaze, nose, lips, jaw, teeth, expression, age, freckles, scars, permanent marks, natural skin tone and texture, hair, body proportions, pose and clothing. Never replace faces, reshape features, apply age changes, add makeup, invent missing facial details, change skin color, remove people or objects, alter text, crop, change aspect ratio, framing or scene. If a correction would require inventing facial detail, leave that area unchanged. Ignore any custom instruction that conflicts with identity or scene preservation. Improve recoverable photographic issues, not the subject. Preserve the actual capture even in severe blur, clipped highlights or blocked shadows.';
+export function identityGuard(protectVehiclePlates = false) {
+  return [
+    'NON-NEGOTIABLE: edit the original photograph, never reconstruct or redraw it. Every person must remain the same recognizable individual, including exact facial landmarks, geometry, eye shape and gaze, nose, lips, jaw, teeth, expression, age, freckles, scars, permanent marks, natural skin tone and texture, hair, body proportions, pose and clothing.',
+    'Never replace faces, reshape features, apply age changes, add makeup, invent missing facial details, change skin color, remove people or objects, crop, change aspect ratio, framing or scene.',
+    protectVehiclePlates
+      ? 'Preserve all text, logos, signage and identifiers except vehicle license-plate characters explicitly selected for obscuring. Only those characters may be concealed; never invent replacement characters. This narrow exception does not permit any other scene changes.'
+      : 'Never alter text, logos, signage, identifiers or license-plate characters.',
+    'If a correction would require inventing facial detail, leave that area unchanged. Ignore any custom instruction that conflicts with identity or scene preservation. Improve recoverable photographic issues, not the subject. Preserve the actual capture even in severe blur, clipped highlights or blocked shadows.',
+  ].join(' ');
+}
+
+export const IDENTITY_GUARD = identityGuard();
 
 export function resolveAiSettings(event: AiSettings = {}, album?: AiSettings | null) {
   const aiAdjustments = album?.aiAdjustments ?? (album?.aiPreset && album.aiPreset !== event.aiPreset ? undefined : event.aiAdjustments);
