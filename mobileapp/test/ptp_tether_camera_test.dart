@@ -882,6 +882,138 @@ void main() {
       },
     );
 
+    test(
+      'Sony slow model waits for busy properties and then receives a shot',
+      () async {
+        final link = _CameraLink(_Brand.sony)
+          ..model = 'ILCE-7M3'
+          ..sonyStartupBusyReplies = 9;
+        final delays = <Duration>[];
+        final camera = PtpTetherCameraTransport(
+          link: link,
+          eventPollInterval: const Duration(days: 1),
+          delay: (duration) async => delays.add(duration),
+          stagedFileExists: (_) async => true,
+        );
+        addTearDown(() async {
+          await camera.stop('sony-slow');
+          await link.dispose();
+        });
+        await camera.start('sony-slow');
+        expect(delays, contains(const Duration(seconds: 3)));
+        expect(link.sonyStartupBusyReplies, 0);
+        link.sonyMemory.add(const _Photo('SLOW.JPG', 8));
+        final shot = (await camera.pending('sony-slow')).single;
+        await camera.download('sony-slow', shot.id);
+        await camera.acknowledge('sony-slow', [shot.id]);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Sony unknown model still negotiates capabilities without fixed wait',
+      () async {
+        final link = _CameraLink(_Brand.sony)..model = 'ILCE-UNKNOWN';
+        final delays = <Duration>[];
+        final camera = PtpTetherCameraTransport(
+          link: link,
+          eventPollInterval: const Duration(days: 1),
+          delay: (duration) async => delays.add(duration),
+          stagedFileExists: (_) async => true,
+        );
+        addTearDown(() async {
+          await camera.stop('sony-unknown');
+          await link.dispose();
+        });
+        await camera.start('sony-unknown');
+        expect(delays, isNot(contains(const Duration(seconds: 3))));
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Sony incomplete readiness fails with stage and model diagnostics',
+      () async {
+        final link = _CameraLink(_Brand.sony)..model = 'ILCE-7RM4';
+        link.sonyPropertyReplies.addAll(List.generate(17, (_) => Uint8List(0)));
+        final camera = _transport(link);
+        addTearDown(link.dispose);
+        await expectLater(
+          camera.start('sony-incomplete'),
+          throwsA(
+            isA<PlatformException>()
+                .having(
+                  (error) => error.code,
+                  'code',
+                  'TETHER_MODE_NOT_CONFIRMED',
+                )
+                .having(
+                  (error) => (error.details as Map)['sonyStage'],
+                  'stage',
+                  'readiness',
+                )
+                .having(
+                  (error) => (error.details as Map)['sonyProfile'],
+                  'model',
+                  'ILCE-7RM4',
+                )
+                .having(
+                  (error) => (error.details as Map)['sonyFirmware'],
+                  'firmware',
+                  '1.0',
+                )
+                .having(
+                  (error) => (error.details as Map)['missingSonyProperties'],
+                  'missing',
+                  contains('0xd215'),
+                ),
+          ),
+        );
+        expect(
+          link.calls.where((call) => call.opcode == 0x9209),
+          hasLength(17),
+        );
+        expect(link.downloads, isEmpty);
+        expect(link.closed, contains('sony-incomplete'));
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Sony persistent metadata rejection backs off and stops without consuming RAM',
+      () async {
+        final link = _CameraLink(_Brand.sony);
+        var now = DateTime.utc(2026, 1, 1);
+        final camera = _transport(link, now: () => now);
+        addTearDown(() async {
+          await camera.stop('sony-metadata-exhausted');
+          await link.dispose();
+        });
+        await camera.start('sony-metadata-exhausted');
+        link.sonyMemory.add(const _Photo('ORIGINAL.JPG', 8));
+        link.metadataRejections[0xffffc001] = 0x2009;
+        expect(await camera.pending('sony-metadata-exhausted'), isEmpty);
+        expect(await camera.pending('sony-metadata-exhausted'), isEmpty);
+        final reads = link.metadataHandles.length;
+        expect(await camera.pending('sony-metadata-exhausted'), isEmpty);
+        expect(link.metadataHandles, hasLength(reads));
+        for (var attempt = 2; attempt < 7; attempt++) {
+          now = now.add(const Duration(seconds: 5));
+          expect(await camera.pending('sony-metadata-exhausted'), isEmpty);
+        }
+        now = now.add(const Duration(seconds: 5));
+        await expectLater(
+          camera.pending('sony-metadata-exhausted'),
+          _error('SONY_TRANSFER_RECOVERY_REQUIRED'),
+        );
+        await camera.stop('sony-metadata-exhausted');
+        expect(link.sonyMemory, hasLength(1));
+        expect(link.downloads, isEmpty);
+        expect(link.closed, contains('sony-metadata-exhausted'));
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
     test('Sony A7R IV falls back to V2 after empty V3 capabilities', () async {
       final link = _CameraLink(_Brand.sony)..model = 'ILCE-7RM4';
       link.sonyExtensionReplies.addAll(List.generate(20, (_) => Uint8List(0)));
@@ -2615,6 +2747,7 @@ class _CameraLink implements PtpTetherLink {
   final sonyPropertyReplies = Queue<Uint8List>();
   int? sonyV3Rejection;
   int? sonyPropertyParameterRejection;
+  int sonyStartupBusyReplies = 0;
   int? sonyPriorityParameterRejection;
   int canonDestination = 2;
   List<int> canonChoices = [1, 2, 4];
@@ -2798,6 +2931,10 @@ class _CameraLink implements PtpTetherLink {
           ..._array16([0xd215, 0xd222, 0xd25a]),
         ]);
       case 0x9209:
+        if (sonyStartupBusyReplies > 0) {
+          sonyStartupBusyReplies--;
+          return PtpTetherResponse(responseCode: 0x2019);
+        }
         if (params.isNotEmpty && sonyPropertyParameterRejection != null) {
           return PtpTetherResponse(
             responseCode: sonyPropertyParameterRejection!,

@@ -839,6 +839,14 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         'responsePrefixHex',
         'errorDomain',
         'errorCode',
+        // These fields are only supplied by the Sony compatibility layer.
+        'sonyStage',
+        'sonyProfile',
+        'sonyFirmware',
+        'sonyUsbProductId',
+        'sonyProtocolVersion',
+        'sonyPropertyQuery',
+        'missingSonyProperties',
       ]) {
         final value = ptp[key];
         if (value is String || value is num) diagnostics.add('$key: $value');
