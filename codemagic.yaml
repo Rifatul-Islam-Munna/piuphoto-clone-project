@@ -9,7 +9,7 @@ workflows:
       app_version:
         description: "TestFlight version (major.minor.patch); version tags override this"
         type: string
-        default: "1.0.5" # Change here or enter a version in Start new build.
+        default: "1.0.6" # Change here or enter a version in Start new build.
       build_number:
         description: "Build number: auto uses Codemagic's project counter; or enter a positive integer"
         type: string
