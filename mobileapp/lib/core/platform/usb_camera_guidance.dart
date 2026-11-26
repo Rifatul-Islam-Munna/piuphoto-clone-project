@@ -95,6 +95,7 @@ class UsbCameraGuidance {
             'vendor PTP session, use a supported wireless/FTP workflow; '
             'the app cannot override iOS USB access.',
       ),
+      'camera_storage_only' ||
       'live_camera_transfer_only' ||
       'tether_mode_unsupported' ||
       'ptp_passthrough_unavailable' ||

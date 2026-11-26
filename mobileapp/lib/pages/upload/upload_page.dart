@@ -148,6 +148,8 @@ Future<void> showCameraUploadBottomSheet(
   String? initialAlbumId,
 }) => showModalBottomSheet<void>(
   context: context,
+  // Keep the receiver and its dialogs on the same navigator as its monitor.
+  useRootNavigator: true,
   isScrollControlled: true,
   isDismissible: false,
   enableDrag: false,
@@ -210,6 +212,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   bool _otgImporting = false;
   bool _otgBusy = false;
   bool _usbPickInProgress = false;
+  bool _filePickInProgress = false;
   bool _freeingSpace = false;
   bool _autoImporting = false;
   bool _wirelessScanning = false;
@@ -660,14 +663,14 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   }
 
   Future<void> _pickOtgFiles() async {
-    if (_usbPickInProgress) return; // Ignore double taps.
-    if (_otgImporting || _otgStarting || _usbStartRequested) {
+    if (_usbPickInProgress || _filePickInProgress) return;
+    if (_usbSessionLocked || _liveCamera?.isActive == true) {
       AppToast.error(
         'Stop live shooting before manually selecting camera photos.',
       );
       return;
     }
-    _usbPickInProgress = true;
+    _safeSetState(() => _usbPickInProgress = true);
     try {
       final read = await _withCameraProgress(
         'Connecting to camera…\nKeep it switched on and connected.',
@@ -700,7 +703,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
           debugPrint('Camera import session cleanup: $error');
         }
       }
-      _usbPickInProgress = false;
+      _safeSetState(() => _usbPickInProgress = false);
     }
   }
 
@@ -904,6 +907,12 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   );
 
   Future<void> _pickOtgFilesFromFiles() async {
+    if (_usbSessionLocked || _liveCamera?.isActive == true) {
+      AppToast.error('Stop live shooting before browsing USB storage.');
+      return;
+    }
+    if (_filePickInProgress || _usbPickInProgress) return;
+    _safeSetState(() => _filePickInProgress = true);
     try {
       final files = await OtgFilePicker.pickImages();
       _addSelectedFiles(
@@ -921,6 +930,8 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     } on PlatformException catch (error) {
       debugPrint('File picker failed (${error.code}): ${error.message}');
       AppToast.error('Could not open your files. Please try again.');
+    } finally {
+      _safeSetState(() => _filePickInProgress = false);
     }
   }
 
@@ -1928,9 +1939,14 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         AppToast.error('Install the new app build for live USB shooting.');
       }
     } on PlatformException catch (error) {
-      if (!_otgActive(generation) ||
-          error.code == 'LIVE_CAMERA_CANCELLED' ||
+      if (!_otgActive(generation)) return;
+      if (error.code == 'LIVE_CAMERA_CANCELLED' ||
           error.code == 'CAMERA_SESSION_CANCELLED') {
+        _safeSetState(() {
+          _otgImporting = false;
+          _otgBusy = false;
+          _otgStatus = 'Live shooting cancelled. Start again to connect.';
+        });
         return;
       }
       final advice = UsbCameraGuidance.forStatus(
@@ -1940,7 +1956,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       _safeSetState(() {
         _otgImporting = false;
         _otgBusy = false;
-        _otgStatus = '${advice.details} ${advice.nextSteps}';
+        _otgStatus = '${advice.details} ${advice.nextSteps} (${error.code})';
         if (_isUsbReleaseError(error.code)) _usbReleaseIssue = _otgStatus;
       });
       AppToast.error(advice.title);
@@ -2127,6 +2143,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
         _otgStarting ||
         _usbStartRequested ||
         _usbPickInProgress ||
+        _filePickInProgress ||
         ActiveEventStorage.activeEvent.value?.id != event.id) {
       return;
     }
@@ -2244,6 +2261,7 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     if (_otgStarting ||
         _usbStartRequested ||
         _usbPickInProgress ||
+        _filePickInProgress ||
         ActiveEventStorage.activeEvent.value?.id != event.id) {
       return;
     }
@@ -3006,12 +3024,14 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             selectedAlbumId: _selectedAlbumId,
             selectedFileCount: _selectedFiles.length,
             isUploading: _uploading,
-            receiving: _liveConnectionActive,
+            receiving:
+                _liveConnectionActive && !_otgStarting && !_usbStartRequested,
             isBusy:
                 _usbStartRequested ||
                 _otgStarting ||
                 _wirelessScanning ||
                 _usbPickInProgress ||
+                _filePickInProgress ||
                 _uploading,
             queueCount: queued
                 .where((item) => item.eventId == activeEvent?.id)
@@ -3023,8 +3043,10 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 )
                 .length,
             statusMessage:
+                (_usbSessionLocked || _selectedSheetMethod == 'usb'
+                    ? _otgStatus
+                    : null) ??
                 _uploadStatus ??
-                (_usbSessionLocked ? _otgStatus : null) ??
                 (_wirelessImporting ? _wirelessStatus : null) ??
                 (_galleryImporting ? _galleryStatus : null),
             onStart: (method) async {
@@ -3096,7 +3118,10 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     if (_closingCameraSheet) return;
     _closingCameraSheet = true;
     try {
-      if (_uploading || _connectionPageOpen) {
+      if (_uploading ||
+          _connectionPageOpen ||
+          _usbPickInProgress ||
+          _filePickInProgress) {
         AppToast.error('Finish the active upload before closing');
         return;
       }
@@ -3162,7 +3187,12 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
 
         if (widget.asBottomSheet) {
           return PopScope(
-            canPop: !_uploading && !_liveConnectionActive && !_usbSessionLocked,
+            canPop:
+                !_uploading &&
+                !_usbPickInProgress &&
+                !_filePickInProgress &&
+                !_liveConnectionActive &&
+                !_usbSessionLocked,
             onPopInvokedWithResult: (didPop, _) {
               if (!didPop) unawaited(_closeCameraUploadSheet());
             },
@@ -4257,15 +4287,20 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
   }
 
   /// Every source converges on the same live transfer monitor. USB and
-  /// wireless still open it themselves after native setup succeeds; the
-  /// fallback below covers phone photos, picked camera files, card readers,
-  /// gallery watching, and cancelled/failed connection attempts.
+  /// wireless open it themselves after native setup succeeds. Never cover
+  /// a failed USB negotiation with a generic transfer monitor.
   Future<void> _startSheetUploadMethod(
     EventSummary event,
     String method,
   ) async {
     _selectedSheetMethod = method;
     try {
+      if (method == 'usb') {
+        // Reuse the original PTP start entry point. Only that receiver opens
+        // the monitor, and only after successful negotiation.
+        if (!_usbSessionLocked) await _toggleOtgAutoUpload(event);
+        return;
+      }
       if (method == 'phone-camera') {
         await _pickCameraImage();
       } else {
@@ -4280,7 +4315,10 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
       }
     } finally {
       // The receiver can have already pushed its monitor. Never open two.
-      if (mounted && widget.asBottomSheet && !_connectionPageOpen) {
+      if (method != 'usb' &&
+          mounted &&
+          widget.asBottomSheet &&
+          !_connectionPageOpen) {
         unawaited(_showTransferSessionPage(event));
       }
     }
@@ -4377,12 +4415,16 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
             ListTile(
               leading: const Icon(Icons.usb_rounded),
               title: const Text('Choose Camera Photos'),
-              onTap: () => Navigator.pop(sheetContext, 'camera'),
+              onTap: _usbSessionLocked
+                  ? null
+                  : () => Navigator.pop(sheetContext, 'camera'),
             ),
             ListTile(
               leading: const Icon(Icons.sd_storage_outlined),
               title: const Text('Card Reader / Files'),
-              onTap: () => Navigator.pop(sheetContext, 'files'),
+              onTap: _usbSessionLocked
+                  ? null
+                  : () => Navigator.pop(sheetContext, 'files'),
             ),
             const SizedBox(height: 8),
           ],
@@ -4572,9 +4614,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.photo_library_outlined),
-                  title: const Text('Select & Upload'),
+                  title: const Text('Select stored camera photos'),
                   subtitle: const Text(
-                    'Choose only the camera photos you want to send.',
+                    'Import mode only; not live shooting. Stop tethering first.',
                   ),
                   onTap: _usbSessionLocked || _uploading || _usbPickInProgress
                       ? null
@@ -4633,9 +4675,9 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
                   leading: const Icon(Icons.sd_storage_outlined),
                   title: const Text('Browse Files / SD card'),
                   subtitle: const Text(
-                    'Choose stored photos with the system Files picker.',
+                    'Stored photos only. Stop live shooting first.',
                   ),
-                  onTap: _uploading
+                  onTap: _uploading || _usbSessionLocked || _filePickInProgress
                       ? null
                       : () {
                           Navigator.pop(sheetContext);

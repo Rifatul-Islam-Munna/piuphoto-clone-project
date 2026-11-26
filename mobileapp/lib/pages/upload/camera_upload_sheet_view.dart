@@ -249,7 +249,7 @@ class _CameraUploadSheetViewState extends State<CameraUploadSheetView> {
                   _methodOption(
                     'camera',
                     'Choose Camera Photos',
-                    'Select individual photos from connected camera',
+                    'Stored-photo import only; not live shooting',
                     Icons.usb_rounded,
                   ),
                   _methodOption(
@@ -298,12 +298,21 @@ class _CameraUploadSheetViewState extends State<CameraUploadSheetView> {
                   ],
                 ),
                 const SizedBox(height: 12),
+                if (widget.statusMessage case final message?
+                    when message.isNotEmpty) ...[
+                  Text(
+                    message,
+                    key: const Key('camera-receiver-status'),
+                    style: const TextStyle(fontSize: 12, height: 1.35),
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 if (widget.receiving) ...[
                   SizedBox(
                     width: double.infinity,
                     height: 48,
                     child: FilledButton.icon(
-                      onPressed: widget.onOpenTransfers,
+                      onPressed: busy ? null : widget.onOpenTransfers,
                       icon: const Icon(Icons.photo_library_outlined),
                       label: const Text('View live transfers'),
                     ),
@@ -318,10 +327,11 @@ class _CameraUploadSheetViewState extends State<CameraUploadSheetView> {
                     ),
                   ),
                 ] else ...[
-                  const Text(
-                    'Choose Shoot & Upload or Select & Upload from Upload settings. '
-                    'Your camera connection and native permissions are handled automatically.',
-                    style: TextStyle(
+                  Text(
+                    _method == 'usb'
+                        ? 'Use Remote Shooting / PC Remote / Tether on the camera, not Mass Storage. Wait for the ready message before using the physical shutter. Keep AirPix open.'
+                        : 'Choose Shoot & Upload or Select & Upload from Upload settings. Your camera connection and native permissions are handled automatically.',
+                    style: const TextStyle(
                       fontSize: 11,
                       color: AppColors.mutedForeground,
                       height: 1.35,
