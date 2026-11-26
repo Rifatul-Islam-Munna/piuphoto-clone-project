@@ -611,6 +611,106 @@ void main() {
       },
     );
 
+    test(
+      'Sony V3 accepts parameterless property queries after explicit rejection',
+      () async {
+        final link = _CameraLink(_Brand.sony)
+          ..model = 'ILCE-7RM4'
+          ..sonyPropertyParameterRejection = 0x201d;
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('sony-parameterless');
+          await link.dispose();
+        });
+        await camera.start('sony-parameterless');
+        final queries = link.calls
+            .where((call) => call.opcode == 0x9209)
+            .toList();
+        expect(queries.first.params, [0]);
+        expect(
+          queries.skip(1).map((call) => call.params),
+          everyElement(isEmpty),
+        );
+        link.sonyMemory.add(const _Photo('A7R4.ARW', 8));
+        final shot = (await camera.pending('sony-parameterless')).single;
+        expect(shot.name, 'A7R4.ARW');
+        await camera.download('sony-parameterless', shot.id);
+        await camera.acknowledge('sony-parameterless', [shot.id]);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Sony empty startup payload is retried and empty delta forces full read',
+      () async {
+        final link = _CameraLink(_Brand.sony);
+        link.sonyPropertyReplies.add(Uint8List(0));
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('sony-empty-property');
+          await link.dispose();
+        });
+        await camera.start('sony-empty-property');
+        final queries = link.calls.where((call) => call.opcode == 0x9209);
+        expect(queries.take(2).map((call) => call.params), [
+          [0],
+          [0],
+        ]);
+        link.sonyPropertyReplies.add(Uint8List(0));
+        link.sonyMemory.add(const _Photo('EMPTY_DELTA.JPG', 8));
+        final shot = (await camera.pending('sony-empty-property')).single;
+        expect(shot.name, 'EMPTY_DELTA.JPG');
+        expect(queries.toList().reversed.take(2).map((call) => call.params), [
+          [0],
+          [1],
+        ]);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Sony V3 priority write falls back to single parameter and confirms value',
+      () async {
+        final link = _CameraLink(_Brand.sony)
+          ..sonyPriority = 1
+          ..sonyPriorityParameterRejection = 0x201d;
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('sony-priority-argument');
+          await link.dispose();
+        });
+        await camera.start('sony-priority-argument');
+        final writes = link.calls.where((call) => call.opcode == 0x9205);
+        expect(writes.map((call) => call.params), [
+          [0xd25a, 1],
+          [0xd25a],
+        ]);
+        expect(link.sonyPriority, 0);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Sony property access denied is not retried using a different query',
+      () async {
+        final link = _CameraLink(_Brand.sony)
+          ..sonyPropertyParameterRejection = 0x200f;
+        final camera = _transport(link);
+        addTearDown(link.dispose);
+        await expectLater(
+          camera.start('sony-access-denied'),
+          _error('PTP_COMMAND_REJECTED'),
+        );
+        expect(
+          link.calls.where((call) => call.opcode == 0x9209).single.params,
+          [0],
+        );
+        expect(link.downloads, isEmpty);
+        expect(link.closed, contains('sony-access-denied'));
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
     for (final legacy in [false, true]) {
       test(
         'Sony ${legacy ? "V2" : "V3"} releases PC priority to the physical body',
@@ -782,12 +882,85 @@ void main() {
       },
     );
 
+    test('Sony A7R IV falls back to V2 after empty V3 capabilities', () async {
+      final link = _CameraLink(_Brand.sony)..model = 'ILCE-7RM4';
+      link.sonyExtensionReplies.addAll(List.generate(20, (_) => Uint8List(0)));
+      final delays = <Duration>[];
+      final camera = PtpTetherCameraTransport(
+        link: link,
+        eventPollInterval: const Duration(days: 1),
+        delay: (duration) async => delays.add(duration),
+        stagedFileExists: (_) async => true,
+      );
+      addTearDown(() async {
+        await camera.stop('sony-r4-v2');
+        await link.dispose();
+      });
+      await camera.start('sony-r4-v2');
+      final queries = link.calls.where((call) => call.opcode == 0x9202);
+      expect(queries.length, 21);
+      expect(queries.last.params, [0xc8]);
+      expect(delays, contains(const Duration(seconds: 3)));
+      link.sonyMemory.add(const _Photo('A7R4.JPG', 8));
+      final shot = (await camera.pending('sony-r4-v2')).single;
+      expect(shot.name, 'A7R4.JPG');
+      await camera.download('sony-r4-v2', shot.id);
+      await camera.acknowledge('sony-r4-v2', [shot.id]);
+      _expectNoCaptureOrLock(link);
+    });
+
+    test(
+      'Sony retries incomplete full property snapshots at startup',
+      () async {
+        final link = _CameraLink(_Brand.sony)..model = 'ILCE-7RM4';
+        link.sonyPropertyReplies.add(
+          Uint8List.fromList([..._u32(0), ..._u32(0)]),
+        );
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('sony-r4-properties');
+          await link.dispose();
+        });
+        await camera.start('sony-r4-properties');
+        final queries = link.calls.where((call) => call.opcode == 0x9209);
+        expect(queries.take(2).map((call) => call.params), [
+          [0],
+          [0],
+        ]);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
+    test(
+      'Sony retries transient RAM metadata rejection without consuming a photo',
+      () async {
+        final link = _CameraLink(_Brand.sony);
+        final camera = _transport(link);
+        addTearDown(() async {
+          await camera.stop('sony-ram-metadata');
+          await link.dispose();
+        });
+        await camera.start('sony-ram-metadata');
+        link.sonyMemory.add(const _Photo('RETRY.JPG', 8));
+        link.metadataRejections[0xffffc001] = 0x2009;
+        expect(await camera.pending('sony-ram-metadata'), isEmpty);
+        expect(link.downloads, isEmpty);
+        expect(link.sonyMemory, hasLength(1));
+        link.metadataRejections.remove(0xffffc001);
+        final shot = (await camera.pending('sony-ram-metadata')).single;
+        expect(shot.name, 'RETRY.JPG');
+        await camera.download('sony-ram-metadata', shot.id);
+        await camera.acknowledge('sony-ram-metadata', [shot.id]);
+        _expectNoCaptureOrLock(link);
+      },
+    );
+
     test(
       'Sony empty capability retries are bounded and never imply ready',
       () async {
         final link = _CameraLink(_Brand.sony);
         link.sonyExtensionReplies.addAll(
-          List.generate(20, (_) => Uint8List(0)),
+          List.generate(40, (_) => Uint8List(0)),
         );
         final camera = _transport(link);
         addTearDown(link.dispose);
@@ -797,7 +970,7 @@ void main() {
         );
         expect(
           link.calls.where((call) => call.opcode == 0x9202),
-          hasLength(20),
+          hasLength(40),
         );
         expect(link.calls.where((call) => call.opcode == 0x9205), isEmpty);
         expect(link.closed, contains('sony-empty'));
@@ -2441,6 +2614,8 @@ class _CameraLink implements PtpTetherLink {
   final sonyExtensionReplies = Queue<Uint8List>();
   final sonyPropertyReplies = Queue<Uint8List>();
   int? sonyV3Rejection;
+  int? sonyPropertyParameterRejection;
+  int? sonyPriorityParameterRejection;
   int canonDestination = 2;
   List<int> canonChoices = [1, 2, 4];
   int sonyPriority = 0;
@@ -2623,8 +2798,14 @@ class _CameraLink implements PtpTetherLink {
           ..._array16([0xd215, 0xd222, 0xd25a]),
         ]);
       case 0x9209:
-        if (sonyPropertyReplies.isNotEmpty)
+        if (params.isNotEmpty && sonyPropertyParameterRejection != null) {
+          return PtpTetherResponse(
+            responseCode: sonyPropertyParameterRejection!,
+          );
+        }
+        if (sonyPropertyReplies.isNotEmpty) {
           return _ok(sonyPropertyReplies.removeFirst());
+        }
         final memory =
             sonyMemoryOverride ??
             (sonyMemory.isEmpty ? 0 : 0x8000 + sonyMemory.length);
@@ -2687,6 +2868,11 @@ class _CameraLink implements PtpTetherLink {
           if (acceptPropertyWrites) sonyDestination = value;
         } else if (params.first == 0xd25a) {
           expect(outData, [0]);
+          if (params.length == 2 && sonyPriorityParameterRejection != null) {
+            return PtpTetherResponse(
+              responseCode: sonyPriorityParameterRejection!,
+            );
+          }
           if (acceptPropertyWrites) sonyPriority = 0;
         } else {
           fail('Unimplemented Sony property write');

@@ -174,7 +174,11 @@ enum _CameraBrand {
       return 'Sony Alpha 7R IV: disconnect USB. In Network, set Ctrl w/ '
           'Smartphone to Off. Open PC Remote Function: PC Remote = On, '
           'PC Remote Cnct Method = USB, Still Img. Save Dest. = PC+Camera. '
-          'Keep a writable card inserted and use Camera priority where available.';
+          'Do not use Setup > USB Connection (Auto, Mass Storage or MTP): '
+          'that is the separate file-import mode. Turn USB Power Supply Off '
+          'if the phone cannot supply camera power. Keep a writable card '
+          'inserted, select New shots only in AirPix, and use Camera priority '
+          'where available.';
     }
     return instructions;
   }

@@ -36,6 +36,9 @@ void main() {
       expect(advice.nextSteps, contains('PC Remote Function'));
       expect(advice.nextSteps, contains('PC Remote Cnct Method = USB'));
       expect(advice.nextSteps, contains('PC+Camera'));
+      expect(advice.nextSteps, contains('Setup > USB Connection'));
+      expect(advice.nextSteps, contains('USB Power Supply Off'));
+      expect(advice.nextSteps, contains('New shots only'));
       expect(advice.nextSteps, isNot(contains('Dest.+Camera')));
       expect(advice.nextSteps, contains('will not change it'));
     }

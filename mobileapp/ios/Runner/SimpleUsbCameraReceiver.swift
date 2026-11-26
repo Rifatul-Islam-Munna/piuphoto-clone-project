@@ -227,9 +227,22 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
     DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
   }
 
-  private func abort(_ code: String, _ message: String) {
+  private func abort(_ code: String, _ message: String, detected: ICCameraDevice? = nil) {
     emit("error", message: message, code: code)
-    waitingStart?(failure(code, message))
+    if tetherMode, let sony = detected ?? camera, sony.usbVendorID == 0x054C {
+      // Preserve the camera's actual USB identity even when discovery rejects
+      // Mass Storage before assigning/opening the device. Dart can then show
+      // the exact Alpha model's PC Remote setup, not generic USB advice.
+      let details: [String: Any] = [
+        "camera": sony.name ?? "Sony camera",
+        "vendorId": Int(sony.usbVendorID),
+        "productId": Int(sony.usbProductID),
+        "transport": sony.transportType ?? ""
+      ]
+      waitingStart?(FlutterError(code: code, message: message, details: details))
+    } else {
+      waitingStart?(failure(code, message))
+    }
     waitingStart = nil
     stop(sessionID: sessionId, result: { _ in })
   }
@@ -604,7 +617,7 @@ final class SimpleUsbCameraReceiver: NSObject, FlutterStreamHandler, ICDeviceBro
     if transport.contains("network") || transport.contains("wifi") ||
        transport.contains("wireless") || transport.contains("tcp") { return }
     if WiredCameraLiveTransportPolicy.isKnownImportOnly(found.transportType) {
-      abort("CAMERA_STORAGE_ONLY", "Camera is exposing only USB storage. Disconnect and choose a shooting-compatible USB mode.")
+      abort("CAMERA_STORAGE_ONLY", "Camera is exposing only USB storage. Disconnect and choose a shooting-compatible USB mode.", detected: found)
       return
     }
     camera = found

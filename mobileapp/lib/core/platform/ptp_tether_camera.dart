@@ -97,6 +97,8 @@ class _TetherRun {
   bool olympusRestoreRequired = false;
   bool canReleaseAfterError = false;
   int sonyProtocol = 0;
+  // Some Sony V3 firmware accepts only the parameterless property query.
+  bool sonyParameterlessProperties = false;
   int sonySequence = 0;
   int baselineCount = 0;
   bool canonRemote = false;
@@ -392,6 +394,11 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
             if (error.details is Map) ...error.details as Map,
             'camera': run.info?.model ?? connection.name,
             'vendorId': connection.vendorId,
+            if (run.family == _TetherFamily.sony &&
+                error.details is Map &&
+                (error.details as Map)['opcode'] is int)
+              'operation':
+                  '0x${((error.details as Map)['opcode'] as int).toRadixString(16).padLeft(4, '0')}',
           },
         );
       }
@@ -788,7 +795,37 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     await _command(run, 0x9201, params: [3, 0, 0]);
     run.sonyConnected = true;
     _requireOperations(run, [0x9209, 0x1008, 0x1009]);
+    // libgphoto2 documents a roughly three-second startup requirement for
+    // ILCE-7RM4/7RM4A. Keep the wait Sony-model-specific and do not arm the
+    // receiver until the camera has published its actual shooting state.
+    final model = (run.info?.model ?? '').toLowerCase().replaceAll(
+      RegExp('[^a-z0-9]'),
+      '',
+    );
+    final isA7R4 = model.contains('7rm4') || model.contains('7riv');
+    if (isA7R4) {
+      _emit(
+        run,
+        'status',
+        'Waiting for Sony Alpha 7R IV PC Remote to initialize…',
+      );
+      await _delay(const Duration(seconds: 3));
+    }
     await _readSonyProperties(run);
+    // A valid but incomplete initial property set is not a ready session.
+    // Request full snapshots while the camera initializes; do not guess values
+    // or recover from malformed packets / transport errors.
+    for (var attempt = 0; attempt < 6; attempt++) {
+      if (const [
+        0xd215,
+        0xd222,
+        0xd25a,
+      ].every((code) => run.sonyProperties[code]?.intValue != null)) {
+        break;
+      }
+      await _delay(const Duration(milliseconds: 500));
+      await _readSonyProperties(run, forceFull: true);
+    }
     await _ensureSonyBaselineIdle(run);
     // Card recording is a prerequisite. The only property change permitted
     // here releases PC control back to the physical camera (D25A=0).
@@ -796,11 +833,15 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       run,
       0xd222,
       17,
-      help:
-          'On Sony Alpha 7 IV: Network > Cnct./Remote Sht. > Remote Shoot '
-          'Setting > Still Img. Save Dest. > Dest.+Camera. On older Sony '
-          'models, select PC Remote > PC+Camera. Use Remote Shooting over '
-          'USB, not Mass Storage.',
+      help: isA7R4
+          ? 'Sony Alpha 7R IV: unplug USB. In Network > Ctrl w/ Smartphone, '
+                'select Off. In Network > PC Remote Function, set PC Remote '
+                'to On, PC Remote Cnct Method to USB, and Still Img. Save '
+                'Dest. to PC+Camera. Do not select Mass Storage or MTP.'
+          : 'On Sony Alpha 7 IV: Network > Cnct./Remote Sht. > Remote Shoot '
+                'Setting > Still Img. Save Dest. > Dest.+Camera. On older Sony '
+                'models, select PC Remote > PC+Camera. Use Remote Shooting over '
+                'USB, not Mass Storage.',
     );
     await _releaseSonyBodyPriority(run);
     await _readSonyProperties(run);
@@ -819,35 +860,40 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     // Some Sony bodies initially return a successful but empty dataset while
     // the remote connection initializes. libgphoto2 retries only this condition.
     // A nonempty malformed payload remains a protocol error, never success.
-    var params = <int>[0x12c, 1];
-    for (var attempt = 0; attempt < 20; attempt++) {
-      final PtpTetherResponse response;
-      try {
-        response = await _command(run, 0x9202, params: params);
-      } on PtpTetherCommandException catch (error) {
-        // CrCmd uses V3; expo-sony-camera uses the older V2 query. Retry
-        // only an explicit unsupported/invalid-parameter reply, never a
-        // timeout or malformed dataset on a possibly desynchronised stream.
-        if (params.length == 2 &&
-            const {0x2005, 0x2006, 0x201d}.contains(error.responseCode)) {
-          params = [0xc8];
-          continue;
+    // CrCmd uses the V3 query; expo-sony-camera uses the V2 query. Try
+    // the legacy query only after an explicit V3 rejection or a bounded
+    // sequence of successful but empty replies. Never retry malformed data,
+    // transport errors or a timeout on a possibly desynchronised stream.
+    for (final params in const <List<int>>[
+      [0x12c, 1],
+      [0xc8],
+    ]) {
+      for (var attempt = 0; attempt < 20; attempt++) {
+        final PtpTetherResponse response;
+        try {
+          response = await _command(run, 0x9202, params: params);
+        } on PtpTetherCommandException catch (error) {
+          if (params.length == 2 &&
+              const {0x2005, 0x2006, 0x201d}.contains(error.responseCode)) {
+            break;
+          }
+          rethrow;
         }
-        rethrow;
-      }
-      if (response.data.isNotEmpty) {
-        final capabilities = PtpTetherCodec.decodeSonyExtensionInfo(
-          response.data,
-        );
-        if (!const {2, 3, 0xc8, 0x12c}.contains(capabilities.version)) {
-          throw PlatformException(
-            code: 'TETHER_MODE_UNSUPPORTED',
-            message: 'This Sony protocol version is not supported.',
+        if (response.data.isNotEmpty) {
+          final capabilities = PtpTetherCodec.decodeSonyExtensionInfo(
+            response.data,
           );
+          if (!const {2, 3, 0xc8, 0x12c}.contains(capabilities.version)) {
+            throw PlatformException(
+              code: 'TETHER_MODE_UNSUPPORTED',
+              message:
+                  'Unsupported Sony PTP protocol version ${capabilities.version}.',
+            );
+          }
+          if (capabilities.codes.isNotEmpty) return capabilities;
         }
-        if (capabilities.codes.isNotEmpty) return capabilities;
+        if (attempt < 19) await _delay(const Duration(milliseconds: 150));
       }
-      if (attempt < 19) await _delay(const Duration(milliseconds: 100));
     }
     throw PlatformException(
       code: 'TETHER_MODE_NOT_CONFIRMED',
@@ -892,19 +938,46 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
     bool forceFull = false,
   }) async {
     final version3 = run.sonyProtocol == 3 || run.sonyProtocol == 0x12c;
-    final full = forceFull || run.sonyProperties.isEmpty;
-    final response = await _command(
-      run,
-      0x9209,
-      params: version3 ? [full ? 0 : 1] : const [],
-    );
+    final withParameter = version3 && !run.sonyParameterlessProperties;
+    var delta = withParameter && !forceFull && run.sonyProperties.isNotEmpty;
+    PtpTetherResponse response;
+    try {
+      response = await _command(
+        run,
+        0x9209,
+        params: withParameter ? [delta ? 1 : 0] : const [],
+      );
+    } on PtpTetherCommandException catch (error) {
+      // CrCmd uses an explicit full/diff argument; libgphoto2 reads this
+      // property dataset without parameters, even after V3 negotiation.
+      // Try that form only after a definitive parameter/operation rejection.
+      if (!withParameter ||
+          !const {0x2005, 0x2006, 0x201d}.contains(error.responseCode)) {
+        rethrow;
+      }
+      response = await _command(run, 0x9209);
+      run.sonyParameterlessProperties = true;
+      delta = false;
+    }
+    if (response.data.isEmpty && delta) {
+      // A successful reply without a delta dataset is not proof that all
+      // cached shooting settings remain valid. Recheck a full snapshot.
+      await _readSonyProperties(run, forceFull: true);
+      return;
+    }
+    if (response.data.isEmpty && !run.ready) {
+      // Sony can return no data while initializing. The bounded startup
+      // loop will request another full snapshot; never arm from an empty one.
+      run.sonyProperties = {};
+      return;
+    }
     final properties = PtpTetherCodec.decodeSonyProperties(
       response.data,
       protocolVersion: run.sonyProtocol,
     );
-    // V3's onlyDiff=1 query omits unchanged properties. Retain destination and
-    // body-priority confirmation while applying queue/readiness changes.
-    run.sonyProperties = version3 && !full
+    // Only a verified V3 difference query may preserve omitted properties.
+    // Parameterless replies always replace the full snapshot.
+    run.sonyProperties = delta
         ? {...run.sonyProperties, ...properties}
         : properties;
   }
@@ -920,13 +993,29 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
         run.operations.contains(0x9205)) {
       final version3 = run.sonyProtocol == 3 || run.sonyProtocol == 0x12c;
       try {
-        await _command(
-          run,
-          0x9205,
-          params: version3 ? [0xd25a, 1] : [0xd25a],
-          data: Uint8List.fromList([0]),
-        );
-      } on PtpTetherCommandException {
+        try {
+          await _command(
+            run,
+            0x9205,
+            params: version3 ? [0xd25a, 1] : [0xd25a],
+            data: Uint8List.fromList([0]),
+          );
+        } on PtpTetherCommandException catch (error) {
+          // libgphoto2 uses the single-property form. Retry the exact same
+          // Camera-priority value only after explicit argument rejection;
+          // never retry an ambiguous transport failure or enable PC priority.
+          if (!version3 ||
+              !const {0x2005, 0x2006, 0x201d}.contains(error.responseCode)) {
+            rethrow;
+          }
+          await _command(
+            run,
+            0x9205,
+            params: [0xd25a],
+            data: Uint8List.fromList([0]),
+          );
+        }
+      } on PtpTetherCommandException catch (error) {
         // A well-framed rejection leaves manual camera setup available.
         // Transport/framing errors must propagate and close the native owner.
         throw PlatformException(
@@ -934,6 +1023,7 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
           message:
               'Sony could not return control to Camera priority. Disconnect USB, '
               'select Camera priority on the camera, then reconnect.',
+          details: error.details,
         );
       }
       for (var attempt = 0; attempt < 6; attempt++) {
@@ -1633,7 +1723,16 @@ class PtpTetherCameraTransport implements LiveCameraTransport {
       );
     }
     if (available <= 0x8000) return;
-    final response = await _command(run, 0x1008, params: [_sonyMemoryHandle]);
+    final PtpTetherResponse response;
+    try {
+      response = await _command(run, 0x1008, params: [_sonyMemoryHandle]);
+    } on PtpTetherCommandException catch (error) {
+      // Sony may advertise a ready RAM entry just before its metadata is
+      // readable. Like expo-sony-camera, retry the READ-ONLY GetObjectInfo
+      // on the next poll; never retry a potentially consumptive GetObject.
+      if (error.responseCode == 0x2009 || error.responseCode == 0x2019) return;
+      rethrow;
+    }
     final info = PtpTetherCodec.decodeObjectInfo(
       response.data,
       handle: _sonyMemoryHandle,
