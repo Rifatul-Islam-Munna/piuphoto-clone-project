@@ -6,6 +6,9 @@ import android.content.ContentUris
 import android.content.Intent
 import android.content.IntentSender
 import android.net.Uri
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.util.Log
 import android.os.Build
 import android.provider.MediaStore
 import android.provider.OpenableColumns
@@ -19,6 +22,9 @@ import io.flutter.plugin.common.EventChannel
 import java.io.File
 import java.io.FileOutputStream
 import java.util.ArrayDeque
+import java.util.UUID
+import java.io.IOException
+import java.security.MessageDigest
 
 // USB cameras are accessed only through the explicitly started receiving session.
 class MainActivity : FlutterFragmentActivity() {
@@ -50,7 +56,14 @@ class MainActivity : FlutterFragmentActivity() {
                     "pickSource" -> pickOtgSource(result)
                     "recentSourceImages" -> {
                         val excludeIds = call.argument<List<String>>("excludeIds") ?: emptyList()
-                        result.success(copyRecentOtgSourceImages(excludeIds.toSet()))
+                        Thread {
+                            try {
+                                val files = copyRecentOtgSourceImages(excludeIds.toSet())
+                                runOnUiThread { result.success(files) }
+                            } catch (error: Exception) {
+                                runOnUiThread { result.error("SOURCE_READ_FAILED", error.message, null) }
+                            }
+                        }.start()
                     }
                     "setTransferScreenAwake" -> {
                         val owner = call.argument<String>("owner")
@@ -311,6 +324,102 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
+    // Document picker and external folder imports only, never the USB receiver.
+    private fun externalSize(uri: Uri): Long? {
+        return try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0).takeIf { it >= 0 } else null
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun externalDigest(input: java.io.InputStream): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(256 * 1024)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (count == 0) throw IOException("File reader stopped making progress.")
+            digest.update(buffer, 0, count)
+        }
+        return digest.digest()
+    }
+
+    private fun copyVerifiedExternalFile(uri: Uri, name: String, knownSize: Long? = null): File {
+        var lastError: Exception = IOException("Unable to copy selected photo.")
+        repeat(2) { attempt ->
+            val safeName = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            val target = File(cacheDir, "otg_${UUID.randomUUID()}_$safeName")
+            try {
+                val before = externalSize(uri) ?: knownSize
+                val digest = MessageDigest.getInstance("SHA-256")
+                var copied = 0L
+                val input = contentResolver.openInputStream(uri)
+                    ?: throw IOException("Unable to open selected photo.")
+                input.use { source ->
+                    FileOutputStream(target).use { output ->
+                        val buffer = ByteArray(256 * 1024)
+                        while (true) {
+                            val count = source.read(buffer)
+                            if (count < 0) break
+                            if (count == 0) throw IOException("Card reader stopped making progress.")
+                            output.write(buffer, 0, count)
+                            digest.update(buffer, 0, count)
+                            copied += count
+                        }
+                        output.fd.sync()
+                    }
+                }
+                val after = externalSize(uri)
+                if (copied <= 0 || target.length() != copied ||
+                    (before != null && before != copied) ||
+                    (after != null && after != copied)) {
+                    throw IOException("Incomplete or changed file. Reconnect the card reader and retry.")
+                }
+                val localHash = target.inputStream().use { externalDigest(it) }
+                if (!digest.digest().contentEquals(localHash)) {
+                    throw IOException("Copied file failed integrity verification.")
+                }
+                if (before == null && after == null) {
+                    val verification = contentResolver.openInputStream(uri)
+                        ?: throw IOException("Unable to verify the selected photo.")
+                    if (!verification.use { externalDigest(it) }.contentEquals(localHash)) {
+                        throw IOException("Source changed or returned incomplete bytes.")
+                    }
+                }
+                validateExternalJpeg(target)
+                return target
+            } catch (error: Exception) {
+                lastError = error
+                target.delete()
+                if (attempt == 0) Thread.sleep(250)
+            }
+        }
+        throw lastError
+    }
+
+    private fun validateExternalJpeg(file: File) {
+        if (file.extension.lowercase() !in setOf("jpg", "jpeg")) return
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || bounds.outMimeType != "image/jpeg") {
+            throw IOException("JPEG header is incomplete or unreadable.")
+        }
+        val sample = maxOf(1, maxOf(bounds.outWidth, bounds.outHeight) / 512)
+        val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, _, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.setTargetSampleSize(sample)
+                decoder.setOnPartialImageListener { false }
+            }
+        } else {
+            BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply {
+                inSampleSize = sample
+            })
+        } ?: throw IOException("JPEG is incomplete or unreadable.")
+        bitmap.recycle()
+    }
+
     private fun copyRecentOtgSourceImages(excludeIds: Set<String>): List<Map<String, String>> {
         val sourceUri = otgSourceUri ?: return emptyList()
         val root = DocumentFile.fromTreeUri(this, sourceUri) ?: return emptyList()
@@ -344,16 +453,8 @@ class MainActivity : FlutterFragmentActivity() {
                 if (excludeIds.contains(id)) continue
 
                 val name = child.name ?: "otg-image-${System.currentTimeMillis()}.jpg"
-                val safeName = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
-                val target = File(cacheDir, "otg_auto_${System.currentTimeMillis()}_$safeName")
-
                 try {
-                    val inputStream = contentResolver.openInputStream(child.uri) ?: continue
-                    inputStream.use { input ->
-                        FileOutputStream(target).use { output ->
-                            input.copyTo(output)
-                        }
-                    }
+                    val target = copyVerifiedExternalFile(child.uri, name, length.takeIf { it > 0 })
                     copied.add(
                         mapOf(
                             "id" to id,
@@ -362,7 +463,8 @@ class MainActivity : FlutterFragmentActivity() {
                             "modifiedMs" to lastModified.toString()
                         )
                     )
-                } catch (_: Exception) {
+                } catch (error: Exception) {
+                    Log.w("AirPix", "External folder import failed: ${error.message}")
                 }
             }
         }
@@ -477,29 +579,27 @@ class MainActivity : FlutterFragmentActivity() {
                 return
             }
 
-            val files = uris.map { uri ->
-                val name = getDisplayName(uri)
-                val target = File(cacheDir, "otg_${System.currentTimeMillis()}_$name")
-                val inputStream = contentResolver.openInputStream(uri)
-                    ?: throw IllegalArgumentException("Unable to open selected image")
-
-                inputStream.use { input ->
-                    FileOutputStream(target).use { output ->
-                        input.copyTo(output)
+            Thread {
+                val files = uris.distinct().map { uri ->
+                    val name = try { getDisplayName(uri) } catch (_: Exception) { "external-image.jpg" }
+                    try {
+                        val target = copyVerifiedExternalFile(uri, name)
+                        mapOf("path" to target.absolutePath, "name" to name)
+                    } catch (error: Exception) {
+                        mapOf("name" to name, "error" to (error.message ?: "Unable to verify photo."))
                     }
                 }
-
-                mapOf(
-                    "path" to target.absolutePath,
-                    "name" to name
-                )
-            }
-
-            if (allowMultiple) {
-                result.success(files)
-            } else {
-                result.success(files.first())
-            }
+                runOnUiThread {
+                    if (allowMultiple) {
+                        result.success(files)
+                    } else {
+                        val first = files.first()
+                        val error = first["error"]
+                        if (error != null) result.error("PICK_FAILED", error, null)
+                        else result.success(first)
+                    }
+                }
+            }.start()
         } catch (error: Exception) {
             result.error("PICK_FAILED", error.message, null)
         }

@@ -12,6 +12,34 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
+  test('external Files import keeps valid photos and reports failed copies', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'pickImages');
+      return [
+        {'path': '/tmp/verified.jpg', 'name': 'IMG_0001.JPG'},
+        {'name': 'IMG_0002.JPG', 'error': 'Incomplete file'},
+        {'path': '/tmp/invalid.jpg', 'name': 'IMG_0003.JPG', 'error': 'JPEG incomplete'},
+      ];
+    });
+    final failures = <String>[];
+    final files = await OtgFilePicker.pickImages(
+      onFailed: (name, message) => failures.add('$name: $message'),
+    );
+    expect(files.single.path, '/tmp/verified.jpg');
+    expect(failures, [
+      'IMG_0002.JPG: Incomplete file',
+      'IMG_0003.JPG: JPEG incomplete',
+    ]);
+  });
+
+  test('cancelling external Files import does not report failures', () async {
+    messenger.setMockMethodCallHandler(channel, (_) async => null);
+    final files = await OtgFilePicker.pickImages(
+      onFailed: (_, _) => fail('Cancellation is not a failed photo'),
+    );
+    expect(files, isEmpty);
+  });
+
   test('iOS and Android USB diagnostics use the same native method', () async {
     messenger.setMockMethodCallHandler(channel, (call) async {
       expect(call.method, 'cameraConnectionDiagnostics');

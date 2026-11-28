@@ -922,7 +922,18 @@ class _UploadPageState extends State<UploadPage> with WidgetsBindingObserver {
     if (_filePickInProgress || _usbPickInProgress) return;
     _safeSetState(() => _filePickInProgress = true);
     try {
-      final files = await OtgFilePicker.pickImages();
+      var failedCount = 0;
+      final files = await OtgFilePicker.pickImages(
+        onFailed: (name, message) {
+          failedCount++;
+          debugPrint('External photo import failed: $name: $message');
+        },
+      );
+      if (failedCount > 0 && mounted) {
+        AppToast.error(
+          '$failedCount photo(s) could not be verified. Reconnect the card reader and select them again.',
+        );
+      }
       _addSelectedFiles(
         files
             .map(

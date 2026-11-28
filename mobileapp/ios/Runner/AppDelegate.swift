@@ -1,4 +1,6 @@
 import Flutter
+import CryptoKit
+import ImageIO
 import Photos
 import UIKit
 import UniformTypeIdentifiers
@@ -273,9 +275,9 @@ import UniformTypeIdentifiers
     otgAllowsMultipleSelection = allowsMultipleSelection
     let picker: UIDocumentPickerViewController
     if #available(iOS 14.0, *) {
-      picker = UIDocumentPickerViewController(forOpeningContentTypes: [.image], asCopy: true)
+      picker = UIDocumentPickerViewController(forOpeningContentTypes: [.image], asCopy: false)
     } else {
-      picker = UIDocumentPickerViewController(documentTypes: ["public.image"], in: .import)
+      picker = UIDocumentPickerViewController(documentTypes: ["public.image"], in: .open)
     }
     picker.delegate = self
     picker.allowsMultipleSelection = allowsMultipleSelection
@@ -354,37 +356,25 @@ import UniformTypeIdentifiers
     let allowsMultipleSelection = otgAllowsMultipleSelection
     otgAllowsMultipleSelection = false
 
-    do {
-      let payloads = try urls.map { url in
-        let didAccess = url.startAccessingSecurityScopedResource()
-        defer {
-          if didAccess {
-            url.stopAccessingSecurityScopedResource()
-          }
+    DispatchQueue.global(qos: .userInitiated).async {
+      let payloads: [[String: String]] = urls.map { url in
+        let name = url.lastPathComponent.isEmpty ? "external-image.jpg" : url.lastPathComponent
+        do {
+          let target = try self.copyVerifiedExternalFile(url, name: name)
+          return ["path": target.path, "name": name]
+        } catch {
+          return ["name": name, "error": error.localizedDescription]
         }
-
-        let fileName = url.lastPathComponent.isEmpty ? "external-image.jpg" : url.lastPathComponent
-        let target = FileManager.default.temporaryDirectory
-          .appendingPathComponent("otg_\(Int(Date().timeIntervalSince1970 * 1000))_\(fileName)")
-
-        if FileManager.default.fileExists(atPath: target.path) {
-          try FileManager.default.removeItem(at: target)
+      }
+      DispatchQueue.main.async {
+        if allowsMultipleSelection {
+          result(payloads)
+        } else if let first = payloads.first, let message = first["error"] {
+          result(FlutterError(code: "PICK_FAILED", message: message, details: nil))
+        } else {
+          result(payloads.first)
         }
-
-        try FileManager.default.copyItem(at: url, to: target)
-        return [
-          "path": target.path,
-          "name": fileName,
-        ]
       }
-
-      if allowsMultipleSelection {
-        result(payloads)
-      } else {
-        result(payloads.first)
-      }
-    } catch {
-      result(FlutterError(code: "PICK_FAILED", message: error.localizedDescription, details: nil))
     }
   }
 
@@ -394,6 +384,78 @@ import UniformTypeIdentifiers
     otgAllowsMultipleSelection = false
     otgSourceResult?(nil)
     otgSourceResult = nil
+  }
+
+  // Files/card-reader import only; the camera receiver never calls this.
+  private func copyVerifiedExternalFile(_ source: URL, name: String) throws -> URL {
+    let accessed = source.startAccessingSecurityScopedResource()
+    defer { if accessed { source.stopAccessingSecurityScopedResource() } }
+    var lastError: Error = externalImportError("Unable to copy photo.")
+    for attempt in 0..<2 {
+      let target = FileManager.default.temporaryDirectory
+        .appendingPathComponent("otg_\(UUID().uuidString)_\(sanitizeFilename(name))")
+      do {
+        var coordinationError: NSError?
+        var readError: Error?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+          readingItemAt: source, options: [], error: &coordinationError
+        ) { url in
+          do {
+            let before = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            try FileManager.default.copyItem(at: url, to: target)
+            let size = try target.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            let sourceHash = try self.externalDigest(url)
+            let copyHash = try self.externalDigest(target)
+            let after = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            guard size > 0,
+                  before.fileSize.map({ $0 == size }) ?? true,
+                  after.fileSize.map({ $0 == size }) ?? true,
+                  before.contentModificationDate == after.contentModificationDate,
+                  sourceHash == copyHash else {
+              throw self.externalImportError("Incomplete or changed file. Reconnect the card reader and retry.")
+            }
+            if ["jpg", "jpeg"].contains(target.pathExtension.lowercased()) {
+              guard let image = CGImageSourceCreateWithURL(target as CFURL, nil),
+                    CGImageSourceGetType(image) as String? == UTType.jpeg.identifier,
+                    CGImageSourceGetStatus(image) == .statusComplete,
+                    CGImageSourceCreateThumbnailAtIndex(image, 0, [
+                      kCGImageSourceCreateThumbnailFromImageAlways: true,
+                      kCGImageSourceThumbnailMaxPixelSize: 512,
+                      kCGImageSourceShouldCacheImmediately: true,
+                    ] as CFDictionary) != nil,
+                    CGImageSourceGetStatusAtIndex(image, 0) == .statusComplete else {
+                throw self.externalImportError("JPEG is incomplete or unreadable.")
+              }
+            }
+          } catch { readError = error }
+        }
+        if let error = coordinationError { throw error }
+        if let error = readError { throw error }
+        guard FileManager.default.fileExists(atPath: target.path) else {
+          throw externalImportError("No file was copied.")
+        }
+        return target
+      } catch {
+        lastError = error
+        try? FileManager.default.removeItem(at: target)
+        if attempt == 0 { Thread.sleep(forTimeInterval: 0.25) }
+      }
+    }
+    throw lastError
+  }
+
+  private func externalDigest(_ url: URL) throws -> SHA256.Digest {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    var hash = SHA256()
+    while let data = try handle.read(upToCount: 256 * 1024), !data.isEmpty {
+      hash.update(data: data)
+    }
+    return hash.finalize()
+  }
+
+  private func externalImportError(_ message: String) -> NSError {
+    NSError(domain: "AirPix.ExternalImport", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
   }
 
   private func fetchRecentSourceImages(
@@ -496,14 +558,8 @@ import UniformTypeIdentifiers
 
       let rawName = values.name ?? fileURL.lastPathComponent
       let safeName = sanitizeFilename(rawName)
-      let target = FileManager.default.temporaryDirectory
-        .appendingPathComponent("otg_auto_\(Int(Date().timeIntervalSince1970 * 1000))_\(safeName)")
-
       do {
-        if FileManager.default.fileExists(atPath: target.path) {
-          try FileManager.default.removeItem(at: target)
-        }
-        try FileManager.default.copyItem(at: fileURL, to: target)
+        let target = try copyVerifiedExternalFile(fileURL, name: safeName)
         copied.append([
           "id": id,
           "path": target.path,
@@ -511,6 +567,7 @@ import UniformTypeIdentifiers
           "modifiedMs": "\(modified)",
         ])
       } catch {
+        NSLog("AirPix external folder import failed: %@", error.localizedDescription)
         continue
       }
     }

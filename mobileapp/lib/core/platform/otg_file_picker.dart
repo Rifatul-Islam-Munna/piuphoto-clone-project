@@ -103,11 +103,20 @@ class OtgFilePicker {
     return OtgPickedFile(path: path, name: name);
   }
 
-  static Future<List<OtgPickedFile>> pickImages() async {
+  static Future<List<OtgPickedFile>> pickImages({
+    void Function(String name, String message)? onFailed,
+  }) async {
     final result = await _channel.invokeMethod<List<dynamic>>('pickImages');
     if (result == null) return const [];
+    for (final item in result.whereType<Map<dynamic, dynamic>>()) {
+      final error = item['error']?.toString();
+      if (error != null && error.isNotEmpty) {
+        onFailed?.call(item['name']?.toString() ?? 'Photo', error);
+      }
+    }
 
     return result
+        .where((item) => item is! Map || item['error'] == null)
         .whereType<Map<dynamic, dynamic>>()
         .map(
           (item) => OtgPickedFile(
