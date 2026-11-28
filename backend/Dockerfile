@@ -42,6 +42,7 @@ WORKDIR /app
 # Install Chromium + Bengali/International Fonts
 RUN apk add --no-cache \
     chromium \
+    ffmpeg \
     nss \
     freetype \
     harfbuzz \

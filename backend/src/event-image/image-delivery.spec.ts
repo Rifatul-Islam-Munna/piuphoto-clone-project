@@ -1,6 +1,6 @@
 import { createHmac } from 'crypto';
 import { Types } from 'mongoose';
-import { deliveryConfigVersion, deliveryRows, digestKey, imagorUrls, sourceKey, withDelivery } from './image-delivery';
+import { deliveryConfigVersion, deliveryRows, digestKey, imagorUrls, recoveryKeyForPhoto, sourceKey, withDelivery } from './image-delivery';
 import { ImagorCacheController, ImagorCacheService } from './imagor-cache.service';
 
 const env = process.env;
@@ -54,19 +54,71 @@ describe('Imagor delivery', () => {
   it('uses deterministic digest keys compatible with the shared worker', () => {
     expect(digestKey('https://img.example.com/abcdefghijklmnopq/200x200/abc')).toBe('30/fd/be2aa5086e0f0c50ea72dd3859a10d8071ad');
   });
-  it('switches a scoped album only after all cache jobs are ready', async () => {
-    const photo = readyRow();
-    const distinct = jest.fn().mockResolvedValueOnce([eventId]).mockResolvedValueOnce([]);
-    const pending: any = (await deliveryRows({ distinct } as any, [photo], String(albumId)))[0];
-    expect(pending.previewUrl).toBe(imagorUrls(row)!.small);
-    const ready: any = (await deliveryRows({ distinct } as any, [photo], String(albumId)))[0];
-    expect(ready.previewUrl).toBe(photo.imagorSmallUrl + '?format=avif');
-    expect(pending.deliverySource).toBe('imagor');
-    expect(ready.deliverySource).toBe('r2');
-    expect(ready.viewUrl).toBe(photo.imagorViewUrl + '?format=avif');
-    expect(ready.imageUrl).toBe(row.imageUrl);
-    expect(ready.imagorSignature).toBeUndefined();
-    expect(distinct.mock.calls[0][1].albumId).toEqual(albumId);
+  it('serves each photo independently without waiting for the entire album cache', async () => {
+    const cachedPhoto = readyRow();
+    const failedRow = { ...row, _id: new Types.ObjectId(), imageUrl: 'https://originals.example.test/a/failed.jpg', imagorStatus: 'failed', imagorLastError: 'Result Storage verification failed' };
+    const [cached, waiting, failed]: any[] = await deliveryRows({} as any, [cachedPhoto, row, failedRow], String(albumId));
+    expect(failed.previewUrl).toBe(failedRow.imageUrl);
+    expect(failed.viewUrl).toBe(failedRow.imageUrl);
+    expect(cached.previewUrl).toBe(cachedPhoto.imagorSmallUrl + '?format=avif');
+    expect(cached.deliverySource).toBe('r2');
+    expect(cached.viewUrl).toBe(cachedPhoto.imagorViewUrl + '?format=avif');
+    expect(waiting.previewUrl).toBe(imagorUrls(row)!.small);
+    expect(waiting.deliverySource).toBe('imagor');
+    expect(cached.imageUrl).toBe(row.imageUrl);
+    expect(cached.imagorSignature).toBeUndefined();
+  });
+  it('falls back to the original URL for permanent JPEG failures when no watermark is required', () => {
+    const failed: any = withDelivery({
+      ...row, imagorStatus: 'failed', imagorRecoveryFailedSource: row.imageUrl,
+      imagorLastError: 'small: imagor returned HTTP 406: VipsJpeg: premature end of JPEG image',
+    }, true);
+    expect(failed.previewUrl).toBe(row.imageUrl);
+    expect(failed.thumbnailUrl).toBe(row.imageUrl);
+    expect(failed.viewUrl).toBe(row.imageUrl);
+    expect(failed.deliverySource).toBe('original');
+    expect(failed.processingStatus).toBe('failed');
+  });
+  it('keeps transient failed originals refreshable while displaying their source URL', () => {
+    const failed: any = withDelivery({
+      ...row, imagorStatus: 'failed', imagorLastError: 'imagor returned HTTP 503: temporarily unavailable',
+    }, true);
+    expect(failed.previewUrl).toBe(row.imageUrl);
+    expect(failed.deliverySource).toBe('imagor');
+  });
+  it('uses originals for failed free photos even when a visual watermark is configured', () => {
+    const branding = { watermarkUrl: 'https://originals.example.test/watermark.png', watermarkOpacity: 0.7 };
+    const failed: any = withDelivery({ ...row, imagorStatus: 'failed' }, true, branding);
+    expect(failed.previewUrl).toBe(row.imageUrl);
+    expect(failed.watermarkApplied).toBe(false);
+    expect(failed.deliverySource).toBe('imagor');
+  });
+  it('keeps original fallback during a retry and for unsupported transforms', () => {
+    for (const status of ['pending', 'processing', 'unsupported']) {
+      const result: any = withDelivery({ ...row, imagorStatus: status, imagorLastError: 'Result Storage verification failed' }, true);
+      expect(result.previewUrl).toBe(row.imageUrl);
+      expect(result.viewUrl).toBe(row.imageUrl);
+    }
+    const unsupported: any = withDelivery({ ...row, imagorStatus: 'unsupported' }, true, { watermarkUrl: 'https://invalid.example.test/watermark.png' });
+    expect(unsupported.previewUrl).toBe(row.imageUrl);
+  });
+  it('does not replace purchase-protected or video previews with originals', () => {
+    for (const protection of [{ purchaseRequired: true }, { mediaType: 'video' }]) {
+      const protectedRow = { ...row, ...protection, imagorStatus: 'failed', previewUrl: 'https://protected.example.test/preview.jpg' };
+      expect((withDelivery(protectedRow, true) as any).previewUrl).toBe(protectedRow.previewUrl);
+    }
+  });
+  it('signs only the deterministic recovery input for a matching source and retains the original download', () => {
+    const key = recoveryKeyForPhoto(row)!;
+    expect(key).toMatch(/^__airpix_imagor_recovery\/v1\/[a-f0-9]{64}\.jpg$/);
+    const recovered = { ...row, imagorRecoverySource: row.imageUrl };
+    const branding = { watermarkUrl: 'https://originals.example.test/watermark.png' };
+    const urls = imagorUrls(recovered, branding)!;
+    expect(urls.small).toContain('/piuphoto/' + key);
+    expect(urls.small).toContain('watermark(');
+    expect((withDelivery(recovered, true, branding) as any).imageUrl).toBe(row.imageUrl);
+    expect(imagorUrls({ ...row, imagorRecoverySource: 'other-source' })!.small).toContain('/piuphoto/a/photo.jpg');
+    expect(recoveryKeyForPhoto({ ...row, imageUrl: 'https://evil.test/photo.jpg' })).toBeUndefined();
   });
   it('returns verified direct R2 previews per transfer without replacing the original', () => {
     const pending: any = withDelivery(row, true);
@@ -105,6 +157,33 @@ describe('Imagor worker protocol', () => {
     expect(job!.imageId).toMatch(/^[a-f0-9]{24}~[a-f0-9-]{36}$/);
     expect(job!.urls).toEqual({ small: imagorUrls(row)!.small, view: imagorUrls(row)!.view });
     expect(updateOne.mock.calls[0][0].imageUrl).toBe(row.imageUrl);
+    const failedBranch = findOneAndUpdate.mock.calls[0][0].$or.find((branch: any) => branch.imagorStatus === 'failed');
+    expect(failedBranch.imagorLastError.$not).toBeInstanceOf(RegExp);
+    expect(failedBranch.imagorLastError.$not.test('small: imagor returned HTTP 406: VipsJpeg: premature end of JPEG image')).toBe(true);
+  });
+  it('recovers a failed JPEG once, then sends the worker signed recovery transforms', async () => {
+    const photo = { ...row, imagorStatus: 'processing', imagorLastError: 'small: imagor returned HTTP 406: VipsJpeg: premature end of JPEG image' };
+    const findOneAndUpdate = jest.fn().mockReturnValue({ lean: async () => photo });
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+    const recoverImagorJpeg = jest.fn().mockResolvedValue(undefined);
+    const service = new ImagorCacheService({ findOneAndUpdate, updateOne } as any, { recoverImagorJpeg } as any);
+    const job = await service.claim();
+    expect(recoverImagorJpeg).toHaveBeenCalledWith(row.imageUrl, recoveryKeyForPhoto(row));
+    expect(job!.urls.small).toContain('/piuphoto/' + recoveryKeyForPhoto(row));
+    expect(updateOne.mock.calls[0][1].$set.imagorRecoverySource).toBe(row.imageUrl);
+    expect(updateOne.mock.calls[1][1].$set.imagorSource).toBe(row.imageUrl);
+    expect(updateOne.mock.calls[1][1].$set.imagorSignature).toBe(job!.urls.small + '|' + job!.urls.view);
+  });
+  it('records an unsuccessful recovery without looping or overwriting the original', async () => {
+    const photo = { ...row, imagorStatus: 'processing', imagorLastError: 'VipsJpeg: Corrupt JPEG data' };
+    const findOneAndUpdate = jest.fn().mockReturnValue({ lean: async () => photo });
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+    const service = new ImagorCacheService({ findOneAndUpdate, updateOne } as any, {
+      recoverImagorJpeg: jest.fn().mockRejectedValue(new Error('decoder rejected image')),
+    } as any);
+    await expect(service.claim()).resolves.toBeNull();
+    expect(updateOne.mock.calls[0][1].$set).toMatchObject({ imagorStatus: 'failed', imagorRecoveryFailedSource: row.imageUrl, imagorLastError: 'JPEG recovery failed: decoder rejected image' });
+    expect(updateOne.mock.calls[0][1].$unset.imagorLease).toBe(1);
   });
   it('only marks a matching lease and verified result keys ready', async () => {
     const urls = imagorUrls(row)!;
@@ -120,6 +199,30 @@ describe('Imagor worker protocol', () => {
     expect(updateOne.mock.calls[1][1].$set.imagorStatus).toBe('failed');
     expect(updateOne.mock.calls[1][1].$set.imagorLastError).toContain('Result Storage verification failed');
   });
+  it('publishes individual cache completion and failure updates only to the matching event', async () => {
+    const urls = imagorUrls(row)!;
+    const token = '12345678-1234-1234-1234-123456789abc';
+    const photo = { ...row, imagorLease: token, imagorSource: row.imageUrl, imagorConfig: deliveryConfigVersion(), imagorSignature: urls.small + '|' + urls.view };
+    const updateOne = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    const service = new ImagorCacheService({ findOne: jest.fn().mockReturnValue({ lean: async () => photo }), updateOne } as any);
+    const own = jest.fn();
+    const other = jest.fn();
+    const a = service.streamUpdates(String(eventId)).subscribe(own);
+    const b = service.streamUpdates(String(new Types.ObjectId())).subscribe(other);
+    try {
+      const keys = { small: digestKey(urls.small), view: digestKey(urls.view) };
+      const result = { small: 'https://result.example.test/' + keys.small, view: 'https://result.example.test/' + keys.view };
+      await service.complete(String(row._id) + '~' + token, { success: true, keys, urls: result });
+      expect(own).toHaveBeenCalledTimes(1);
+      expect(own).toHaveBeenCalledWith({ type: 'gallery', data: { type: 'image_delivery_changed', eventId: String(eventId) } });
+      await service.complete(String(row._id) + '~' + token, { success: false, error: 'Result Storage verification failed' });
+      expect(own).toHaveBeenCalledTimes(2);
+      expect(other).not.toHaveBeenCalled();
+    } finally {
+      a.unsubscribe();
+      b.unsubscribe();
+    }
+  });
   it('persists the worker failure reason for admin diagnostics', async () => {
     const urls = imagorUrls(row)!;
     const token = '12345678-1234-1234-1234-123456789abc';
@@ -129,6 +232,20 @@ describe('Imagor worker protocol', () => {
     const error = 'imagor returned HTTP 403: AccessDenied';
     await expect(service.complete(String(row._id) + '~' + token, { success: false, error })).resolves.toMatchObject({ accepted: true, ready: false });
     expect(updateOne.mock.calls[0][1].$set.imagorLastError).toBe(error);
+  });
+  it('does not repeatedly retry permanent corrupt-JPEG 406 failures', async () => {
+    const urls = imagorUrls(row)!;
+    const token = '12345678-1234-1234-1234-123456789abc';
+    const photo = { ...row, imagorLease: token, imagorSource: row.imageUrl, imagorConfig: deliveryConfigVersion(), imagorSignature: urls.small + '|' + urls.view };
+    const updateOne = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    const service = new ImagorCacheService({ findOne: jest.fn().mockReturnValue({ lean: async () => photo }), updateOne } as any);
+    const error = 'small: imagor returned HTTP 406: {\"message\":\"VipsJpeg: premature end of JPEG image\"}';
+    await expect(service.complete(String(row._id) + '~' + token, { success: false, error })).resolves.toMatchObject({ accepted: true, ready: false });
+    const update = updateOne.mock.calls[0][1];
+    expect(update.$set.imagorStatus).toBe('failed');
+    expect(update.$set.imagorLastError).toBe(error);
+    expect(update.$set.imagorNextAt).toBeUndefined();
+    expect(update.$unset.imagorNextAt).toBe(1);
   });
   it('requeues all eligible event photos and returns cache progress', async () => {
     const failureQuery: any = {};
@@ -147,6 +264,7 @@ describe('Imagor worker protocol', () => {
     expect(updateMany).toHaveBeenCalledTimes(1);
     expect(result.queued).toBe(90);
     expect(result.status).toMatchObject({ eligiblePhotos: 90, ready: 0, remaining: 90, progressPercent: 0 });
-    expect(updateMany.mock.calls[0][1].$unset.imagorLastError).toBe(1);
+    expect(updateMany.mock.calls[0][1].$unset.imagorLastError).toBeUndefined();
+    expect(updateMany.mock.calls[0][1].$unset.imagorRecoveryFailedSource).toBe(1);
   });
 });

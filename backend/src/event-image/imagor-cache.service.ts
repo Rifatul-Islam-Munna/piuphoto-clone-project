@@ -1,14 +1,30 @@
-import { Body, Controller, Headers, HttpException, Injectable, Param, Post, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Headers, HttpException, Injectable, MessageEvent, Optional, Param, Post, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import { Model, Types } from 'mongoose';
+import { filter, map, Subject } from 'rxjs';
 import { EventImage, EventImageDocument } from './entities/event-image.entity';
-import { deliveryConfigVersion, digestKey, eligiblePhotoFilter, imagorEnabled, imagorUrls, loadDeliveryBranding } from './image-delivery';
+import { deliveryConfigVersion, digestKey, eligiblePhotoFilter, imagorEnabled, imagorUrls, loadDeliveryBranding, recoveryKeyForPhoto } from './image-delivery';
+import { MinioService } from '../lib/minio.service';
 
 const LEASE = 15 * 60_000;
+const JPEG_DECODE_ERROR = /VipsJpeg:\s*(?:premature end|Corrupt JPEG data)/i;
 @Injectable()
 export class ImagorCacheService {
-  constructor(@InjectModel(EventImage.name) private readonly photos: Model<EventImageDocument>) {}
+  private readonly deliveryUpdates = new Subject<{ eventId: string }>();
+
+  streamUpdates(eventId: string) {
+    return this.deliveryUpdates.pipe(
+      filter(update => update.eventId === eventId),
+      map(update => ({ type: 'gallery', data: { type: 'image_delivery_changed', eventId: update.eventId } }) as MessageEvent),
+    );
+  }
+
+  private notifyDelivery(eventId: unknown) {
+    this.deliveryUpdates.next({ eventId: String(eventId) });
+  }
+  constructor(@InjectModel(EventImage.name) private readonly photos: Model<EventImageDocument>,
+    @Optional() private readonly storage?: MinioService) {}
   private get cleanup() { return this.photos.db.collection('imagor_cache_cleanup'); }
   private claimId(id: unknown, token: string) { return String(id) + '~' + token; }
   private split(id: string) {
@@ -61,8 +77,9 @@ export class ImagorCacheService {
     if (!imagorEnabled()) return { enabled: false, queued: 0, status: await this.getEventStatus(eventId) };
     const result = await this.photos.updateMany(
       { eventId: new Types.ObjectId(eventId), ...eligiblePhotoFilter() },
-      { $set: { imagorStatus: 'pending' }, $unset: { imagorLease: 1, imagorNextAt: 1, imagorAttempts: 1, imagorLastError: 1 } },
+      { $set: { imagorStatus: 'pending' }, $unset: { imagorLease: 1, imagorNextAt: 1, imagorAttempts: 1, imagorRecoveryFailedSource: 1 } },
     );
+    if (result.modifiedCount) this.notifyDelivery(eventId);
     return { enabled: true, queued: Number(result.matchedCount ?? result.modifiedCount ?? 0), status: await this.getEventStatus(eventId) };
   }
 
@@ -77,15 +94,46 @@ export class ImagorCacheService {
         { imagorStatus: { $exists: false } },
         { imagorStatus: 'pending' },
         { imagorStatus: 'unsupported', imagorConfig: { $ne: configVersion } },
-        { imagorStatus: { $in: ['failed', 'processing'] }, imagorNextAt: { $lte: now } },
+        { imagorStatus: 'failed', imagorNextAt: { $lte: now }, imagorLastError: { $not: /(?:HTTP 406|VipsJpeg:)/i } },
+        // Old and newly reported JPEG decode failures get one independent decoder
+        // attempt per source. Other 406 errors do not enter JPEG recovery.
+        { imagorStatus: 'failed', imagorLastError: JPEG_DECODE_ERROR,
+          $expr: { $and: [
+            { $ne: [{ $ifNull: ['$imagorRecoverySource', ''] }, '$imageUrl'] },
+            { $ne: [{ $ifNull: ['$imagorRecoveryFailedSource', ''] }, '$imageUrl'] },
+          ] } },
+        { imagorStatus: 'processing', imagorNextAt: { $lte: now } },
         { imagorStatus: 'ready', $or: [{ $expr: { $ne: ['$imagorSource', '$imageUrl'] } }, { imagorConfig: { $ne: configVersion } }, { imagorSmallUrl: { $in: [null, ''] } }, { imagorViewUrl: { $in: [null, ''] } }] },
       ],
     }, {
       $set: { imagorStatus: 'processing', imagorLease: token, imagorNextAt: new Date(+now + LEASE) },
       $inc: { imagorAttempts: 1 },
-      $unset: { imagorLastError: 1 },
     }, { new: true, sort: { createdAt: 1 } }).lean();
     if (!row) return null;
+    const leaseFilter = { _id: row._id, imagorLease: token, eventId: row.eventId, imageUrl: row.imageUrl };
+    if (JPEG_DECODE_ERROR.test(row.imagorLastError || '') && row.imagorRecoverySource !== row.imageUrl &&
+        row.imagorRecoveryFailedSource !== row.imageUrl) {
+      const recoveryKey = recoveryKeyForPhoto(row);
+      try {
+        if (!recoveryKey || !this.storage) throw new Error('JPEG recovery source or storage is unavailable');
+        await this.storage.recoverImagorJpeg(row.imageUrl, recoveryKey);
+        const saved = await this.photos.updateOne(leaseFilter, {
+          $set: { imagorRecoverySource: row.imageUrl },
+          $unset: { imagorRecoveryFailedSource: 1 },
+        });
+        if (!saved.matchedCount) return null;
+        row.imagorRecoverySource = row.imageUrl;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Unknown recovery error';
+        await this.photos.updateOne(leaseFilter, {
+          $set: { imagorStatus: 'failed', imagorRecoveryFailedSource: row.imageUrl,
+            imagorLastError: ('JPEG recovery failed: ' + reason).slice(0, 500) },
+          $unset: { imagorLease: 1, imagorNextAt: 1 },
+        });
+        this.notifyDelivery(row.eventId);
+        return null;
+      }
+    }
     const branding = await loadDeliveryBranding(this.photos, String(row.eventId));
     const urls = imagorUrls(row, branding);
     if (!urls) {
@@ -93,6 +141,7 @@ export class ImagorCacheService {
         $set: { imagorStatus: 'unsupported', imagorConfig: configVersion, imagorLastError: 'Image source or watermark configuration is not supported by the current Imagor delivery rules' },
         $unset: { imagorLease: 1, imagorNextAt: 1 },
       });
+      this.notifyDelivery(row.eventId);
       return null;
     }
     const updated = await this.photos.updateOne({ _id: row._id, imagorLease: token, eventId: row.eventId, imageUrl: row.imageUrl }, {
@@ -133,10 +182,17 @@ export class ImagorCacheService {
       const errorMessage = workerError || (body?.success === true
         ? 'Result Storage verification failed: returned keys or public URLs did not match the signed transforms'
         : 'Imagor worker reported a failed transformation without an error message');
-      await this.photos.updateOne(filter, {
-        $set: { imagorStatus: 'failed', imagorNextAt: new Date(Date.now() + delay), imagorLastError: errorMessage },
-        $unset: { imagorLease: 1 },
-      });
+      // A 406 from libvips for a malformed/truncated JPEG is deterministic.
+      // Do not spend worker cycles retrying it every hour; admin re-cache can
+      // explicitly retry after the source object has been replaced.
+      const permanentFailure = /\bHTTP\s+406\b/i.test(errorMessage) ||
+        /VipsJpeg:\s*(?:premature end|Corrupt JPEG data)/i.test(errorMessage);
+      const failureSet: Record<string, unknown> = { imagorStatus: 'failed', imagorLastError: errorMessage };
+      const failureUnset: Record<string, number> = { imagorLease: 1 };
+      if (permanentFailure) failureUnset.imagorNextAt = 1;
+      else failureSet.imagorNextAt = new Date(Date.now() + delay);
+      const failed = await this.photos.updateOne(filter, { $set: failureSet, $unset: failureUnset });
+      if (failed.modifiedCount) this.notifyDelivery(row.eventId);
       return { accepted: true, ready: false };
     }
     const result = await this.photos.updateOne({ ...filter, eventId: row.eventId, imageUrl: row.imageUrl }, {
@@ -144,6 +200,7 @@ export class ImagorCacheService {
       $unset: { imagorLease: 1, imagorNextAt: 1, imagorAttempts: 1, imagorLastError: 1 },
       $addToSet: { imagorTransformUrls: { $each: Object.values(urls) } },
     });
+    if (result.modifiedCount) this.notifyDelivery(row.eventId);
     return { accepted: true, ready: !!result.modifiedCount };
   }
 
@@ -152,10 +209,11 @@ export class ImagorCacheService {
     if (await this.photos.exists({ imageUrl: row.imageUrl })) return;
     const branding = await loadDeliveryBranding(this.photos, String(row.eventId));
     const urls = [...new Set([...Object.values(imagorUrls(row, branding) || {}), ...(row.imagorTransformUrls || [])])];
-    if (!urls.length) return;
+    const recoveryKey = recoveryKeyForPhoto(row);
+    if (!urls.length && !recoveryKey) return;
     await this.cleanup.updateOne({ imageId: String(row._id), source: row.imageUrl }, {
       $setOnInsert: { imageId: String(row._id), collectionId: String(row.eventId), source: row.imageUrl,
-        transformUrls: urls, nextAt: new Date(Date.now() + LEASE), attempts: 0 },
+        transformUrls: urls, ...(recoveryKey ? { recoveryKey } : {}), nextAt: new Date(Date.now() + LEASE), attempts: 0 },
     }, { upsert: true });
   }
 
@@ -178,8 +236,21 @@ export class ImagorCacheService {
     const filter = this.split(id);
     if (!filter) return { accepted: false };
     const query = { _id: filter._id, token: filter.imagorLease };
-    if (body?.success === true) await this.cleanup.deleteOne(query);
-    else await this.cleanup.updateOne(query, { $set: { nextAt: new Date(Date.now() + 60_000) }, $unset: { token: 1 } });
+    if (body?.success === true) {
+      const job = await this.cleanup.findOne(query);
+      if (job?.recoveryKey && !(await this.photos.exists({ imageUrl: job.source }))) {
+        try {
+          if (!this.storage || recoveryKeyForPhoto({ imageUrl: job.source }) !== job.recoveryKey) {
+            throw new Error('Recovery cleanup storage or key unavailable');
+          }
+          await this.storage.deleteService(job.recoveryKey);
+        } catch {
+          await this.cleanup.updateOne(query, { $set: { nextAt: new Date(Date.now() + 60_000) }, $unset: { token: 1 } });
+          return { accepted: true };
+        }
+      }
+      await this.cleanup.deleteOne(query);
+    } else await this.cleanup.updateOne(query, { $set: { nextAt: new Date(Date.now() + 60_000) }, $unset: { token: 1 } });
     return { accepted: true };
   }
 }

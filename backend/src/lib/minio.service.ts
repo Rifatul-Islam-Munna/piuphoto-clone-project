@@ -23,6 +23,7 @@ import { stat } from 'fs/promises';
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { extname } from 'path';
 import { Readable } from 'stream';
+import { MAX_RECOVERY_BYTES, normalizeJpeg } from './jpeg-recovery';
 import { MAX_UPLOAD_SIZE, PresignUploadDto } from '../image/dto/presign-upload.dto';
 
 @Injectable()
@@ -214,6 +215,36 @@ export class MinioService implements OnModuleInit, OnModuleDestroy {
       throw new HttpException('Storage photo is unavailable', HttpStatus.NOT_FOUND);
     }
     return response.Body as Readable;
+  }
+
+  /** Recover only a deterministic AirPix preview input; never overwrite an original. */
+  async recoverImagorJpeg(fileUrl: string, recoveryKey: string) {
+    if (!/^__airpix_imagor_recovery\/v1\/[a-f0-9]{64}\.jpg$/.test(recoveryKey)) {
+      throw new Error('Invalid JPEG recovery destination');
+    }
+    const signal = AbortSignal.timeout(65_000);
+    const body = await this.openStoredUrl(fileUrl, signal);
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    try {
+      for await (const chunk of body) {
+        const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        bytes += part.length;
+        if (bytes > MAX_RECOVERY_BYTES) throw new Error('JPEG recovery input exceeds the 64 MiB limit');
+        chunks.push(part);
+      }
+    } finally {
+      body.destroy();
+    }
+    const normalized = await normalizeJpeg(Buffer.concat(chunks, bytes));
+    signal.throwIfAborted();
+    await this.s3.send(new PutObjectCommand({
+      Bucket: this.bucketName,
+      Key: recoveryKey,
+      Body: normalized,
+      ContentType: 'image/jpeg',
+      ContentLength: normalized.length,
+    }), { abortSignal: signal });
   }
 
   async presignUpload(file: PresignUploadDto, requestOrigin?: string) {

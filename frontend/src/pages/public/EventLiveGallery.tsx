@@ -91,6 +91,7 @@ import {
 } from "@/lib/gallery-folder-download";
 import { shouldGateGalleryForFace } from "@/lib/gallery-face-options";
 import { PhotoMasonry } from "@/components/gallery/PhotoMasonry";
+import { ProgressiveGalleryImage } from "@/components/gallery/ProgressiveGalleryImage";
 
 type Branding = {
   logoUrl?: string;
@@ -348,7 +349,7 @@ export default function EventLiveGallery() {
     return data;
   }, [commonParams, eventId]);
 
-  const loadPublic = useCallback(async () => {
+  const loadPublic = useCallback(async (refreshAlbums = true) => {
     if (!eventId) return;
     const [data, error] = await GetRequestAxios<GalleryImageResponse>(
       `/eventImage/public?${commonParams().toString()}`,
@@ -359,7 +360,7 @@ export default function EventLiveGallery() {
       setStoreEnabled(Boolean(data?.storeEnabled));
       setFaceMatches(false);
     }
-    if (!albumId) {
+    if (refreshAlbums && !albumId) {
       const albumQuery = new URLSearchParams({ eventId });
       if (accessToken) albumQuery.set("accessToken", accessToken);
       const [albumData] = await GetRequestAxios<{ data?: Album[] }>(
@@ -440,12 +441,45 @@ export default function EventLiveGallery() {
     const source = new EventSource(
       `${baseUrl}/eventImage/public/stream?${commonParams().toString()}`,
     );
-    const sync = () => void loadPublic();
-    source.addEventListener("gallery", sync);
-    const fallback = window.setInterval(sync, 15000);
+    let closed = false;
+    let inFlight = false;
+    let queued = false;
+    let refreshTimer: number | undefined;
+    let refreshAlbums = false;
+    const sync = () => {
+      if (closed) return;
+      queued = true;
+      if (inFlight || refreshTimer !== undefined) return;
+      refreshTimer = window.setTimeout(async () => {
+        refreshTimer = undefined;
+        if (closed) return;
+        inFlight = true;
+        queued = false;
+        const includeAlbums = refreshAlbums;
+        refreshAlbums = false;
+        try {
+          await loadPublic(includeAlbums);
+        } finally {
+          inFlight = false;
+          if (queued && !closed) sync();
+        }
+      }, 300);
+    };
+    const onGallery = (event: MessageEvent) => {
+      try {
+        if (JSON.parse(event.data)?.type !== "image_delivery_changed") refreshAlbums = true;
+      } catch {
+        refreshAlbums = true;
+      }
+      sync();
+    };
+    source.addEventListener("gallery", onGallery);
+    const fallback = window.setInterval(() => { refreshAlbums = true; sync(); }, 15000);
     return () => {
+      closed = true;
       source.close();
       window.clearInterval(fallback);
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
     };
   }, [commonParams, eventId, guestToken, info?.unlocked, loadPublic]);
 
@@ -1782,13 +1816,12 @@ export default function EventLiveGallery() {
                           track("image_view", id);
                         }}
                       >
-                        <img
+                        <ProgressiveGalleryImage
                           src={assetUrl(image.previewUrl || image.imageUrl)}
-                          onError={(event) => { const fallback = assetUrl(image.imageUrl); if (!image.watermarkApplied && fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
+                          placeholderSrc={assetUrl(image.thumbnailUrl)}
+                          fallbackSrc={!image.purchaseRequired ? assetUrl(image.imageUrl) : undefined}
                           alt={`Event photo ${index + 1}`}
-                          loading="lazy"
-                          decoding="async"
-                          className="block h-auto w-full transition-transform duration-300 group-hover:scale-[1.015]"
+                          className="block h-auto w-full group-hover:scale-[1.015]"
                         />
                       </button>
                     )
@@ -2083,11 +2116,11 @@ export default function EventLiveGallery() {
                         className="overflow-hidden rounded-xl border bg-card"
                       >
                         <div className="aspect-square bg-muted">
-                          <img
+                          <ProgressiveGalleryImage
                             src={assetUrl(image.thumbnailUrl || image.previewUrl || image.imageUrl)}
-                            onError={(event) => { const fallback = assetUrl(image.imageUrl); if (!image.watermarkApplied && fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
+                            fallbackSrc={!image.purchaseRequired ? assetUrl(image.imageUrl) : undefined}
                             alt={`Event photo ${index + 1}`}
-                            loading="lazy"
+                            containerClassName="h-full w-full"
                             className="h-full w-full object-cover"
                           />
                         </div>
@@ -2518,11 +2551,14 @@ function GalleryLightbox({
           className="max-h-screen max-w-full"
         />
       ) : (
-        <img
+        <ProgressiveGalleryImage
           src={imageUrl}
-          onError={(event) => { const fallback = assetUrl(image.imageUrl); if (!image.watermarkApplied && fallback && event.currentTarget.getAttribute("src") !== fallback) event.currentTarget.src = fallback; }}
+          placeholderSrc={assetUrl(image.previewUrl || image.thumbnailUrl)}
+          fallbackSrc={!image.purchaseRequired ? assetUrl(image.imageUrl) : undefined}
           alt={`Event photo ${position}`}
-          className="max-h-screen max-w-full object-contain"
+          loading="eager"
+          containerClassName="min-w-0 max-h-screen max-w-full !bg-transparent"
+          className="block max-h-screen max-w-full object-contain"
         />
       )}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-xs backdrop-blur">

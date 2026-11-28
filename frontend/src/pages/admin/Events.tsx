@@ -503,7 +503,7 @@ export default function Events() {
                       </div>
                     </div>
                   ) : null}
-                  <p className="text-xs text-muted-foreground">{cacheStatus.galleryReady ? "All cacheable photos are processed. Check Unsupported for photos excluded from R2 caching." : `${cacheStatus.remaining} eligible photos are still preventing the gallery-wide switch to R2.`}</p>
+                  <p className="text-xs text-muted-foreground">{cacheStatus.galleryReady ? "All cacheable photos are processed. Check Unsupported for photos excluded from R2 caching." : `${cacheStatus.remaining} photos are not cached yet. Ready photos already use direct R2; failed free photos use their original URLs.`}</p>
                 </>
               ) : null}
             </div>

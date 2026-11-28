@@ -141,7 +141,9 @@ export class EventImageService {
           }) as MessageEvent,
       ),
     );
-    return merge(updates, heartbeat);
+    return this.imagorCache
+      ? merge(updates, heartbeat, this.imagorCache.streamUpdates(eventId))
+      : merge(updates, heartbeat);
   }
 
   private toObjectId(id: string) {
@@ -1524,7 +1526,7 @@ export class EventImageService {
       eventId: this.toObjectId(eventId),
       _id: { $in: requested.map(id => this.toObjectId(id)) },
       ...(allowed ? { albumId: { $in: allowed.map(id => this.toObjectId(id)) } } : {}),
-    }).select('_id imageUrl mediaType isEnhanced enhancementStatus imagorStatus imagorConfig imagorSource imagorSignature imagorSmallUrl imagorViewUrl').lean();
+    }).select('_id imageUrl mediaType isEnhanced enhancementStatus imagorStatus imagorConfig imagorSource imagorSignature imagorSmallUrl imagorViewUrl imagorLastError imagorRecoverySource imagorRecoveryFailedSource').lean();
     return { data: rows.map(row => {
       const delivery = withDelivery(row, true, event.branding) as typeof row & { previewUrl?: string; deliverySource?: string };
       return {

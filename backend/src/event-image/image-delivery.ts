@@ -63,6 +63,13 @@ export function sourceKey(imageUrl: string): string | undefined {
   } catch { return; }
 }
 
+// A recovered source is a separate, deterministic preview input, not the original.
+export function recoveryKeyForPhoto(photo: Photo): string | undefined {
+  const key = sourceKey(photo.imageUrl);
+  if (!key || !/\.jpe?g$/i.test(key)) return;
+  return '__airpix_imagor_recovery/v1/' + createHash('sha256').update(photo.imageUrl).digest('hex') + '.jpg';
+}
+
 function number(name: string, fallback: number, min: number, max: number) {
   const raw = setting(name);
   const value = raw ? Number(raw) : fallback;
@@ -130,8 +137,9 @@ export function deliveryEventId(photo: Photo | null | undefined) {
 // resizing, watermark composition and compression directly from R2.
 function signedVariant(photo: Photo, w: number, h: number, quality: number, filters: string[]) {
   if (!imagorEnabled() || photo.mediaType === 'video' || photo.purchaseRequired) return;
-  const key = sourceKey(photo.imageUrl);
-  if (!key) return;
+  const originalKey = sourceKey(photo.imageUrl);
+  if (!originalKey) return;
+  const key = (photo.imagorRecoverySource === photo.imageUrl && recoveryKeyForPhoto(photo)) || originalKey;
   const source = ['piuphoto', ...key.split('/')].map(encodeURIComponent).join('/');
   const signer = setting('IMAGOR_SIGNER_TYPE') || 'sha256';
   if (!['sha1', 'sha256', 'sha512'].includes(signer)) return;
@@ -216,16 +224,6 @@ export function currentCache(photo: Photo, urls: NonNullable<ReturnType<typeof i
     !!photo.imagorSmallUrl && !!photo.imagorViewUrl;
 }
 
-export const pendingCacheFilter = (): Record<string, any> => ({
-  $and: [{ $or: [{ imagorStatus: { $ne: 'unsupported' } }, { imagorConfig: { $ne: deliveryConfigVersion() } }] }, { $or: [
-    { imagorStatus: { $ne: 'ready' } },
-    { imagorConfig: { $ne: deliveryConfigVersion() } },
-    { $expr: { $ne: ['$imagorSource', '$imageUrl'] } },
-    { imagorSmallUrl: { $in: [null, ''] } },
-    { imagorViewUrl: { $in: [null, ''] } },
-  ] }],
-});
-
 export function withDelivery<T>(row: T, direct = false, branding?: WatermarkBranding | null): T {
   if (!row) return row;
   const photo = ((row as any).toObject ? (row as any).toObject() : { ...row }) as Photo;
@@ -233,43 +231,46 @@ export function withDelivery<T>(row: T, direct = false, branding?: WatermarkBran
   // Preserve the original document/identity for unoptimized legacy records.
   // Only create a new API object when adding or removing delivery fields.
   if (!urls && !Object.keys(photo).some(key => key.startsWith('imagor'))) return row;
-  if (urls) {
-    const ready = currentCache(photo, urls);
-    const cached = direct && ready;
+  const ready = !!urls && currentCache(photo, urls);
+  const cached = direct && ready;
+  // Prefer a usable original over a broken transform, including while a failed
+  // image is being retried. Store-protected previews and videos are untouched.
+  const failed = photo.imagorStatus === 'failed' || photo.imagorStatus === 'unsupported' ||
+    (['pending', 'processing'].includes(photo.imagorStatus) && !!photo.imagorLastError);
+  const originalFallback = imagorEnabled() && !cached && failed &&
+    photo.mediaType !== 'video' && !photo.purchaseRequired && !!photo.imageUrl;
+  if (cached || originalFallback || urls) {
     const mark = (url: string) => url + (url.includes('?') ? '&' : '?') + 'format=avif';
-    // The original URL is deliberately not replaced: ZIP, AI and purchase code
-    // still use it. The format marker also identifies extensionless AVIF on Flutter.
-    photo.thumbnailUrl = cached ? mark(photo.imagorSmallUrl) : urls.thumbnail;
-    photo.previewUrl = cached ? mark(photo.imagorSmallUrl) : urls.small;
-    photo.viewUrl = cached ? mark(photo.imagorViewUrl) : urls.view;
+    photo.thumbnailUrl = cached ? mark(photo.imagorSmallUrl) : originalFallback ? photo.imageUrl : urls!.thumbnail;
+    photo.previewUrl = cached ? mark(photo.imagorSmallUrl) : originalFallback ? photo.imageUrl : urls!.small;
+    photo.viewUrl = cached ? mark(photo.imagorViewUrl) : originalFallback ? photo.imageUrl : urls!.view;
     photo.processingStatus = ready ? 'ready' : photo.imagorStatus || 'pending';
-    photo.deliverySource = cached ? 'r2' : 'imagor';
-    photo.watermarkApplied = !!nativeWatermarkFilter(branding);
+    const error = String(photo.imagorLastError || '');
+    // Existing mobile clients use "imagor" to keep polling unfinished jobs,
+    // even when the displayed URL is temporarily the original.
+    const retrying = ['pending', 'processing'].includes(photo.imagorStatus) ||
+      (photo.imagorStatus === 'failed' && !/HTTP\s+406|VipsJpeg:|JPEG recovery failed:/i.test(error)) ||
+      (photo.imagorStatus === 'failed' && /VipsJpeg:\s*(?:premature end|Corrupt JPEG data)/i.test(error) &&
+        !!recoveryKeyForPhoto(photo) && photo.imagorRecoverySource !== photo.imageUrl &&
+        photo.imagorRecoveryFailedSource !== photo.imageUrl);
+    photo.deliverySource = cached ? 'r2' : originalFallback && !retrying ? 'original' : 'imagor';
+    // The original fallback never contains the server-rendered watermark;
+    // gallery clients can apply their existing visual overlay instead.
+    photo.watermarkApplied = !originalFallback && !!nativeWatermarkFilter(branding);
   }
   for (const key of Object.keys(photo)) if (key.startsWith('imagor')) delete photo[key];
   return photo as T;
 }
 
-export async function deliveryRows<T>(model: Model<EventImageDocument>, rows: T[], albumId?: string): Promise<T[]> {
+export async function deliveryRows<T>(model: Model<EventImageDocument>, rows: T[], _albumId?: string): Promise<T[]> {
   if (!imagorEnabled()) return rows.map(row => withDelivery(row));
-  const ids = [...new Set(rows.map(row => {
-    return deliveryEventId(row as Photo);
-  }).filter(id => Types.ObjectId.isValid(id)))];
+  const ids = [...new Set(rows.map(row => deliveryEventId(row as Photo))
+    .filter(id => Types.ObjectId.isValid(id)))];
   const brandings = await loadDeliveryBrandings(model, ids);
-  const pending = new Set<string>();
-  if (ids.length) {
-    // One query, not a per-photo lookup. A scoped album (or the whole event)
-    // switches together, even when this response only contains one page.
-    const result = await model.distinct('eventId', {
-      ...eligiblePhotoFilter(), eventId: { $in: ids.map(id => new Types.ObjectId(id)) },
-      ...(albumId && Types.ObjectId.isValid(albumId) ? { albumId: new Types.ObjectId(albumId) } : {}),
-      ...pendingCacheFilter(),
-    });
-    for (const id of result) pending.add(String(id));
-  }
+  // Cache readiness is per photo, not per event/album. A single damaged source
+  // must never keep already-verified R2 derivatives on the Imagor delivery URL.
   return rows.map(row => {
-    const p = row as Photo;
-    const id = String(p?.eventId?._id || p?.eventId || '');
-    return withDelivery(row, !!id && !pending.has(id), brandings.get(id));
+    const id = deliveryEventId(row as Photo);
+    return withDelivery(row, true, brandings.get(id));
   });
 }

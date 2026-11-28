@@ -21,6 +21,8 @@ export class EventImage {
   @Prop({ type: Date }) imagorNextAt?: Date;
   @Prop({ type: Number }) imagorAttempts?: number;
   @Prop({ type: String }) imagorLastError?: string;
+  @Prop({ type: String }) imagorRecoverySource?: string;
+  @Prop({ type: String }) imagorRecoveryFailedSource?: string;
   @Prop({ type: String }) imagorSmallUrl?: string;
   @Prop({ type: String }) imagorViewUrl?: string;
   @Prop({ type: [String], default: undefined }) imagorTransformUrls?: string[];
