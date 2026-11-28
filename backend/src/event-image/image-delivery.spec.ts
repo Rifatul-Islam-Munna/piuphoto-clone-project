@@ -118,5 +118,35 @@ describe('Imagor worker protocol', () => {
     expect(updateOne.mock.calls[0][1].$set.imagorStatus).toBe('ready');
     await expect(service.complete(String(row._id) + '~' + token, { success: true, keys, urls: { ...result, small: 'https://evil.test/' + keys.small } })).resolves.toMatchObject({ ready: false });
     expect(updateOne.mock.calls[1][1].$set.imagorStatus).toBe('failed');
+    expect(updateOne.mock.calls[1][1].$set.imagorLastError).toContain('Result Storage verification failed');
+  });
+  it('persists the worker failure reason for admin diagnostics', async () => {
+    const urls = imagorUrls(row)!;
+    const token = '12345678-1234-1234-1234-123456789abc';
+    const photo = { ...row, imagorLease: token, imagorSource: row.imageUrl, imagorConfig: deliveryConfigVersion(), imagorSignature: urls.small + '|' + urls.view };
+    const updateOne = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    const service = new ImagorCacheService({ findOne: jest.fn().mockReturnValue({ lean: async () => photo }), updateOne } as any);
+    const error = 'imagor returned HTTP 403: AccessDenied';
+    await expect(service.complete(String(row._id) + '~' + token, { success: false, error })).resolves.toMatchObject({ accepted: true, ready: false });
+    expect(updateOne.mock.calls[0][1].$set.imagorLastError).toBe(error);
+  });
+  it('requeues all eligible event photos and returns cache progress', async () => {
+    const failureQuery: any = {};
+    failureQuery.select = () => failureQuery;
+    failureQuery.limit = () => failureQuery;
+    failureQuery.lean = async () => [];
+    const countDocuments = jest.fn()
+      .mockResolvedValueOnce(90)
+      .mockResolvedValueOnce(90)
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(0);
+    const updateMany = jest.fn().mockResolvedValue({ matchedCount: 90, modifiedCount: 90 });
+    const aggregate = jest.fn().mockReturnValue({ exec: async () => [{ _id: 'pending', count: 90 }] });
+    const service = new ImagorCacheService({ countDocuments, updateMany, aggregate, find: jest.fn().mockReturnValue(failureQuery) } as any);
+    const result = await service.recacheEvent(String(eventId));
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(result.queued).toBe(90);
+    expect(result.status).toMatchObject({ eligiblePhotos: 90, ready: 0, remaining: 90, progressPercent: 0 });
+    expect(updateMany.mock.calls[0][1].$unset.imagorLastError).toBe(1);
   });
 });

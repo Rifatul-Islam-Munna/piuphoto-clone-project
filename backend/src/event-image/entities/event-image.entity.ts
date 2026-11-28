@@ -20,6 +20,7 @@ export class EventImage {
   @Prop({ type: String }) imagorLease?: string;
   @Prop({ type: Date }) imagorNextAt?: Date;
   @Prop({ type: Number }) imagorAttempts?: number;
+  @Prop({ type: String }) imagorLastError?: string;
   @Prop({ type: String }) imagorSmallUrl?: string;
   @Prop({ type: String }) imagorViewUrl?: string;
   @Prop({ type: [String], default: undefined }) imagorTransformUrls?: string[];

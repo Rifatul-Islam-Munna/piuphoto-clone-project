@@ -1,7 +1,7 @@
 import { UploadFileAxios } from "@/lib/direct-upload";
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Calendar, ExternalLink, Eye, Loader2, MoreHorizontal, Plus, Trash2, Upload, X } from "lucide-react";
+import { Calendar, ExternalLink, Eye, Loader2, MoreHorizontal, Plus, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,7 +45,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import AdminLayout from "./AdminLayout";
-import { DeleteRequestAxios, PatchRequestAxios, PostRequestAxios } from "@/api-hooks/api-hooks";
+import { DeleteRequestAxios, GetRequestAxios, PatchRequestAxios, PostRequestAxios } from "@/api-hooks/api-hooks";
 import { useQueryWrapper } from "@/api-hooks/react-query-wrapper";
 
 type EventType = {
@@ -83,6 +83,26 @@ type UsersResponse = {
   data: UserOption[];
 };
 
+type EventCacheStatus = {
+  enabled: boolean;
+  eventId: string;
+  totalPhotos: number;
+  eligiblePhotos: number;
+  ready: number;
+  pending: number;
+  processing: number;
+  failed: number;
+  unsupported: number;
+  unprocessed: number;
+  staleReady: number;
+  remaining: number;
+  progressPercent: number;
+  galleryReady: boolean;
+  failureReasons: Array<{ message: string; count: number }>;
+};
+
+type EventRecacheResponse = { enabled: boolean; queued: number; status: EventCacheStatus };
+
 type EventFormData = {
   title: string;
   description: string;
@@ -105,6 +125,10 @@ export default function Events() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [cacheEvent, setCacheEvent] = useState<EventType | null>(null);
+  const [cacheStatus, setCacheStatus] = useState<EventCacheStatus | null>(null);
+  const [cacheStatusLoading, setCacheStatusLoading] = useState(false);
+  const [cacheStatusError, setCacheStatusError] = useState<string | null>(null);
 
   const eventsQuery = useQueryWrapper<EventsResponse>(
     ["admin-events", page],
@@ -120,6 +144,28 @@ export default function Events() {
 
   const refreshEvents = async () => {
     await queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+  };
+
+  const loadCacheStatus = async (eventId: string) => {
+    setCacheStatusLoading(true);
+    setCacheStatusError(null);
+    const [response, error] = await GetRequestAxios<EventCacheStatus>(
+      `/eventImage/admin/${eventId}/cache-status`,
+      { withToken: true, withCredentials: true, redirectOnUnauthorized: false },
+    );
+    setCacheStatusLoading(false);
+    if (error || !response) {
+      setCacheStatusError(error?.message || "Unable to load image cache status");
+      return null;
+    }
+    setCacheStatus(response);
+    return response;
+  };
+
+  const openCacheDialog = (event: EventType) => {
+    setCacheEvent(event);
+    setCacheStatus(null);
+    void loadCacheStatus(event._id);
   };
 
   const uploadImage = async (file: File) => {
@@ -225,6 +271,24 @@ export default function Events() {
     onSuccess: refreshEvents,
   });
 
+  const recacheEventMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const [response, error] = await PostRequestAxios<EventRecacheResponse>(
+        `/eventImage/admin/${id}/recache`,
+        {},
+        { withToken: true, withCredentials: true },
+      );
+      if (error || !response) throw new Error(error?.message || "Failed to queue image re-cache");
+      return response;
+    },
+    onSuccess: async (response, eventId) => {
+      if (!response.enabled) toast.error("Imagor caching is disabled in the backend configuration");
+      else toast.success(`Queued ${response.queued} eligible photos for re-caching`);
+      await loadCacheStatus(eventId);
+    },
+    onError: (error: Error) => toast.error(error.message || "Failed to queue image re-cache"),
+  });
+
   const handleImageSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -321,6 +385,10 @@ export default function Events() {
                                   Open event
                                 </a>
                               </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openCacheDialog(event)}>
+                                <RefreshCw className="mr-2 h-4 w-4" />
+                                Image cache / Re-cache
+                              </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => setViewEvent(event)}>
                                 <Eye className="mr-2 h-4 w-4" />
                                 View
@@ -372,6 +440,82 @@ export default function Events() {
             ) : null}
           </CardContent>
         </Card>
+
+        <Dialog
+          open={!!cacheEvent}
+          onOpenChange={(open) => {
+            if (!open && !recacheEventMutation.isPending) {
+              setCacheEvent(null);
+              setCacheStatus(null);
+              setCacheStatusError(null);
+            }
+          }}
+        >
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Image cache — {cacheEvent?.title}</DialogTitle>
+              <DialogDescription>Check Cloudflare R2 cache progress or queue every eligible photo for re-caching. Original uploads are not changed.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              {cacheStatusLoading ? (
+                <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading cache status...
+                </div>
+              ) : cacheStatusError ? (
+                <p className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{cacheStatusError}</p>
+              ) : cacheStatus ? (
+                <>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium">R2-ready photos</span>
+                    <span className="font-semibold tabular-nums">{cacheStatus.ready} / {cacheStatus.eligiblePhotos}</span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                    <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${cacheStatus.progressPercent}%` }} />
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { label: "Ready", value: cacheStatus.ready, color: "text-emerald-600" },
+                      { label: "Pending", value: cacheStatus.pending + cacheStatus.unprocessed, color: "text-muted-foreground" },
+                      { label: "Processing", value: cacheStatus.processing, color: "text-blue-600" },
+                      { label: "Failed", value: cacheStatus.failed, color: "text-destructive" },
+                      { label: "Unsupported", value: cacheStatus.unsupported, color: "text-amber-600" },
+                      { label: "Total photos", value: cacheStatus.totalPhotos, color: "text-foreground" },
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">{item.label}</p>
+                        <p className={`mt-1 text-lg font-semibold tabular-nums ${item.color}`}>{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {cacheStatus.eligiblePhotos === 0 ? (
+                    <p className="rounded-md bg-amber-500/10 p-3 text-sm text-amber-700">No photos match the backend Imagor source rules. Check the original image URLs and STORAGE_PUBLIC_URL before re-caching.</p>
+                  ) : null}
+                  {cacheStatus.failureReasons.length > 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Failure reasons</p>
+                      <div className="max-h-36 space-y-2 overflow-y-auto">
+                        {cacheStatus.failureReasons.map((reason) => (
+                          <div key={reason.message} className="flex items-start justify-between gap-3 rounded-md bg-muted/60 p-2 text-xs">
+                            <span className="break-words">{reason.message}</span>
+                            <Badge variant="secondary" className="shrink-0">{reason.count}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <p className="text-xs text-muted-foreground">{cacheStatus.galleryReady ? "All cacheable photos are processed. Check Unsupported for photos excluded from R2 caching." : `${cacheStatus.remaining} eligible photos are still preventing the gallery-wide switch to R2.`}</p>
+                </>
+              ) : null}
+            </div>
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button type="button" variant="outline" onClick={() => cacheEvent && void loadCacheStatus(cacheEvent._id)} disabled={!cacheEvent || cacheStatusLoading || recacheEventMutation.isPending}>Refresh status</Button>
+              <Button type="button" onClick={() => cacheEvent && recacheEventMutation.mutate(cacheEvent._id)} disabled={!cacheEvent || !cacheStatus?.enabled || !cacheStatus.eligiblePhotos || recacheEventMutation.isPending || cacheStatusLoading}>
+                {recacheEventMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                Re-cache images
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent>

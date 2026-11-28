@@ -6,6 +6,7 @@ import {
   Get,
   Patch,
   Post,
+  Param,
   Query,
   Req,
   Res,
@@ -69,6 +70,18 @@ const faceSearchUploadOptions = {
 @Controller('eventImage')
 export class EventImageController {
   constructor(private readonly eventImageService: EventImageService) {}
+
+  @Get('admin/:eventId/cache-status')
+  @UseGuards(AuthGuard)
+  cacheStatus(@Param('eventId') eventId: string, @Req() req: ExpressRequest) {
+    return this.eventImageService.getImagorCacheStatus(eventId, req.user?.id, req.user?.role);
+  }
+
+  @Post('admin/:eventId/recache')
+  @UseGuards(AuthGuard)
+  recache(@Param('eventId') eventId: string, @Req() req: ExpressRequest) {
+    return this.eventImageService.recacheEventImages(eventId, req.user?.id, req.user?.role);
+  }
 
   @Post()
   @UseGuards(AuthGuard, ThrottlerGuard)

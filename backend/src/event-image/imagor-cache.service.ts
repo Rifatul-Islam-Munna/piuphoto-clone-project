@@ -1,4 +1,4 @@
-import { Body, Controller, Headers, Injectable, Param, Post, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Headers, HttpException, Injectable, Param, Post, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import { Model, Types } from 'mongoose';
@@ -15,6 +15,55 @@ export class ImagorCacheService {
     const [photoId, token, extra] = id.split('~');
     return !extra && Types.ObjectId.isValid(photoId) && /^[a-f0-9-]{36}$/.test(token || '')
       ? { _id: new Types.ObjectId(photoId), imagorLease: token } : null;
+  }
+
+  async getEventStatus(eventId: string) {
+    if (!Types.ObjectId.isValid(eventId)) throw new HttpException('Invalid event id', 400);
+    const id = new Types.ObjectId(eventId);
+    const filter = { eventId: id, ...eligiblePhotoFilter() };
+    const configVersion = deliveryConfigVersion();
+    const [totalPhotos, eligiblePhotos, groups, ready, unsupported, failures] = await Promise.all([
+      this.photos.countDocuments({ eventId: id, mediaType: { $ne: 'video' } }),
+      this.photos.countDocuments(filter),
+      this.photos.aggregate([
+        { $match: filter },
+        { $group: { _id: { $ifNull: ['$imagorStatus', 'unprocessed'] }, count: { $sum: 1 } } },
+      ]).exec(),
+      this.photos.countDocuments({ ...filter, imagorStatus: 'ready', imagorConfig: configVersion,
+        imagorSignature: { $exists: true, $ne: '' }, imagorSmallUrl: { $nin: [null, ''] }, imagorViewUrl: { $nin: [null, ''] },
+        $expr: { $eq: ['$imagorSource', '$imageUrl'] } }),
+      this.photos.countDocuments({ ...filter, imagorStatus: 'unsupported', imagorConfig: configVersion }),
+      this.photos.find({ ...filter, imagorStatus: 'failed' }).select('imagorLastError').limit(200).lean(),
+    ]);
+    const counts: Record<string, number> = {};
+    for (const group of groups) counts[String(group._id || 'unprocessed')] = Number(group.count) || 0;
+    const remaining = Math.max(0, eligiblePhotos - ready - unsupported);
+    const reasonCounts = new Map<string, number>();
+    for (const failure of failures) {
+      const reason = String(failure.imagorLastError || 'Failure details were not recorded by the previous worker version').slice(0, 400);
+      reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
+    }
+    const failureReasons = [...reasonCounts.entries()]
+      .map(([message, count]) => ({ message, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+    return {
+      enabled: imagorEnabled(), eventId, totalPhotos, eligiblePhotos, ready,
+      pending: counts.pending || 0, processing: counts.processing || 0, failed: counts.failed || 0,
+      unsupported, unprocessed: counts.unprocessed || 0, staleReady: Math.max(0, (counts.ready || 0) - ready),
+      remaining, progressPercent: eligiblePhotos ? Math.round((ready / eligiblePhotos) * 100) : 100,
+      galleryReady: remaining === 0, failureReasons,
+    };
+  }
+
+  async recacheEvent(eventId: string) {
+    if (!Types.ObjectId.isValid(eventId)) throw new HttpException('Invalid event id', 400);
+    if (!imagorEnabled()) return { enabled: false, queued: 0, status: await this.getEventStatus(eventId) };
+    const result = await this.photos.updateMany(
+      { eventId: new Types.ObjectId(eventId), ...eligiblePhotoFilter() },
+      { $set: { imagorStatus: 'pending' }, $unset: { imagorLease: 1, imagorNextAt: 1, imagorAttempts: 1, imagorLastError: 1 } },
+    );
+    return { enabled: true, queued: Number(result.matchedCount ?? result.modifiedCount ?? 0), status: await this.getEventStatus(eventId) };
   }
 
   async claim() {
@@ -34,12 +83,16 @@ export class ImagorCacheService {
     }, {
       $set: { imagorStatus: 'processing', imagorLease: token, imagorNextAt: new Date(+now + LEASE) },
       $inc: { imagorAttempts: 1 },
+      $unset: { imagorLastError: 1 },
     }, { new: true, sort: { createdAt: 1 } }).lean();
     if (!row) return null;
     const branding = await loadDeliveryBranding(this.photos, String(row.eventId));
     const urls = imagorUrls(row, branding);
     if (!urls) {
-      await this.photos.updateOne({ _id: row._id, imagorLease: token }, { $set: { imagorStatus: 'unsupported', imagorConfig: configVersion }, $unset: { imagorLease: 1, imagorNextAt: 1 } });
+      await this.photos.updateOne({ _id: row._id, imagorLease: token }, {
+        $set: { imagorStatus: 'unsupported', imagorConfig: configVersion, imagorLastError: 'Image source or watermark configuration is not supported by the current Imagor delivery rules' },
+        $unset: { imagorLease: 1, imagorNextAt: 1 },
+      });
       return null;
     }
     const updated = await this.photos.updateOne({ _id: row._id, imagorLease: token, eventId: row.eventId, imageUrl: row.imageUrl }, {
@@ -60,7 +113,7 @@ export class ImagorCacheService {
     const branding = await loadDeliveryBranding(this.photos, String(row.eventId));
     const urls = imagorUrls(row, branding);
     if (row.imagorSource !== row.imageUrl || !urls || row.imagorConfig !== deliveryConfigVersion() || row.imagorSignature !== urls.small + '|' + urls.view) {
-      await this.photos.updateOne(filter, { $set: { imagorStatus: 'pending' }, $unset: { imagorLease: 1 } });
+      await this.photos.updateOne(filter, { $set: { imagorStatus: 'pending' }, $unset: { imagorLease: 1, imagorLastError: 1 } });
       return { accepted: true, ready: false };
     }
     const valid = (kind: 'small' | 'view') => {
@@ -76,12 +129,19 @@ export class ImagorCacheService {
     };
     if (body?.success !== true || !valid('small') || !valid('view')) {
       const delay = Math.min(3600_000, 5_000 * Math.pow(2, Math.min(10, row.imagorAttempts || 1)));
-      await this.photos.updateOne(filter, { $set: { imagorStatus: 'failed', imagorNextAt: new Date(Date.now() + delay) }, $unset: { imagorLease: 1 } });
+      const workerError = typeof body?.error === 'string' ? body.error.trim().slice(0, 500) : '';
+      const errorMessage = workerError || (body?.success === true
+        ? 'Result Storage verification failed: returned keys or public URLs did not match the signed transforms'
+        : 'Imagor worker reported a failed transformation without an error message');
+      await this.photos.updateOne(filter, {
+        $set: { imagorStatus: 'failed', imagorNextAt: new Date(Date.now() + delay), imagorLastError: errorMessage },
+        $unset: { imagorLease: 1 },
+      });
       return { accepted: true, ready: false };
     }
     const result = await this.photos.updateOne({ ...filter, eventId: row.eventId, imageUrl: row.imageUrl }, {
       $set: { imagorStatus: 'ready', imagorSmallUrl: body.urls.small, imagorViewUrl: body.urls.view },
-      $unset: { imagorLease: 1, imagorNextAt: 1, imagorAttempts: 1 },
+      $unset: { imagorLease: 1, imagorNextAt: 1, imagorAttempts: 1, imagorLastError: 1 },
       $addToSet: { imagorTransformUrls: { $each: Object.values(urls) } },
     });
     return { accepted: true, ready: !!result.modifiedCount };

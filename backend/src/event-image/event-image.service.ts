@@ -178,6 +178,20 @@ export class EventImageService {
     return event;
   }
 
+  async getImagorCacheStatus(eventId: string, userId?: string, role?: string) {
+    if (role !== UserType.ADMIN) throw new HttpException('Admin access required', 403);
+    await this.assertCanUseEvent(eventId, userId, role);
+    if (!this.imagorCache) throw new HttpException('Imagor cache service is unavailable', 503);
+    return this.imagorCache.getEventStatus(eventId);
+  }
+
+  async recacheEventImages(eventId: string, userId?: string, role?: string) {
+    if (role !== UserType.ADMIN) throw new HttpException('Admin access required', 403);
+    await this.assertCanUseEvent(eventId, userId, role);
+    if (!this.imagorCache) throw new HttpException('Imagor cache service is unavailable', 503);
+    return this.imagorCache.recacheEvent(eventId);
+  }
+
   private async resolvePublishPolicy(
     event: { publishPolicy?: string; autoPublishImages?: boolean; requireReview?: boolean },
     albumId?: string,
