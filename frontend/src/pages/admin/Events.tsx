@@ -1,7 +1,7 @@
 import { UploadFileAxios } from "@/lib/direct-upload";
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Calendar, Eye, Loader2, MoreHorizontal, Plus, Trash2, Upload, X } from "lucide-react";
+import { Calendar, ExternalLink, Eye, Loader2, MoreHorizontal, Plus, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -311,6 +311,16 @@ export default function Events() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              <DropdownMenuItem asChild>
+                                <a
+                                  href={`${window.location.origin}${window.location.pathname}#/event/${encodeURIComponent(event._id)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <ExternalLink className="mr-2 h-4 w-4" />
+                                  Open event
+                                </a>
+                              </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => setViewEvent(event)}>
                                 <Eye className="mr-2 h-4 w-4" />
                                 View
